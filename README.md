@@ -1,31 +1,41 @@
 # WeSight
 
 <p align="center">
-  <img src="public/logo.png" alt="WeSight" width="120">
+  <img src="public/readme-banner.svg" alt="WeSight desktop AI agent workspace" width="900">
+</p>
+
+<h3 align="center">
+  Desktop AI Agent Workspace for Claude Code, Codex, OpenClaw, Hermes Agent, and Custom LLMs
+</h3>
+
+<p align="center">
+  <a href="https://github.com/freestylefly/wesight/stargazers"><img src="https://img.shields.io/github/stars/freestylefly/wesight?style=flat-square&color=1b79ff" alt="GitHub stars"></a>
+  <a href="https://github.com/freestylefly/wesight/network/members"><img src="https://img.shields.io/github/forks/freestylefly/wesight?style=flat-square&color=14b8a6" alt="GitHub forks"></a>
+  <a href="https://github.com/freestylefly/wesight/releases/latest"><img src="https://img.shields.io/github/v/release/freestylefly/wesight?style=flat-square&color=f59e0b" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/freestylefly/wesight?style=flat-square&color=64748b" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-111827?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon">
 </p>
 
 <p align="center">
-  <strong>A desktop AI agent workspace for Claude Code, Codex, OpenClaw, Hermes Agent, and your own models.</strong>
+  <strong>English</strong> | <a href="README_zh.md">简体中文</a>
 </p>
 
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <br>
-  <img src="https://img.shields.io/badge/Public%20Build-macOS%20Apple%20Silicon-brightgreen?style=for-the-badge" alt="Public build">
-  <br>
-  <img src="https://img.shields.io/badge/Electron-40-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
-  <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React">
-</p>
+> Early public releases ship macOS Apple Silicon first. If WeSight helps your agent workflow, a Star makes the project easier for more builders to discover.
 
-<p align="center">
-  English · <a href="README_zh.md">中文</a>
-</p>
+WeSight is an open-source desktop workspace that brings coding agents, local runtimes, model providers, visual tool execution, skills, scheduled tasks, and memory into one polished product surface.
 
----
+## ⚡️ Project Vision
 
-WeSight is an open-source desktop app that turns coding agents and automation runtimes into a friendly graphical workspace. It helps you start tasks, switch agent engines, configure model providers, review tool execution, manage skills, and keep long-running work organized from one place.
+WeSight is built for people who want the power of terminal-native agents with a calmer desktop workflow. It can install or reuse Claude Code and Codex, run managed OpenClaw and Hermes runtimes, map unified model settings into each engine, and present agent work as a visual chat with tool panels, permissions, and long-running task state.
 
-The goal is simple: install WeSight, choose an engine, configure your model once, then work with powerful agents through a polished chat interface.
+## 📖 Quick Links
+
+- Website: [wesight.ai](https://wesight.ai/)
+- Latest release: [github.com/freestylefly/wesight/releases/latest](https://github.com/freestylefly/wesight/releases/latest)
+- Agent Engines: [Agent Engines](#agent-engines)
+- Model Configuration: [Model Configuration](#model-configuration)
+- Development: [Quick Start](#quick-start)
+- Release Workflow: [Release Workflow](#release-workflow)
 
 ## Download
 
@@ -248,6 +258,18 @@ Skills can be enabled, disabled, and routed from the desktop UI.
 - Richer slash command results
 - More visual inspection tools for long-running agent tasks
 - Plugin marketplace for community skills
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=freestylefly/wesight&type=Date)](https://star-history.com/#freestylefly/wesight&Date)
+
+## WeChat Official Account
+
+Search **苍何** on WeChat or scan the QR code below to follow Canghe's original WeChat official account. Reply with **AI** to get more AI prompt and agent workflow resources.
+
+<p align="center">
+  <img src="public/wechat-official-account.png" alt="Canghe WeChat Official Account" width="280">
+</p>
 
 ## License
 

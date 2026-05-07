@@ -1,31 +1,41 @@
 # WeSight
 
 <p align="center">
-  <img src="public/logo.png" alt="WeSight" width="120">
+  <img src="public/readme-banner.svg" alt="WeSight desktop AI agent workspace" width="900">
+</p>
+
+<h3 align="center">
+  把 Claude Code、Codex、OpenClaw、Hermes Agent 和自定义大模型统一到一个桌面 Agent 工作台
+</h3>
+
+<p align="center">
+  <a href="https://github.com/freestylefly/wesight/stargazers"><img src="https://img.shields.io/github/stars/freestylefly/wesight?style=flat-square&color=1b79ff" alt="GitHub stars"></a>
+  <a href="https://github.com/freestylefly/wesight/network/members"><img src="https://img.shields.io/github/forks/freestylefly/wesight?style=flat-square&color=14b8a6" alt="GitHub forks"></a>
+  <a href="https://github.com/freestylefly/wesight/releases/latest"><img src="https://img.shields.io/github/v/release/freestylefly/wesight?style=flat-square&color=f59e0b" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/freestylefly/wesight?style=flat-square&color=64748b" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-111827?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon">
 </p>
 
 <p align="center">
-  <strong>把 Claude Code、Codex、OpenClaw、Hermes Agent 和自定义大模型统一到一个桌面 Agent 工作台。</strong>
+  <a href="README.md">English</a> | <strong>简体中文</strong>
 </p>
 
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <br>
-  <img src="https://img.shields.io/badge/Public%20Build-macOS%20Apple%20Silicon-brightgreen?style=for-the-badge" alt="Public build">
-  <br>
-  <img src="https://img.shields.io/badge/Electron-40-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
-  <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React">
-</p>
+> 早期公开版本优先提供 macOS Apple Silicon 安装包。如果 WeSight 对你的 Agent 工作流有帮助，欢迎点亮 Star，让更多开发者看到这个项目。
 
-<p align="center">
-  <a href="README.md">English</a> · 中文
-</p>
+WeSight 是一个开源桌面 AI Agent 工作台。它把编码 Agent、本地 runtime、模型供应商、可视化工具执行、技能系统、定时任务和记忆系统整合到一个更完整的产品界面里。
 
----
+## ⚡️ 项目愿景
 
-WeSight 是一个开源桌面 AI Agent 工作台。它把常见的编码 Agent、自动化运行时、模型配置、工具执行、技能系统和任务管理整合到一个图形化界面里，让用户不用反复切换终端、配置文件和多个 CLI。
+WeSight 面向希望使用终端原生 Agent 能力，同时更偏好桌面化工作流的用户。它可以安装或复用 Claude Code 与 Codex，运行 WeSight 管理的 OpenClaw 和 Hermes runtime，把统一模型设置映射到对应引擎，并用可视化 Chat 呈现工具面板、权限事件和长任务状态。
 
-目标很直接：安装 WeSight，选择 Agent 引擎，配置一次模型，然后在桌面 Chat 里把任务交给 Agent 完成。
+## 📖 快速入口
+
+- 官网：[wesight.ai](https://wesight.ai/)
+- 最新版本：[github.com/freestylefly/wesight/releases/latest](https://github.com/freestylefly/wesight/releases/latest)
+- Agent 引擎：[Agent 引擎](#agent-引擎)
+- 模型配置：[模型配置](#模型配置)
+- 本地开发：[快速开始](#快速开始)
+- 发布流程：[发布流程](#发布流程)
 
 ## 下载
 
@@ -250,6 +260,18 @@ WeSight 内置了一组覆盖日常 Agent 工作的技能：
 - 长任务可视化检查工具
 - 社区技能插件市场
 
-## License
+## Star 趋势图
+
+[![Star History Chart](https://api.star-history.com/svg?repos=freestylefly/wesight&type=Date)](https://star-history.com/#freestylefly/wesight&Date)
+
+## 公众号
+
+微信搜索 **苍何** 或扫描下方二维码关注苍何的原创公众号，回复 **AI** 获取更多 AI 提示词与 Agent 工作流资料。
+
+<p align="center">
+  <img src="public/wechat-official-account.png" alt="苍何微信公众号" width="280">
+</p>
+
+## 开源协议
 
 MIT. See [LICENSE](LICENSE).
