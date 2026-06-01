@@ -13,7 +13,7 @@
   <a href="https://github.com/freestylefly/wesight/network/members"><img src="https://img.shields.io/github/forks/freestylefly/wesight?style=flat-square&color=14b8a6" alt="GitHub forks"></a>
   <a href="https://github.com/freestylefly/wesight/releases/latest"><img src="https://img.shields.io/github/v/release/freestylefly/wesight?style=flat-square&color=f59e0b" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/freestylefly/wesight?style=flat-square&color=64748b" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-111827?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon">
+  <img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon%20%2B%20Intel-111827?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon and Intel">
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 WeSight is an open-source desktop control console for local AI agents. It helps you install or reuse Claude Code, Codex, OpenClaw, Hermes Agent, OpenCode, Qwen Code, DeepSeek-TUI, and the built-in agent runtime, then gives them a visual workspace for chat, tools, files, IM channels, skills, model providers, runtime metrics, and desktop companion workflows.
 
-> Early public releases ship macOS Apple Silicon first. If WeSight helps your agent workflow, a Star makes the project easier for more builders to discover.
+> Early public releases ship macOS Apple Silicon and Intel builds. If WeSight helps your agent workflow, a Star makes the project easier for more builders to discover.
 
 ## Quick Links
 
@@ -138,13 +138,13 @@ Public desktop builds are published through GitHub Releases:
 - Website: [wesight.ai](https://wesight.ai/)
 - Latest release: [github.com/freestylefly/wesight/releases/latest](https://github.com/freestylefly/wesight/releases/latest)
 
-Early public releases currently ship macOS Apple Silicon builds first. Release assets are intended for end users. CI artifacts are short-lived build outputs for maintainers to test before a release is published.
+Early public releases currently ship macOS Apple Silicon and Intel builds. Release assets are intended for end users. CI artifacts are short-lived build outputs for maintainers to test before a release is published.
 
 ## Download And Install
 
 ### 1. Download the DMG
 
-Download `WeSight-*-arm64.dmg` from the [latest release](https://github.com/freestylefly/wesight/releases/latest), open it, and drag `WeSight.app` into the `Applications` folder.
+Download the matching macOS DMG from the [latest release](https://github.com/freestylefly/wesight/releases/latest): `WeSight-*-mac-arm64.dmg` for Apple Silicon or `WeSight-*-mac-x64.dmg` for Intel. Open it and drag `WeSight.app` into the `Applications` folder.
 
 <p align="center">
   <img src="public/readme/tutorial/install-dmg.svg" alt="WeSight DMG install guide" width="760">
@@ -236,9 +236,19 @@ npm run lint
 ```bash
 # macOS
 npm run dist:mac
+
+# macOS single-architecture packages with bundled OpenClaw runtime
+npm run openclaw:runtime:mac-x64
 npm run dist:mac:x64
+npm run openclaw:runtime:mac-arm64
 npm run dist:mac:arm64
-npm run dist:mac:universal
+
+# Convenience commands for release-style local builds
+npm run dist:mac:x64:full
+npm run dist:mac:arm64:full
+
+# Do not use npm run dist:mac:universal until native modules and OpenClaw
+# runtime have an explicit merge strategy for both macOS architectures.
 
 # Windows
 npm run dist:win

@@ -13,7 +13,7 @@
   <a href="https://github.com/freestylefly/wesight/network/members"><img src="https://img.shields.io/github/forks/freestylefly/wesight?style=flat-square&color=14b8a6" alt="GitHub forks"></a>
   <a href="https://github.com/freestylefly/wesight/releases/latest"><img src="https://img.shields.io/github/v/release/freestylefly/wesight?style=flat-square&color=f59e0b" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/freestylefly/wesight?style=flat-square&color=64748b" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-111827?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon">
+  <img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon%20%2B%20Intel-111827?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon 和 Intel">
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 WeSight 是一个开源桌面 AI Agent 控制台。它可以安装或复用 Claude Code、Codex、OpenClaw、Hermes Agent、OpenCode、Qwen Code、DeepSeek-TUI 和内置 Agent runtime，把它们统一到一个可视化工作台里，覆盖对话、工具、文件、IM 通道、技能、模型供应商、运行监控和桌面宠物工作流。
 
-> 早期公开版本优先提供 macOS Apple Silicon 安装包。如果 WeSight 对你的 Agent 工作流有帮助，欢迎点亮 Star，让更多开发者看到这个项目。
+> 早期公开版本提供 macOS Apple Silicon 和 Intel 安装包。如果 WeSight 对你的 Agent 工作流有帮助，欢迎点亮 Star，让更多开发者看到这个项目。
 
 ## 快速入口
 
@@ -138,13 +138,13 @@ WeSight 把模型配置集中在一个设置页。某个引擎选择“跟随 We
 - 官网：[wesight.ai](https://wesight.ai/)
 - 最新版本：[github.com/freestylefly/wesight/releases/latest](https://github.com/freestylefly/wesight/releases/latest)
 
-早期公开版本优先提供 macOS Apple Silicon 安装包。Release assets 面向最终用户下载。CI artifacts 作为维护者测试构建产物的临时入口。
+早期公开版本提供 macOS Apple Silicon 和 Intel 安装包。Release assets 面向最终用户下载。CI artifacts 作为维护者测试构建产物的临时入口。
 
 ## 下载与安装教程
 
 ### 1. 下载 DMG 并安装
 
-从 [最新版本](https://github.com/freestylefly/wesight/releases/latest) 下载 `WeSight-*-arm64.dmg`，打开后将 `WeSight.app` 拖入 `Applications` 文件夹。
+从 [最新版本](https://github.com/freestylefly/wesight/releases/latest) 下载匹配的 macOS DMG：Apple Silicon 使用 `WeSight-*-mac-arm64.dmg`，Intel 使用 `WeSight-*-mac-x64.dmg`。打开后将 `WeSight.app` 拖入 `Applications` 文件夹。
 
 <p align="center">
   <img src="public/readme/tutorial/install-dmg.svg" alt="WeSight DMG 安装示意图" width="760">
@@ -236,9 +236,18 @@ npm run lint
 ```bash
 # macOS
 npm run dist:mac
+
+# 带内置 OpenClaw runtime 的 macOS 单架构包
+npm run openclaw:runtime:mac-x64
 npm run dist:mac:x64
+npm run openclaw:runtime:mac-arm64
 npm run dist:mac:arm64
-npm run dist:mac:universal
+
+# 发布风格本地构建便捷命令
+npm run dist:mac:x64:full
+npm run dist:mac:arm64:full
+
+# 在 native modules 和 OpenClaw runtime 具备双架构合并策略前，不要使用 npm run dist:mac:universal
 
 # Windows
 npm run dist:win

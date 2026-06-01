@@ -62,6 +62,7 @@
     "target": [
       "dmg"
     ],
+    "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
     "icon": "build/icons/mac/icon.icns",
     "category": "public.app-category.productivity",
     "hardenedRuntime": true,
@@ -75,6 +76,13 @@
       "NSAppleEventsUsageDescription": "WeSight 需要使用 Apple Events 来控制 Calendar 应用执行自动化操作。"
     },
     "extraResources": [
+      {
+        "from": "vendor/openclaw-runtime/current",
+        "to": "cfmind",
+        "filter": [
+          "**/*"
+        ]
+      },
       {
         "from": "SKILLs",
         "to": "SKILLs",

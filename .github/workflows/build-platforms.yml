@@ -2,6 +2,9 @@ name: Build Platforms
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -31,19 +34,13 @@ jobs:
           test "$(uname -m)" = "arm64"
           node -e "if (process.arch !== 'arm64') process.exit(1)"
 
-      # 设置 OpenClaw runtime (如果需要)
-      - name: Setup OpenClaw Runtime
-        run: |
-          if [ -d "vendor/openclaw-runtime/current" ]; then
-            echo "✓ OpenClaw runtime found"
-          else
-            echo "⚠ OpenClaw runtime not found, build may fail"
-          fi
-
       - name: Build macOS arm64
-        run: npm run dist:mac:arm64 -- --publish never
+        run: npm run dist:mac:arm64:full
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify macOS arm64 artifact
+        run: npm run verify:mac:arm64-artifact
 
       - uses: actions/upload-artifact@v4
         with:
@@ -51,9 +48,44 @@ jobs:
           path: release/*.dmg
           retention-days: 7
 
+  # ========== macOS Intel 构建 ==========
+  build-macos-x64:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-x64-${{ hashFiles('package.json') }}
+          restore-keys: npm-${{ runner.os }}-x64-
+
+      - run: npm install
+
+      - name: Verify Intel runner
+        run: |
+          test "$(uname -m)" = "x86_64"
+          node -e "if (process.arch !== 'x64') process.exit(1)"
+
+      - name: Build macOS x64
+        run: npm run dist:mac:x64:full
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify macOS x64 artifact
+        run: npm run verify:mac:x64-artifact
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64-build
+          path: release/*.dmg
+          retention-days: 7
+
   # ========== 创建 Release ==========
   create-release:
-    needs: [build-macos-arm64]
+    needs: [build-macos-arm64, build-macos-x64]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -74,6 +106,7 @@ jobs:
           args=(
             "$TAG_NAME"
             artifacts/macos-arm64-build/*.dmg
+            artifacts/macos-x64-build/*.dmg
             --draft
             --generate-notes
             --title "$TAG_NAME"
