@@ -2410,7 +2410,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         }
       } else if (providerKey === 'gemini') {
         // Gemini response: { models: [{ name: string, displayName: string }] }
-        // name format: "models/gemini-pro" → extract "gemini-pro"
+        // name format: "models/gemini-pro" -> extract "gemini-pro"
         const data = response.data as { models?: Array<{ name: string; displayName?: string }> };
         if (data.models && Array.isArray(data.models)) {
           modelList = data.models

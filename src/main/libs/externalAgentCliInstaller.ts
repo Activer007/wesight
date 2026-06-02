@@ -349,7 +349,7 @@ export class ExternalAgentCliInstaller extends EventEmitter {
         appType,
         unsupported: true,
         error: message,
-        snapshot: getExternalAgentEnvironmentSnapshot(),
+        snapshot: await readInstallSnapshot(),
       };
     }
     const startedAt = Date.now();
