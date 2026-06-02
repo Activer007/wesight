@@ -4,7 +4,10 @@
  * Supports unified and split (side-by-side) view modes.
  */
 
-import React, { useMemo,useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+
+import { i18nService } from '../../services/i18n';
+import { DIFF_RENDER_LINE_LIMIT, shouldDeferDiff } from '../../utils/renderingGuards';
 
 type DiffLineType = 'added' | 'removed' | 'context';
 
@@ -159,18 +162,33 @@ const DiffLinePrefix: Record<DiffLineType, string> = {
 
 const DiffView: React.FC<DiffViewProps> = ({ oldStr, newStr, filePath, maxHeightClassName = 'max-h-80' }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('unified');
+  const [isExpanded, setIsExpanded] = useState(() => !shouldDeferDiff(oldStr, newStr));
+  const [renderAllLines, setRenderAllLines] = useState(false);
+  const isLargeDiff = shouldDeferDiff(oldStr, newStr);
+  const oldLineCount = oldStr ? oldStr.split('\n').length : 0;
+  const newLineCount = newStr ? newStr.split('\n').length : 0;
 
-  const diffLines = useMemo(() => computeDiffLines(oldStr, newStr), [oldStr, newStr]);
+  useEffect(() => {
+    setIsExpanded(!shouldDeferDiff(oldStr, newStr));
+    setRenderAllLines(false);
+  }, [oldStr, newStr]);
+
+  const diffLines = useMemo(
+    () => isExpanded ? computeDiffLines(oldStr, newStr) : [],
+    [isExpanded, oldStr, newStr],
+  );
+  const visibleDiffLines = renderAllLines ? diffLines : diffLines.slice(0, DIFF_RENDER_LINE_LIMIT);
+  const hasHiddenDiffLines = diffLines.length > visibleDiffLines.length;
 
   const stats = useMemo(() => {
     let added = 0;
     let removed = 0;
-    for (const line of diffLines) {
+    for (const line of visibleDiffLines) {
       if (line.type === 'added') added++;
       if (line.type === 'removed') removed++;
     }
     return { added, removed };
-  }, [diffLines]);
+  }, [visibleDiffLines]);
 
   // Build split view pairs
   const splitPairs = useMemo(() => {
@@ -178,21 +196,21 @@ const DiffView: React.FC<DiffViewProps> = ({ oldStr, newStr, filePath, maxHeight
 
     const pairs: Array<{ left: DiffLine | null; right: DiffLine | null }> = [];
     let i = 0;
-    while (i < diffLines.length) {
-      const line = diffLines[i];
+    while (i < visibleDiffLines.length) {
+      const line = visibleDiffLines[i];
       if (line.type === 'context') {
         pairs.push({ left: line, right: line });
         i++;
       } else if (line.type === 'removed') {
         // Collect consecutive removed + added pairs
         const removedBatch: DiffLine[] = [];
-        while (i < diffLines.length && diffLines[i].type === 'removed') {
-          removedBatch.push(diffLines[i]);
+        while (i < visibleDiffLines.length && visibleDiffLines[i].type === 'removed') {
+          removedBatch.push(visibleDiffLines[i]);
           i++;
         }
         const addedBatch: DiffLine[] = [];
-        while (i < diffLines.length && diffLines[i].type === 'added') {
-          addedBatch.push(diffLines[i]);
+        while (i < visibleDiffLines.length && visibleDiffLines[i].type === 'added') {
+          addedBatch.push(visibleDiffLines[i]);
           i++;
         }
         const maxLen = Math.max(removedBatch.length, addedBatch.length);
@@ -209,7 +227,33 @@ const DiffView: React.FC<DiffViewProps> = ({ oldStr, newStr, filePath, maxHeight
       }
     }
     return pairs;
-  }, [diffLines, viewMode]);
+  }, [visibleDiffLines, viewMode]);
+
+  if (!isExpanded && isLargeDiff) {
+    return (
+      <div className="rounded-lg overflow-hidden border dark:border-claude-darkBorder border-claude-border">
+        <div className="flex items-center justify-between gap-3 px-3 py-2 dark:bg-claude-darkSurface bg-claude-surfaceInset">
+          <div className="min-w-0">
+            {filePath && (
+              <div className="truncate font-mono text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {filePath}
+              </div>
+            )}
+            <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('largeDiffDeferred')} · {oldLineCount} → {newLineCount} lines
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsExpanded(true)}
+            className="shrink-0 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-hover"
+          >
+            {i18nService.t('showFullDiff')}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (diffLines.length === 0) return null;
 
@@ -264,7 +308,7 @@ const DiffView: React.FC<DiffViewProps> = ({ oldStr, newStr, filePath, maxHeight
         {viewMode === 'unified' ? (
           <table className="w-full text-xs font-mono border-collapse">
             <tbody>
-              {diffLines.map((line, idx) => {
+              {visibleDiffLines.map((line, idx) => {
                 const colors = LINE_COLORS[line.type];
                 return (
                   <tr key={idx} className={colors.bg}>
@@ -314,6 +358,18 @@ const DiffView: React.FC<DiffViewProps> = ({ oldStr, newStr, filePath, maxHeight
           </table>
         )}
       </div>
+      {hasHiddenDiffLines && (
+        <div className="flex items-center justify-between gap-3 border-t dark:border-claude-darkBorder border-claude-border px-3 py-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          <span>{i18nService.t('hiddenLinesCount').replace('{count}', String(diffLines.length - visibleDiffLines.length))}</span>
+          <button
+            type="button"
+            onClick={() => setRenderAllLines(true)}
+            className="font-medium text-primary hover:text-primary-hover"
+          >
+            {i18nService.t('showFullDiff')}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

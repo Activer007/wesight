@@ -34,6 +34,12 @@ import {
 } from '../../utils/coworkActivity';
 import { buildCoworkStudioSnapshot } from '../../utils/coworkStudio';
 import { getCompactFolderName } from '../../utils/path';
+import {
+  getCollapsedText,
+  getHiddenLineCount,
+  LONG_TOOL_OUTPUT_LIMITS,
+  shouldCollapseText,
+} from '../../utils/renderingGuards';
 import { getAgentEngineLabel } from '../agent/AgentEngineSelect';
 import Modal from '../common/Modal';
 import ComposeIcon from '../icons/ComposeIcon';
@@ -469,6 +475,45 @@ const getToolResultDisplay = (message: CoworkMessage): string => {
   return '';
 };
 
+const LargePlainTextBlock: React.FC<{
+  text: string;
+  className: string;
+  maxHeightClassName?: string;
+}> = ({ text, className, maxHeightClassName = 'max-h-64' }) => {
+  const shouldCollapse = shouldCollapseText(text, LONG_TOOL_OUTPUT_LIMITS);
+  const [isExpanded, setIsExpanded] = useState(!shouldCollapse);
+  useEffect(() => {
+    setIsExpanded(!shouldCollapse);
+  }, [shouldCollapse, text]);
+  const visibleText = shouldCollapse && !isExpanded
+    ? getCollapsedText(text, LONG_TOOL_OUTPUT_LIMITS)
+    : text;
+  const hiddenLineCount = shouldCollapse ? getHiddenLineCount(text, visibleText) : 0;
+
+  return (
+    <div className={`${maxHeightClassName} overflow-y-auto`}>
+      <pre className={className}>
+        {visibleText}
+      </pre>
+      {shouldCollapse && (
+        <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-secondary">
+          <span>
+            {i18nService.t('longContentCollapsed')}
+            {hiddenLineCount > 0 ? ` · ${i18nService.t('hiddenLinesCount').replace('{count}', String(hiddenLineCount))}` : ''}
+          </span>
+          <button
+            type="button"
+            onClick={() => setIsExpanded((value) => !value)}
+            className="font-medium text-primary hover:text-primary-hover"
+          >
+            {isExpanded ? i18nService.t('showLessContent') : i18nService.t('showFullContent')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const safeDecodeURIComponent = (value: string): string => {
   try {
     return decodeURIComponent(value);
@@ -885,15 +930,17 @@ const ToolCallGroup: React.FC<{
                   </div>
                 )}
                 {toolResult && (hasToolResultText || showNoDetailError) && (
-                  <div className={`mt-1.5 whitespace-pre-wrap break-words ${
-                    isToolError
-                      ? 'text-red-400'
-                      : hasToolResultText
-                        ? 'text-secondary'
-                        : 'text-muted italic'
-                  }`}>
-                    {displayToolResult}
-                  </div>
+                  <LargePlainTextBlock
+                    text={displayToolResult}
+                    maxHeightClassName="mt-1.5 max-h-72"
+                    className={`text-xs whitespace-pre-wrap break-words font-mono ${
+                      isToolError
+                        ? 'text-red-400'
+                        : hasToolResultText
+                          ? 'text-secondary'
+                          : 'text-muted italic'
+                    }`}
+                  />
                 )}
                 {!toolResult && (
                   <div className="text-muted mt-1.5 italic">
@@ -931,17 +978,17 @@ const ToolCallGroup: React.FC<{
                   <div className="text-[10px] font-medium dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70 uppercase tracking-wider mb-1">
                     {i18nService.t('coworkToolResult')}
                   </div>
-                  <div className="max-h-32 overflow-y-auto">
-                    <pre className={`text-xs whitespace-pre-wrap break-words font-mono ${
+                  <LargePlainTextBlock
+                    text={displayToolResult}
+                    maxHeightClassName="max-h-32"
+                    className={`text-xs whitespace-pre-wrap break-words font-mono ${
                       isToolError
                         ? 'text-red-500'
                         : hasToolResultText
                           ? 'dark:text-claude-darkText text-claude-text'
                           : 'dark:text-claude-darkTextSecondary text-claude-textSecondary italic'
-                    }`}>
-                      {displayToolResult}
-                    </pre>
-                  </div>
+                    }`}
+                  />
                 </div>
               )}
             </div>
@@ -965,17 +1012,17 @@ const ToolCallGroup: React.FC<{
                   <div className="text-[10px] font-medium text-muted uppercase tracking-wider mb-1">
                     {i18nService.t('coworkToolResult')}
                   </div>
-                  <div className="max-h-64 overflow-y-auto">
-                    <pre className={`text-xs whitespace-pre-wrap break-words font-mono ${
+                  <LargePlainTextBlock
+                    text={displayToolResult}
+                    maxHeightClassName="max-h-64"
+                    className={`text-xs whitespace-pre-wrap break-words font-mono ${
                       isToolError
                         ? 'text-red-500'
                         : hasToolResultText
                           ? 'text-foreground'
                           : 'text-secondary italic'
-                    }`}>
-                      {displayToolResult}
-                    </pre>
-                  </div>
+                    }`}
+                  />
                 </div>
               )}
             </div>
@@ -1266,6 +1313,7 @@ const AssistantMessageItem: React.FC<{
           className="prose dark:prose-invert max-w-none"
           resolveLocalFilePath={resolveLocalFilePath}
           showRevealInFolderAction
+          collapseLongContent={!message.metadata?.isStreaming}
         />
         {generatedImages.length > 0 && (
           <div className={`${displayContent.trim() ? 'mt-3' : ''} grid gap-3 sm:grid-cols-2`}>
@@ -1619,16 +1667,18 @@ export const AssistantTurnBlock: React.FC<{
               </div>
             )}
             {(hasToolResultText || showNoDetailError) && (
-              <div className="mt-2 px-3 py-2 rounded-lg bg-surface-raised max-h-64 overflow-y-auto">
-                <pre className={`text-xs whitespace-pre-wrap break-words font-mono ${
+              <div className="mt-2 px-3 py-2 rounded-lg bg-surface-raised">
+                <LargePlainTextBlock
+                  text={displayText}
+                  maxHeightClassName="max-h-64"
+                  className={`text-xs whitespace-pre-wrap break-words font-mono ${
                   isToolError
                     ? 'text-red-500'
                     : hasToolResultText
                       ? 'text-foreground'
                       : 'text-secondary italic'
-                }`}>
-                  {displayText}
-                </pre>
+                }`}
+                />
               </div>
             )}
           </div>

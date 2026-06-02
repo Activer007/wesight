@@ -257,6 +257,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     loginNotAvailable: '登录功能暂未开放',
     collapse: '收起',
     expand: '展开',
+    showFullContent: '显示全部内容',
+    showLessContent: '收起内容',
+    longContentCollapsed: '内容较长，已显示预览',
+    hiddenLinesCount: '已隐藏 {count} 行',
+    showFullCode: '显示完整代码',
+    showFullDiff: '显示完整 diff',
+    largeDiffDeferred: 'Diff 较大，点击后再渲染',
     featureInDevelopment: '正在开发中',
 
     // 认证相关
@@ -2116,6 +2123,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     loginNotAvailable: 'Login is not available yet',
     collapse: 'Collapse',
     expand: 'Expand',
+    showFullContent: 'Show full content',
+    showLessContent: 'Show less',
+    longContentCollapsed: 'Long content preview is shown',
+    hiddenLinesCount: '{count} hidden lines',
+    showFullCode: 'Show full code',
+    showFullDiff: 'Show full diff',
+    largeDiffDeferred: 'Large diff is rendered on demand',
     featureInDevelopment: 'In development',
 
     // Auth

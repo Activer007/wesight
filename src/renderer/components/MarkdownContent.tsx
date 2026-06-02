@@ -1,21 +1,30 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import ReactMarkdown from 'react-markdown';
-// @ts-ignore
-import remarkGfm from 'remark-gfm';
-// @ts-ignore
-import remarkMath from 'remark-math';
-// @ts-ignore
-import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import 'katex/contrib/mhchem';
+
+import { CheckIcon, ClipboardDocumentIcon, DocumentIcon, FolderIcon } from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 // @ts-ignore
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 // @ts-ignore
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 // @ts-ignore
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { ClipboardDocumentIcon, CheckIcon, DocumentIcon, FolderIcon } from '@heroicons/react/24/outline';
+// @ts-ignore
+import rehypeKatex from 'rehype-katex';
+// @ts-ignore
+import remarkGfm from 'remark-gfm';
+// @ts-ignore
+import remarkMath from 'remark-math';
+
 import { i18nService } from '../services/i18n';
+import {
+  getCollapsedText,
+  getHiddenLineCount,
+  LONG_CODE_BLOCK_LIMITS,
+  LONG_MARKDOWN_LIMITS,
+  shouldCollapseText,
+} from '../utils/renderingGuards';
 
 const CODE_BLOCK_LINE_LIMIT = 200;
 const CODE_BLOCK_CHAR_LIMIT = 20000;
@@ -207,9 +216,16 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       : !match;
   const codeText = Array.isArray(children) ? children.join('') : String(children);
   const trimmedCodeText = codeText.replace(/\n$/, '');
+  const shouldCollapseCode = !isInline && shouldCollapseText(trimmedCodeText, LONG_CODE_BLOCK_LIMITS);
+  const [isCodeExpanded, setIsCodeExpanded] = useState(!shouldCollapseCode);
+  const visibleCodeText = shouldCollapseCode && !isCodeExpanded
+    ? getCollapsedText(trimmedCodeText, LONG_CODE_BLOCK_LIMITS)
+    : trimmedCodeText;
+  const hiddenLineCount = shouldCollapseCode ? getHiddenLineCount(trimmedCodeText, visibleCodeText) : 0;
   const shouldHighlight = !isInline && match
-    && trimmedCodeText.length <= CODE_BLOCK_CHAR_LIMIT
-    && trimmedCodeText.split('\n').length <= CODE_BLOCK_LINE_LIMIT;
+    && visibleCodeText.length <= CODE_BLOCK_CHAR_LIMIT
+    && visibleCodeText.split('\n').length <= CODE_BLOCK_LINE_LIMIT
+    && (!shouldCollapseCode || isCodeExpanded);
   const [isCopied, setIsCopied] = useState(false);
   const copyTimeoutRef = useRef<number | null>(null);
   const isDark = useIsDark();
@@ -218,6 +234,10 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
     'pre[class*="language-"]': { ...(oneLight as Record<string, React.CSSProperties>)['pre[class*="language-"]'], background: '#f0f2f5' },
     'code[class*="language-"]': { ...(oneLight as Record<string, React.CSSProperties>)['code[class*="language-"]'], background: '#f0f2f5' },
   };
+
+  useEffect(() => {
+    setIsCodeExpanded(!shouldCollapseCode);
+  }, [shouldCollapseCode, trimmedCodeText]);
 
   useEffect(() => () => {
     if (copyTimeoutRef.current != null) {
@@ -258,9 +278,24 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
               )}
             </button>
             <code className="block px-4 py-3 font-mono dark:text-gray-100 text-gray-800 whitespace-pre">
-              {trimmedCodeText}
+              {visibleCodeText}
             </code>
           </div>
+          {shouldCollapseCode && (
+            <div className="flex items-center justify-between gap-3 border-t border-border bg-surface-raised px-4 py-2 text-xs text-secondary">
+              <span>
+                {i18nService.t('longContentCollapsed')}
+                {hiddenLineCount > 0 ? ` · ${i18nService.t('hiddenLinesCount').replace('{count}', String(hiddenLineCount))}` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsCodeExpanded((value) => !value)}
+                className="font-medium text-primary hover:text-primary-hover"
+              >
+                {isCodeExpanded ? i18nService.t('showLessContent') : i18nService.t('showFullCode')}
+              </button>
+            </div>
+          )}
         </div>
       );
     }
@@ -291,13 +326,28 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
             PreTag="div"
             customStyle={{ ...SYNTAX_HIGHLIGHTER_STYLE, background: isDark ? '#282c34' : '#f0f2f5' }}
           >
-            {trimmedCodeText}
+            {visibleCodeText}
           </SyntaxHighlighter>
         ) : (
           <div className="m-0 overflow-x-auto dark:bg-[#282c34] bg-[#f0f2f5] text-[13px] leading-6">
             <code className="block px-4 py-3 font-mono dark:text-gray-100 text-gray-800 whitespace-pre">
-              {trimmedCodeText}
+              {visibleCodeText}
             </code>
+          </div>
+        )}
+        {shouldCollapseCode && (
+          <div className="flex items-center justify-between gap-3 border-t border-border bg-surface-raised px-4 py-2 text-xs text-secondary">
+            <span>
+              {i18nService.t('longContentCollapsed')}
+              {hiddenLineCount > 0 ? ` · ${i18nService.t('hiddenLinesCount').replace('{count}', String(hiddenLineCount))}` : ''}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsCodeExpanded((value) => !value)}
+              className="font-medium text-primary hover:text-primary-hover"
+            >
+              {isCodeExpanded ? i18nService.t('showLessContent') : i18nService.t('showFullCode')}
+            </button>
           </div>
         )}
       </div>
@@ -674,6 +724,7 @@ interface MarkdownContentProps {
   className?: string;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   showRevealInFolderAction?: boolean;
+  collapseLongContent?: boolean;
 }
 
 const MarkdownContent: React.FC<MarkdownContentProps> = ({
@@ -681,12 +732,22 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
   className = '',
   resolveLocalFilePath,
   showRevealInFolderAction = false,
+  collapseLongContent = true,
 }) => {
+  const shouldCollapseMarkdown = collapseLongContent && shouldCollapseText(content, LONG_MARKDOWN_LIMITS);
+  const [isExpanded, setIsExpanded] = useState(!shouldCollapseMarkdown);
+  useEffect(() => {
+    setIsExpanded(!shouldCollapseMarkdown);
+  }, [content, shouldCollapseMarkdown]);
   const components = useMemo(
     () => createMarkdownComponents(resolveLocalFilePath, showRevealInFolderAction),
     [resolveLocalFilePath, showRevealInFolderAction]
   );
-  const normalizedContent = useMemo(() => normalizeDisplayMath(encodeFileUrlsInMarkdown(content)), [content]);
+  const visibleContent = shouldCollapseMarkdown && !isExpanded
+    ? getCollapsedText(content, LONG_MARKDOWN_LIMITS)
+    : content;
+  const hiddenLineCount = shouldCollapseMarkdown ? getHiddenLineCount(content, visibleContent) : 0;
+  const normalizedContent = useMemo(() => normalizeDisplayMath(encodeFileUrlsInMarkdown(visibleContent)), [visibleContent]);
   return (
     <div className={`markdown-content text-[15px] leading-6 ${className}`}>
       <ReactMarkdown
@@ -697,6 +758,21 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
       >
         {normalizedContent}
       </ReactMarkdown>
+      {shouldCollapseMarkdown && (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-raised px-3 py-2 text-xs text-secondary">
+          <span>
+            {i18nService.t('longContentCollapsed')}
+            {hiddenLineCount > 0 ? ` · ${i18nService.t('hiddenLinesCount').replace('{count}', String(hiddenLineCount))}` : ''}
+          </span>
+          <button
+            type="button"
+            onClick={() => setIsExpanded((value) => !value)}
+            className="font-medium text-primary hover:text-primary-hover"
+          >
+            {isExpanded ? i18nService.t('showLessContent') : i18nService.t('showFullContent')}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
