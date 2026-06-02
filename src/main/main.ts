@@ -3346,14 +3346,20 @@ if (!gotTheLock) {
           ...getRecentMainLogEntries(),
           { archiveName: 'cowork.log', filePath: getCoworkLogPath() },
         ],
-        bufferEntries: [{
-          archiveName: 'performance-snapshot.json',
-          buffer: Buffer.from(JSON.stringify(getPerformanceSnapshot({
-            appVersion: app.getVersion(),
-            platform: process.platform,
-            arch: process.arch,
-          }), null, 2), 'utf8'),
-        }],
+        bufferEntries: [
+          {
+            archiveName: 'performance-snapshot.json',
+            buffer: Buffer.from(JSON.stringify(getPerformanceSnapshot({
+              appVersion: app.getVersion(),
+              platform: process.platform,
+              arch: process.arch,
+            }), null, 2), 'utf8'),
+          },
+          {
+            archiveName: 'event-timeline-summary.json',
+            buffer: Buffer.from(JSON.stringify(getCoworkStore().getEventTimelineSummary(200), null, 2), 'utf8'),
+          },
+        ],
       });
 
       return {

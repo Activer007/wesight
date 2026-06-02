@@ -33,6 +33,12 @@ import {
   type QwenCodePermissionMode as QwenCodePermissionModeType,
 } from '../shared/cowork/constants';
 import type { CoworkSessionRuntimeSnapshot } from '../shared/cowork/runtimeSnapshot';
+import {
+  type AppendRuntimeEventInput,
+  CoworkEventStore,
+  type RuntimeEvent,
+  RuntimeEventType,
+} from './coworkEventStore';
 import { encodeCodexAppThreadId } from './libs/codexAppIds';
 import {
   type CoworkMemoryGuardLevel,
@@ -80,6 +86,7 @@ const MAX_MEMORY_USER_MEMORIES_MAX_ITEMS = 60;
 const MEMORY_NEAR_DUPLICATE_MIN_SCORE = 0.82;
 const MEMORY_PROCEDURAL_TEXT_RE = /(执行以下命令|run\s+(?:the\s+)?following\s+command|\b(?:cd|npm|pnpm|yarn|node|python|bash|sh|git|curl|wget)\b|\$[A-Z_][A-Z0-9_]*|&&|--[a-z0-9-]+|\/tmp\/|\.sh\b|\.bat\b|\.ps1\b)/i;
 const MEMORY_ASSISTANT_STYLE_TEXT_RE = /^(?:使用|use)\s+[A-Za-z0-9._-]+\s*(?:技能|skill)/i;
+const COWORK_EVENT_SOURCE = 'coworkStore';
 
 function normalizeMemoryGuardLevel(value: string | undefined): CoworkMemoryGuardLevel {
   if (value === 'strict' || value === 'standard' || value === 'relaxed') return value;
@@ -781,10 +788,12 @@ interface CoworkUserMemoryRow {
 
 export class CoworkStore {
   private db: Database.Database;
+  private readonly eventStore: CoworkEventStore;
   private readonly nextMessageSequenceBySession = new Map<string, number>();
 
   constructor(db: Database.Database) {
     this.db = db;
+    this.eventStore = new CoworkEventStore(db);
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {
@@ -793,6 +802,23 @@ export class CoworkStore {
 
   private getAll<T>(sql: string, params: (string | number | null)[] = []): T[] {
     return this.db.prepare(sql).all(...params) as T[];
+  }
+
+  private getMessageEventType(messageType: CoworkMessageType): RuntimeEventType {
+    if (messageType === 'tool_use') return RuntimeEventType.ToolStarted;
+    if (messageType === 'tool_result') return RuntimeEventType.ToolCompleted;
+    return RuntimeEventType.MessageFinal;
+  }
+
+  private buildMessageEventPayload(message: CoworkMessage): Record<string, unknown> {
+    return { message };
+  }
+
+  private appendStoreEvent(input: Omit<AppendRuntimeEventInput, 'source'>): RuntimeEvent {
+    return this.eventStore.appendEvent({
+      ...input,
+      source: COWORK_EVENT_SOURCE,
+    });
   }
 
   private mapSessionRow(row: SessionRow, messages: CoworkMessage[] = []): CoworkSession {
@@ -887,28 +913,53 @@ export class CoworkStore {
     const runtimeSnapshot = options.runtimeSnapshot ?? null;
     const runtimeSnapshotJson = runtimeSnapshot ? JSON.stringify(runtimeSnapshot) : null;
 
-    this.db
-      .prepare(
-        `
-      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, session_kind, parent_session_id, team_id, runtime_snapshot_json, pinned, created_at, updated_at)
-      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-    `,
-      )
-      .run(
-        id,
-        title,
-        cwd,
-        systemPrompt,
-        executionMode,
-        JSON.stringify(activeSkillIds),
-        agentId,
-        sessionKind,
-        parentSessionId,
-        teamId,
-        runtimeSnapshotJson,
-        now,
-        now,
-      );
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `
+        INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, session_kind, parent_session_id, team_id, runtime_snapshot_json, pinned, created_at, updated_at)
+        VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+      `,
+        )
+        .run(
+          id,
+          title,
+          cwd,
+          systemPrompt,
+          executionMode,
+          JSON.stringify(activeSkillIds),
+          agentId,
+          sessionKind,
+          parentSessionId,
+          teamId,
+          runtimeSnapshotJson,
+          now,
+          now,
+        );
+      this.appendStoreEvent({
+        sessionId: id,
+        sourceEventId: `session:${id}:created`,
+        type: RuntimeEventType.SessionCreated,
+        payload: {
+          session: {
+            id,
+            title,
+            status: 'idle',
+            cwd,
+            executionMode,
+            activeSkillIds,
+            agentId,
+            sessionKind,
+            parentSessionId,
+            teamId,
+            runtimeSnapshot,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        createdAt: now,
+      });
+    })();
     this.nextMessageSequenceBySession.set(id, 1);
 
     return {
@@ -1036,15 +1087,29 @@ export class CoworkStore {
     }
 
     values.push(id);
-    this.db
-      .prepare(
-        `
-      UPDATE cowork_sessions
-      SET ${setClauses.join(', ')}
-      WHERE id = ?
-    `,
-      )
-      .run(...values);
+    this.db.transaction(() => {
+      const result = this.db
+        .prepare(
+          `
+        UPDATE cowork_sessions
+        SET ${setClauses.join(', ')}
+        WHERE id = ?
+      `,
+        )
+        .run(...values);
+      if (updates.status !== undefined && result.changes > 0) {
+        this.appendStoreEvent({
+          sessionId: id,
+          sourceEventId: `session:${id}:status:${now}:${uuidv4()}`,
+          type: RuntimeEventType.SessionStatus,
+          payload: {
+            status: updates.status,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+      }
+    })();
   }
 
   deleteSession(id: string): void {
@@ -1280,6 +1345,14 @@ export class CoworkStore {
       const id = uuidv4();
       const now = Date.now();
       const sequence = this.getNextMessageSequence(sessionId);
+      const insertedMessage: CoworkMessage = {
+        id,
+        type: message.type,
+        content: message.content,
+        timestamp: now,
+        sequence,
+        metadata: message.metadata,
+      };
 
       this.db.transaction(() => {
         this.db
@@ -1300,17 +1373,17 @@ export class CoworkStore {
           );
 
         this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
+        this.appendStoreEvent({
+          sessionId,
+          sourceEventId: `message:${id}:created`,
+          type: this.getMessageEventType(insertedMessage.type),
+          payload: this.buildMessageEventPayload(insertedMessage),
+          createdAt: now,
+        });
       })();
       this.nextMessageSequenceBySession.set(sessionId, sequence + 1);
 
-      return {
-        id,
-        type: message.type,
-        content: message.content,
-        timestamp: now,
-        sequence,
-        metadata: message.metadata,
-      };
+      return insertedMessage;
     }, { sessionId });
   }
 
@@ -1337,6 +1410,14 @@ export class CoworkStore {
       // Fallback to normal append if the target message is not found
       return this.addMessage(sessionId, message);
     }
+    const insertedMessage: CoworkMessage = {
+      id,
+      type: message.type,
+      content: message.content,
+      timestamp: now,
+      sequence: targetSequence,
+      metadata: message.metadata,
+    };
 
     this.db.transaction(() => {
       this.nextMessageSequenceBySession.delete(sessionId);
@@ -1366,16 +1447,16 @@ export class CoworkStore {
         );
 
       this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
+      this.appendStoreEvent({
+        sessionId,
+        sourceEventId: `message:${id}:created`,
+        type: this.getMessageEventType(insertedMessage.type),
+        payload: this.buildMessageEventPayload(insertedMessage),
+        createdAt: now,
+      });
     })();
 
-    return {
-      id,
-      type: message.type,
-      content: message.content,
-      timestamp: now,
-      sequence: targetSequence,
-      metadata: message.metadata,
-    };
+    return insertedMessage;
   }
 
   /**
@@ -1657,16 +1738,55 @@ export class CoworkStore {
 
       values.push(messageId);
       values.push(sessionId);
-      this.db
-        .prepare(
-          `
-        UPDATE cowork_messages
-        SET ${setClauses.join(', ')}
-        WHERE id = ? AND session_id = ?
-      `,
-        )
-        .run(...values);
+      const now = Date.now();
+      this.db.transaction(() => {
+        const result = this.db
+          .prepare(
+            `
+          UPDATE cowork_messages
+          SET ${setClauses.join(', ')}
+          WHERE id = ? AND session_id = ?
+        `,
+          )
+          .run(...values);
+        if (result.changes > 0) {
+          this.appendStoreEvent({
+            sessionId,
+            type: RuntimeEventType.MessageDelta,
+            payload: {
+              messageId,
+              content: updates.content,
+              metadata: updates.metadata,
+            },
+            createdAt: now,
+          });
+        }
+      })();
     }, { sessionId });
+  }
+
+  appendEvent(event: AppendRuntimeEventInput): RuntimeEvent {
+    return this.eventStore.appendEvent(event);
+  }
+
+  appendEvents(events: AppendRuntimeEventInput[]): RuntimeEvent[] {
+    return this.eventStore.appendEvents(events);
+  }
+
+  listEvents(sessionId: string, input?: { afterCreatedAt?: number; limit?: number }): RuntimeEvent[] {
+    return this.eventStore.listEvents(sessionId, input);
+  }
+
+  reduceEventsToMessages(sessionId: string): CoworkMessage[] {
+    return this.eventStore.reduceEventsToMessages(sessionId);
+  }
+
+  rebuildMessageView(sessionId: string): CoworkMessage[] {
+    return this.eventStore.rebuildMessageView(sessionId);
+  }
+
+  getEventTimelineSummary(limit?: number): Record<string, unknown> {
+    return this.eventStore.getTimelineSummary(limit);
   }
 
   // Config operations
