@@ -36,6 +36,7 @@ test('probes CLI commands asynchronously and isolates version timeouts', async (
 
   expect(claude).toMatchObject({
     found: true,
+    path: path.join(tempDir, 'claude'),
     version: 'claude-test 1.0.0',
   });
   expect(claude?.checking).toBeUndefined();

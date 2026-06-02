@@ -423,11 +423,12 @@ const runCommand = (
 const buildProbeEnv = (): NodeJS.ProcessEnv => ({
   ...process.env,
   PATH: [
+    process.env.PATH ?? '',
     path.join(homeDir(), '.npm-global', 'bin'),
     path.join(homeDir(), '.local', 'bin'),
     '/opt/homebrew/bin',
     '/usr/local/bin',
-    resolveUserShellPath() ?? process.env.PATH ?? '',
+    resolveUserShellPath() ?? '',
   ].join(path.delimiter),
 });
 
@@ -513,7 +514,9 @@ const resolveCommand = async (command: string): Promise<CommandResolution> => {
     }
   }
 
-  const result = await runCommand(process.platform === 'win32' ? 'where' : 'which', [command]);
+  const result = await runCommand(process.platform === 'win32' ? 'where' : 'which', [command], {
+    env: buildProbeEnv(),
+  });
   if (result.status === 0) {
     const candidates = result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const commandPath = process.platform === 'win32'
