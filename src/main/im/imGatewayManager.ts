@@ -1723,7 +1723,7 @@ export class IMGatewayManager extends EventEmitter {
       return { platform, testedAt, verdict: 'fail', checks };
     }
 
-    const claudeStatus = getExternalAgentEnvironmentSnapshot()
+    const claudeStatus = (await getExternalAgentEnvironmentSnapshot()).snapshot
       .engines.find(engine => engine.appType === 'claude');
     if (!claudeStatus?.found) {
       checks.push({
@@ -1824,7 +1824,7 @@ export class IMGatewayManager extends EventEmitter {
       return { platform, testedAt, verdict: 'fail', checks };
     }
 
-    const codexStatus = getExternalAgentEnvironmentSnapshot()
+    const codexStatus = (await getExternalAgentEnvironmentSnapshot()).snapshot
       .engines.find(engine => engine.appType === 'codex');
     if (!codexStatus?.found) {
       checks.push({

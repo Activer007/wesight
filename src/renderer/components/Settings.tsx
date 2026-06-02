@@ -1045,8 +1045,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       if (!active) return;
       setAgentEnvironmentSnapshot(snapshot);
     });
+    const unsubscribe = coworkService.onAgentEnginesChanged((snapshot) => {
+      if (!active) return;
+      setAgentEnvironmentSnapshot(snapshot);
+    });
     return () => {
       active = false;
+      unsubscribe();
     };
   }, [activeTab, measureSettingsIpc]);
 
@@ -1067,7 +1072,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
           current === progress.appType ? null : current
         ));
         if (progress.phase === 'success') {
-          void refreshAgentEnvironmentSnapshot();
+          void refreshAgentEnvironmentSnapshot({ forceRefresh: true });
         }
       }
     });
@@ -1113,7 +1118,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   }, [activeTab, measureSettingsIpc]);
 
   useEffect(() => {
-    if (activeTab !== 'coworkAgentEngine') return;
+    if (
+      activeTab !== 'coworkAgentEngine'
+      || (coworkAgentEngine !== CoworkAgentEngineValue.OpenClaw
+        && expandedCoworkAgentEngine !== CoworkAgentEngineValue.OpenClaw)
+    ) return;
     let active = true;
     void measureSettingsIpc('openclaw:engine:status', () => coworkService.getOpenClawEngineStatus()).then((status) => {
       if (!active || !status) return;
@@ -1127,10 +1136,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       active = false;
       unsubscribe();
     };
-  }, [activeTab, measureSettingsIpc]);
+  }, [activeTab, coworkAgentEngine, expandedCoworkAgentEngine, measureSettingsIpc]);
 
   useEffect(() => {
-    if (activeTab !== 'coworkAgentEngine') return;
+    if (
+      activeTab !== 'coworkAgentEngine'
+      || (coworkAgentEngine !== CoworkAgentEngineValue.Hermes
+        && expandedCoworkAgentEngine !== CoworkAgentEngineValue.Hermes)
+    ) return;
     let active = true;
     void measureSettingsIpc('hermes:engine:status', () => coworkService.getHermesEngineStatus()).then((status) => {
       if (!active || !status) return;
@@ -1144,7 +1157,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       active = false;
       unsubscribe();
     };
-  }, [activeTab, measureSettingsIpc]);
+  }, [activeTab, coworkAgentEngine, expandedCoworkAgentEngine, measureSettingsIpc]);
 
   useEffect(() => {
     try {
@@ -3018,8 +3031,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     return agentEnvironmentSnapshot?.engines.find((item) => item.engine === engine) ?? null;
   };
 
-  const refreshAgentEnvironmentSnapshot = async () => {
-    const snapshot = await coworkService.getAgentEngineSnapshot();
+  const refreshAgentEnvironmentSnapshot = async (options: { forceRefresh?: boolean } = {}) => {
+    const snapshot = await coworkService.getAgentEngineSnapshot(options);
     setAgentEnvironmentSnapshot(snapshot);
   };
 
@@ -3039,7 +3052,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       if (result.snapshot) {
         setAgentEnvironmentSnapshot(result.snapshot);
       } else {
-        await refreshAgentEnvironmentSnapshot();
+        await refreshAgentEnvironmentSnapshot({ forceRefresh: true });
       }
       if (!result.success) {
         setError(result.error || i18nService.t('coworkAgentEngineInstallCliFailed'));
@@ -3083,7 +3096,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       if (status) {
         setHermesEngineStatus(status);
       }
-      await refreshAgentEnvironmentSnapshot();
+      await refreshAgentEnvironmentSnapshot({ forceRefresh: true });
       if (!status || status.phase === 'error' || status.phase === 'not_installed') {
         setError(status?.message || i18nService.t('coworkAgentEngineInstallCliFailed'));
         return;
@@ -3106,7 +3119,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       if (!result.success) {
         setError(result.error || i18nService.t('coworkAgentCodexAppMissing'));
       }
-      await refreshAgentEnvironmentSnapshot();
+      await refreshAgentEnvironmentSnapshot({ forceRefresh: true });
       if (result.success) {
         setNoticeMessage(i18nService.t('coworkAgentCodexAppReady'));
       }
@@ -3151,11 +3164,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     const canInstall = window.electron?.platform === 'darwin' || window.electron?.platform === 'win32';
     const isInstalling = agentCliInstallingAppType === cliStatus.appType;
     const installProgress = agentCliInstallProgress[cliStatus.appType];
+    const isChecking = cliStatus.checking === true;
 
     const rows = [
       {
         label: i18nService.t('coworkAgentEngineCommandPath'),
-        value: cliStatus.path || cliStatus.error || '',
+        value: cliStatus.path || (!isChecking ? cliStatus.error : '') || '',
       },
       {
         label: i18nService.t('coworkAgentEngineVersion'),
@@ -3171,12 +3185,16 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       <div className="mt-3 space-y-1.5 rounded-lg bg-surface-raised/60 px-3 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           <span className="flex items-center gap-1.5">
-            <span className={`h-1.5 w-1.5 rounded-full ${cliStatus.found ? 'bg-green-500' : 'bg-amber-500'}`} />
-          <span className={cliStatus.found ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}>
-              {i18nService.t(cliStatus.found ? 'coworkAgentEngineCliInstalled' : 'coworkAgentEngineCliMissing')}
+            <span className={`h-1.5 w-1.5 rounded-full ${cliStatus.found ? 'bg-green-500' : isChecking ? 'bg-primary animate-pulse' : 'bg-amber-500'}`} />
+            <span className={cliStatus.found ? 'text-green-600 dark:text-green-400' : isChecking ? 'text-primary' : 'text-amber-600 dark:text-amber-400'}>
+              {i18nService.t(cliStatus.found
+                ? 'coworkAgentEngineCliInstalled'
+                : isChecking
+                  ? 'coworkAgentEngineCliChecking'
+                  : 'coworkAgentEngineCliMissing')}
             </span>
           </span>
-          {!cliStatus.found && (
+          {!cliStatus.found && !isChecking && (
             canInstall ? (
               <button
                 type="button"

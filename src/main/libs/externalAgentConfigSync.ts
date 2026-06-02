@@ -20,7 +20,7 @@ import {
   serializeDeepSeekTuiConfig,
   summarizeDeepSeekTuiSettingsConfig,
 } from './deepSeekTuiConfig';
-import { type CliAppType, getExternalAgentEnvironmentSnapshot } from './externalAgentEnvironment';
+import { type CliAppType, getPlaceholderExternalAgentEnvironmentSnapshot } from './externalAgentEnvironment';
 import {
   DEFAULT_GROK_BUILD_MODEL,
   parseGrokBuildConfigText,
@@ -248,7 +248,7 @@ const extractCodexProviderBaseUrl = (configText: string, provider: string): stri
 };
 
 const getCliConfigPaths = (appType: CliAppType): { primaryConfigPath: string; secondaryConfigPaths: string[] } => {
-  const snapshot = getExternalAgentEnvironmentSnapshot();
+  const snapshot = getPlaceholderExternalAgentEnvironmentSnapshot();
   const engine = snapshot.engines.find((item) => item.appType === appType);
   if (engine) {
     return {

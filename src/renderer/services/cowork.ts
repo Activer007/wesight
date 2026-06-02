@@ -812,14 +812,22 @@ class CoworkService {
     return false;
   }
 
-  async getAgentEngineSnapshot(): Promise<ExternalAgentEnvironmentSnapshot | null> {
+  async getAgentEngineSnapshot(options: { forceRefresh?: boolean } = {}): Promise<ExternalAgentEnvironmentSnapshot | null> {
     const api = window.electron?.cowork?.listAgentEngines;
     if (!api) return null;
-    const result = await api();
+    const result = await api(options);
     if (!result?.success || !result.snapshot) {
       return null;
     }
     return result.snapshot;
+  }
+
+  onAgentEnginesChanged(callback: (snapshot: ExternalAgentEnvironmentSnapshot) => void): () => void {
+    return window.electron?.cowork?.onAgentEnginesChanged?.((result) => {
+      if (result?.success && result.snapshot) {
+        callback(result.snapshot);
+      }
+    }) ?? (() => {});
   }
 
   async getRuntimeMetricsSummary(filters: RuntimeMetricsFilters): Promise<RuntimeMetricsSummary | null> {

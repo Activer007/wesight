@@ -256,6 +256,7 @@ export const CoworkIpcChannel = {
   AgentConfigSyncDeepSeekTuiGlobal: 'cowork:agentConfig:syncDeepSeekTuiGlobal',
   AgentCliInstall: 'cowork:agentCli:install',
   AgentCliInstallProgress: 'cowork:agentCli:installProgress',
+  AgentEnginesChanged: 'cowork:agentEngines:changed',
   StudioAssetsEnsure: 'cowork:studioAssets:ensure',
   SessionStart: 'cowork:session:start',
   SessionContinue: 'cowork:session:continue',

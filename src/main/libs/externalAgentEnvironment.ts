@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -45,6 +45,7 @@ export interface CliCommandStatus {
   path: string | null;
   version: string | null;
   error: string | null;
+  checking?: boolean;
   config: CliAppConfigSnapshot;
 }
 
@@ -62,6 +63,25 @@ export interface CcSwitchSnapshot {
 export interface ExternalAgentEnvironmentSnapshot {
   ccSwitch: CcSwitchSnapshot;
   engines: CliCommandStatus[];
+}
+
+export interface CliProbeMetric {
+  command: string;
+  resolveMs: number;
+  versionMs?: number;
+  found: boolean;
+  timedOut: boolean;
+  error: string | null;
+}
+
+export interface ExternalAgentEnvironmentProbeReport {
+  durationMs: number;
+  metrics: CliProbeMetric[];
+}
+
+export interface ExternalAgentEnvironmentSnapshotResult {
+  snapshot: ExternalAgentEnvironmentSnapshot;
+  report: ExternalAgentEnvironmentProbeReport;
 }
 
 type CcSwitchSettings = {
@@ -321,6 +341,96 @@ const quoteForShell = (value: string): string => {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 };
 
+const DEFAULT_CLI_PROBE_TIMEOUT_MS = 1500;
+
+interface CommandResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  error: string | null;
+}
+
+interface CommandResolution {
+  found: boolean;
+  path: string | null;
+  error: string | null;
+  timedOut: boolean;
+}
+
+const runCommand = (
+  command: string,
+  args: string[],
+  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; windowsVerbatimArguments?: boolean } = {},
+): Promise<CommandResult> => (
+  new Promise((resolve) => {
+    const child = spawn(command, args, {
+      env: options.env,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsVerbatimArguments: options.windowsVerbatimArguments,
+    });
+    const timeoutMs = options.timeoutMs ?? DEFAULT_CLI_PROBE_TIMEOUT_MS;
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGKILL');
+      resolve({
+        status: null,
+        stdout,
+        stderr,
+        timedOut: true,
+        error: `${command} timed out after ${timeoutMs}ms.`,
+      });
+    }, timeoutMs);
+
+    child.stdout?.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        status: null,
+        stdout,
+        stderr,
+        timedOut: false,
+        error: error.message,
+      });
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        status: code,
+        stdout,
+        stderr,
+        timedOut: false,
+        error: null,
+      });
+    });
+  })
+);
+
+const buildProbeEnv = (): NodeJS.ProcessEnv => ({
+  ...process.env,
+  PATH: [
+    path.join(homeDir(), '.npm-global', 'bin'),
+    path.join(homeDir(), '.local', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    resolveUserShellPath() ?? process.env.PATH ?? '',
+  ].join(path.delimiter),
+});
+
 const getWindowsSearchPaths = (command: string): string[] => {
   const home = homeDir();
   const appData = process.env.APPDATA || '';
@@ -394,67 +504,69 @@ const buildWindowsCommandShimArgs = (commandPath: string, args: string[]): strin
   return ['/d', '/s', '/c', `call "${commandPath}" ${args.map((arg) => `"${arg.replace(/"/g, '\\"')}"`).join(' ')}`];
 };
 
-const resolveCommand = (command: string): { found: boolean; path: string | null; error: string | null } => {
+const resolveCommand = async (command: string): Promise<CommandResolution> => {
   if (process.platform === 'win32') {
     for (const candidate of getWindowsSearchPaths(command)) {
       if (candidate && fs.existsSync(candidate)) {
-        return { found: true, path: candidate, error: null };
+        return { found: true, path: candidate, error: null, timedOut: false };
       }
     }
   }
 
-  const result = spawnSync(process.platform === 'win32' ? 'where' : 'which', [command], {
-    encoding: 'utf8',
-    shell: false,
-  });
+  const result = await runCommand(process.platform === 'win32' ? 'where' : 'which', [command]);
   if (result.status === 0) {
     const candidates = result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const commandPath = process.platform === 'win32'
       ? preferWindowsExecutable(candidates)
       : candidates[0] ?? null;
-    return { found: Boolean(commandPath), path: commandPath, error: null };
+    return { found: Boolean(commandPath), path: commandPath, error: null, timedOut: result.timedOut };
   }
 
   if (process.platform !== 'win32') {
     const shellPath = process.env.SHELL || '/bin/zsh';
-    const userPath = resolveUserShellPath() ?? process.env.PATH;
-    const shellResult = spawnSync(shellPath, ['-lc', `command -v ${quoteForShell(command)}`], {
-      encoding: 'utf8',
-      timeout: 10_000,
-      env: {
-        ...process.env,
-        PATH: userPath,
-      },
+    const shellResult = await runCommand(shellPath, ['-lc', `command -v ${quoteForShell(command)}`], {
+      env: buildProbeEnv(),
     });
     if (shellResult.status === 0) {
       const commandPath = shellResult.stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? null;
-      return { found: Boolean(commandPath), path: commandPath, error: null };
+      return { found: Boolean(commandPath), path: commandPath, error: null, timedOut: shellResult.timedOut };
     }
-    const error = (shellResult.stderr || shellResult.stdout || result.stderr || result.stdout || '').trim();
-    return { found: false, path: null, error: error || `${command} was not found in PATH.` };
+    const error = (shellResult.error || shellResult.stderr || shellResult.stdout || result.error || result.stderr || result.stdout || '').trim();
+    return {
+      found: false,
+      path: null,
+      error: error || `${command} was not found in PATH.`,
+      timedOut: result.timedOut || shellResult.timedOut,
+    };
   }
 
-  if (result.status !== 0) {
-    const error = (result.stderr || result.stdout || '').trim();
-    return { found: false, path: null, error: error || `${command} was not found in PATH.` };
-  }
-  return { found: false, path: null, error: `${command} was not found in PATH.` };
+  const error = (result.error || result.stderr || result.stdout || '').trim();
+  return {
+    found: false,
+    path: null,
+    error: error || `${command} was not found in PATH.`,
+    timedOut: result.timedOut,
+  };
 };
 
-const readCommandVersion = (command: string): string | null => {
-  const versionArgs = ['--version'];
+const readCommandVersion = async (command: string): Promise<{ version: string | null; durationMs: number; timedOut: boolean }> => {
+  const startedAt = Date.now();
   const executable = isWindowsCommandShim(command) ? 'cmd.exe' : command;
   const args = isWindowsCommandShim(command)
-    ? buildWindowsCommandShimArgs(command, versionArgs)
-    : versionArgs;
-  const result = spawnSync(executable, args, {
-    encoding: 'utf8',
-    shell: false,
-    timeout: 10_000,
+    ? buildWindowsCommandShimArgs(command, ['--version'])
+    : ['--version'];
+  const result = await runCommand(executable, args, {
     windowsVerbatimArguments: isWindowsCommandShim(command),
   });
-  if (result.status !== 0) return null;
-  return (result.stdout || result.stderr || '').trim() || null;
+  const durationMs = Date.now() - startedAt;
+  if (result.status !== 0) {
+    return { version: null, durationMs, timedOut: result.timedOut };
+  }
+  return {
+    version: (result.stdout || result.stderr || '').trim() || null,
+    durationMs,
+    timedOut: result.timedOut,
+  };
 };
 
 const buildCliConfigSnapshot = (
@@ -608,48 +720,125 @@ const buildCommandStatus = (
   command: string,
   settings: CcSwitchSettings,
   dbPath: string,
-): CliCommandStatus => {
-  const resolution = resolveCommand(command);
+): Promise<{ status: CliCommandStatus; metric: CliProbeMetric }> => (
+  (async () => {
+    const resolveStartedAt = Date.now();
+    const resolution = await resolveCommand(command);
+    const resolveMs = Date.now() - resolveStartedAt;
+    const versionResult = resolution.found
+      ? await readCommandVersion(resolution.path ?? command)
+      : { version: null, durationMs: 0, timedOut: false };
+    const config = buildCliConfigSnapshot(appType, settings, dbPath);
+    return {
+      status: {
+        engine,
+        appType,
+        command,
+        found: resolution.found,
+        path: resolution.path,
+        version: versionResult.version,
+        error: resolution.error,
+        config,
+      },
+      metric: {
+        command,
+        resolveMs,
+        versionMs: versionResult.durationMs,
+        found: resolution.found,
+        timedOut: resolution.timedOut || versionResult.timedOut,
+        error: resolution.error,
+      },
+    };
+  })()
+);
+
+const buildPlaceholderCommandStatus = (
+  engine: CliCoworkAgentEngine,
+  appType: CliAppType,
+  command: string,
+  settings: CcSwitchSettings,
+  dbPath: string,
+): CliCommandStatus => ({
+  engine,
+  appType,
+  command,
+  found: false,
+  path: null,
+  version: null,
+  error: null,
+  checking: true,
+  config: buildCliConfigSnapshot(appType, settings, dbPath),
+});
+
+const AGENT_ENGINE_COMMANDS = [
+  { engine: CoworkAgentEngine.ClaudeCode, appType: 'claude', command: 'claude' },
+  { engine: CoworkAgentEngine.Codex, appType: 'codex', command: 'codex' },
+  { engine: CoworkAgentEngine.OpenClaw, appType: 'openclaw', command: 'openclaw' },
+  { engine: CoworkAgentEngine.Hermes, appType: 'hermes', command: 'hermes' },
+  { engine: CoworkAgentEngine.OpenCode, appType: 'opencode', command: 'opencode' },
+  { engine: CoworkAgentEngine.GrokBuild, appType: 'grok', command: 'grok' },
+  { engine: CoworkAgentEngine.QwenCode, appType: 'qwen', command: 'qwen' },
+  { engine: CoworkAgentEngine.DeepSeekTui, appType: 'deepseek_tui', command: 'deepseek-tui' },
+] as const satisfies Array<{ engine: CliCoworkAgentEngine; appType: CliAppType; command: string }>;
+
+const buildCcSwitchSnapshot = (
+  appDir: string,
+  settingsPath: string,
+  dbPath: string,
+  settings: CcSwitchSettings,
+): CcSwitchSnapshot => {
+  const claudeOverride = getConfigDirSetting(settings, 'claude');
+  const codexOverride = getConfigDirSetting(settings, 'codex');
   return {
-    engine,
-    appType,
-    command,
-    found: resolution.found,
-    path: resolution.path,
-    version: resolution.found ? readCommandVersion(resolution.path ?? command) : null,
-    error: resolution.error,
-    config: buildCliConfigSnapshot(appType, settings, dbPath),
+    installed: fs.existsSync(appDir),
+    appDir,
+    dbPath,
+    settingsPath,
+    settingsExists: fs.existsSync(settingsPath),
+    databaseExists: fs.existsSync(dbPath),
+    claudeConfigDirOverride: claudeOverride,
+    codexConfigDirOverride: codexOverride,
   };
 };
 
-export function getExternalAgentEnvironmentSnapshot(): ExternalAgentEnvironmentSnapshot {
+const readBaseSnapshotInputs = (): {
+  appDir: string;
+  settingsPath: string;
+  dbPath: string;
+  settings: CcSwitchSettings;
+} => {
   const appDir = ccSwitchAppDir();
   const settingsPath = path.join(appDir, 'settings.json');
   const dbPath = path.join(appDir, 'cc-switch.db');
   const settings = readCcSwitchSettings(settingsPath);
-  const claudeOverride = getConfigDirSetting(settings, 'claude');
-  const codexOverride = getConfigDirSetting(settings, 'codex');
+  return { appDir, settingsPath, dbPath, settings };
+};
+
+export function getPlaceholderExternalAgentEnvironmentSnapshot(): ExternalAgentEnvironmentSnapshot {
+  const { appDir, settingsPath, dbPath, settings } = readBaseSnapshotInputs();
+  return {
+    ccSwitch: buildCcSwitchSnapshot(appDir, settingsPath, dbPath, settings),
+    engines: AGENT_ENGINE_COMMANDS.map(({ engine, appType, command }) => (
+      buildPlaceholderCommandStatus(engine, appType, command, settings, dbPath)
+    )),
+  };
+}
+
+export async function getExternalAgentEnvironmentSnapshot(): Promise<ExternalAgentEnvironmentSnapshotResult> {
+  const startedAt = Date.now();
+  const { appDir, settingsPath, dbPath, settings } = readBaseSnapshotInputs();
+  const results = await Promise.all(AGENT_ENGINE_COMMANDS.map(({ engine, appType, command }) => (
+    buildCommandStatus(engine, appType, command, settings, dbPath)
+  )));
 
   return {
-    ccSwitch: {
-      installed: fs.existsSync(appDir),
-      appDir,
-      dbPath,
-      settingsPath,
-      settingsExists: fs.existsSync(settingsPath),
-      databaseExists: fs.existsSync(dbPath),
-      claudeConfigDirOverride: claudeOverride,
-      codexConfigDirOverride: codexOverride,
+    snapshot: {
+      ccSwitch: buildCcSwitchSnapshot(appDir, settingsPath, dbPath, settings),
+      engines: results.map(result => result.status),
     },
-    engines: [
-      buildCommandStatus(CoworkAgentEngine.ClaudeCode, 'claude', 'claude', settings, dbPath),
-      buildCommandStatus(CoworkAgentEngine.Codex, 'codex', 'codex', settings, dbPath),
-      buildCommandStatus(CoworkAgentEngine.OpenClaw, 'openclaw', 'openclaw', settings, dbPath),
-      buildCommandStatus(CoworkAgentEngine.Hermes, 'hermes', 'hermes', settings, dbPath),
-      buildCommandStatus(CoworkAgentEngine.OpenCode, 'opencode', 'opencode', settings, dbPath),
-      buildCommandStatus(CoworkAgentEngine.GrokBuild, 'grok', 'grok', settings, dbPath),
-      buildCommandStatus(CoworkAgentEngine.QwenCode, 'qwen', 'qwen', settings, dbPath),
-      buildCommandStatus(CoworkAgentEngine.DeepSeekTui, 'deepseek_tui', 'deepseek-tui', settings, dbPath),
-    ],
+    report: {
+      durationMs: Date.now() - startedAt,
+      metrics: results.map(result => result.metric),
+    },
   };
 }

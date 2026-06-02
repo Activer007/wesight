@@ -351,8 +351,8 @@ contextBridge.exposeInMainWorld('electron', {
       memoryUserMemoriesMaxItems?: number;
     }) =>
       ipcRenderer.invoke('cowork:config:set', config),
-    listAgentEngines: () =>
-      ipcRenderer.invoke('cowork:agentEngines:list'),
+    listAgentEngines: (input?: { forceRefresh?: boolean }) =>
+      ipcRenderer.invoke('cowork:agentEngines:list', input),
     getRuntimeMetricsSummary: (filters: any) =>
       ipcRenderer.invoke(CoworkIpcChannel.RuntimeMetricsSummary, filters),
     listRuntimeCalls: (filters: any) =>
@@ -435,6 +435,11 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: any, progress: any) => callback(progress);
       ipcRenderer.on(CoworkIpcChannel.AgentCliInstallProgress, handler);
       return () => ipcRenderer.removeListener(CoworkIpcChannel.AgentCliInstallProgress, handler);
+    },
+    onAgentEnginesChanged: (callback: (result: any) => void) => {
+      const handler = (_event: any, result: any) => callback(result);
+      ipcRenderer.on(CoworkIpcChannel.AgentEnginesChanged, handler);
+      return () => ipcRenderer.removeListener(CoworkIpcChannel.AgentEnginesChanged, handler);
     },
     listMemoryEntries: (input: {
       query?: string;

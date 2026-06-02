@@ -118,7 +118,12 @@ import {
   syncOpenCodeGlobalConfigFromWesightModel,
   syncQwenCodeGlobalConfigFromWesightModel,
 } from './libs/externalAgentConfigSync';
-import { getExternalAgentEnvironmentSnapshot } from './libs/externalAgentEnvironment';
+import {
+  type ExternalAgentEnvironmentProbeReport,
+  type ExternalAgentEnvironmentSnapshot,
+  getExternalAgentEnvironmentSnapshot,
+  getPlaceholderExternalAgentEnvironmentSnapshot,
+} from './libs/externalAgentEnvironment';
 import {
   type ExternalAgentProviderAppType,
   type ExternalAgentProviderInput,
@@ -252,7 +257,7 @@ const safeDecodePathComponent = (value: string): string => {
     return decodeURIComponent(value);
   } catch {
     return value;
-  }
+  };
 };
 
 const normalizeLocalFilePath = (value: string): string => {
@@ -391,7 +396,7 @@ const sanitizeCoworkMessageForIpc = (message: any): any => {
       ? truncateIpcString(message.content, IPC_MESSAGE_CONTENT_MAX_CHARS)
       : '',
     metadata: sanitizedMetadata,
-  };
+  }
 };
 
 const sanitizeCoworkFileActivityForIpc = (activity: CoworkFileActivity): CoworkFileActivity => ({
@@ -1671,10 +1676,101 @@ const isExternalAgentProviderAppType = (value: unknown): value is ExternalAgentP
   || value === 'deepseek_tui'
 );
 
-const getMergedExternalAgentEnvironmentSnapshot = () => {
+const AGENT_ENGINE_SNAPSHOT_TTL_MS = 30_000;
+
+interface AgentEngineSnapshotResponse {
+  success: boolean;
+  snapshot: ExternalAgentEnvironmentSnapshot & { codexApp: ReturnType<CodexAppManager['getStatus']> };
+  refreshing: boolean;
+  cachedAt?: number;
+  error?: string;
+}
+
+let agentEngineSnapshotCache: AgentEngineSnapshotResponse['snapshot'] | null = null;
+let agentEngineSnapshotCachedAt = 0;
+let agentEngineSnapshotRefreshing = false;
+let agentEngineSnapshotLastError: string | null = null;
+
+const mergeCodexAppStatus = (
+  snapshot: ExternalAgentEnvironmentSnapshot,
+): AgentEngineSnapshotResponse['snapshot'] => ({
+  ...snapshot,
+  codexApp: getCodexAppManager().getStatus(),
+});
+
+const summarizeAgentEngineProbeReport = (report: ExternalAgentEnvironmentProbeReport): void => {
+  console.debug(`[AgentEngineSnapshot] refreshed CLI environment snapshot in ${report.durationMs}ms.`);
+  for (const metric of report.metrics) {
+    if (metric.timedOut) {
+      console.debug(`[AgentEngineSnapshot] ${metric.command} probe timed out after ${metric.resolveMs + (metric.versionMs ?? 0)}ms.`);
+      continue;
+    }
+    if (metric.error && !metric.found) {
+      console.debug(`[AgentEngineSnapshot] ${metric.command} was not found after ${metric.resolveMs}ms.`);
+      continue;
+    }
+    console.debug(`[AgentEngineSnapshot] ${metric.command} probe completed in ${metric.resolveMs + (metric.versionMs ?? 0)}ms.`);
+  };
+};
+
+const broadcastAgentEngineSnapshotChanged = (response: AgentEngineSnapshotResponse): void => {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (win.isDestroyed()) return;
+    win.webContents.send(CoworkIpcChannel.AgentEnginesChanged, response);
+  });
+};
+
+const refreshAgentEngineSnapshotInBackground = (forceRefresh = false): void => {
+  const cacheFresh = agentEngineSnapshotCache
+    && Date.now() - agentEngineSnapshotCachedAt < AGENT_ENGINE_SNAPSHOT_TTL_MS;
+  if (!forceRefresh && cacheFresh) return;
+  if (agentEngineSnapshotRefreshing) return;
+
+  agentEngineSnapshotRefreshing = true;
+  void getExternalAgentEnvironmentSnapshot()
+    .then(({ snapshot, report }) => {
+      agentEngineSnapshotCache = mergeCodexAppStatus(snapshot);
+      agentEngineSnapshotCachedAt = Date.now();
+      agentEngineSnapshotLastError = null;
+      summarizeAgentEngineProbeReport(report);
+      broadcastAgentEngineSnapshotChanged({
+        success: true,
+        snapshot: agentEngineSnapshotCache,
+        refreshing: false,
+        cachedAt: agentEngineSnapshotCachedAt,
+      });
+    })
+    .catch((error) => {
+      agentEngineSnapshotLastError = error instanceof Error ? error.message : 'Failed to refresh agent engine snapshot';
+      console.warn('[AgentEngineSnapshot] failed to refresh CLI environment snapshot:', error);
+      const snapshot = agentEngineSnapshotCache ?? mergeCodexAppStatus(getPlaceholderExternalAgentEnvironmentSnapshot());
+      broadcastAgentEngineSnapshotChanged({
+        success: true,
+        snapshot,
+        refreshing: false,
+        cachedAt: agentEngineSnapshotCache ? agentEngineSnapshotCachedAt : undefined,
+        error: agentEngineSnapshotLastError,
+      });
+    })
+    .finally(() => {
+      agentEngineSnapshotRefreshing = false;
+    });
+};
+
+const getCachedAgentEngineSnapshot = (options: { forceRefresh?: boolean } = {}): AgentEngineSnapshotResponse => {
+  const cacheFresh = agentEngineSnapshotCache
+    && Date.now() - agentEngineSnapshotCachedAt < AGENT_ENGINE_SNAPSHOT_TTL_MS;
+  const shouldRefresh = options.forceRefresh === true || !cacheFresh;
+  if (shouldRefresh) {
+    refreshAgentEngineSnapshotInBackground(options.forceRefresh === true);
+  }
+  const snapshot = agentEngineSnapshotCache ?? mergeCodexAppStatus(getPlaceholderExternalAgentEnvironmentSnapshot());
   return {
-    ...getExternalAgentEnvironmentSnapshot(),
-    codexApp: getCodexAppManager().getStatus(),
+    success: true,
+    snapshot,
+    refreshing: agentEngineSnapshotRefreshing || !agentEngineSnapshotCache,
+    cachedAt: agentEngineSnapshotCache ? agentEngineSnapshotCachedAt : undefined,
+    error: agentEngineSnapshotLastError ?? undefined,
   };
 };
 
@@ -5014,12 +5110,9 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('cowork:agentEngines:list', async () => {
+  ipcMain.handle('cowork:agentEngines:list', async (_event, input: { forceRefresh?: unknown } = {}) => {
     try {
-      return {
-        success: true,
-        snapshot: getMergedExternalAgentEnvironmentSnapshot(),
-      };
+      return getCachedAgentEngineSnapshot({ forceRefresh: input?.forceRefresh === true });
     } catch (error) {
       return {
         success: false,
@@ -5209,9 +5302,21 @@ if (!gotTheLock) {
         bindOpenClawStatusForwarder();
         await getOpenClawEngineManager().ensureReady();
       }
+      if (result.snapshot) {
+        agentEngineSnapshotCache = mergeCodexAppStatus(result.snapshot);
+        agentEngineSnapshotCachedAt = Date.now();
+        agentEngineSnapshotLastError = null;
+        broadcastAgentEngineSnapshotChanged({
+          success: true,
+          snapshot: agentEngineSnapshotCache,
+          refreshing: false,
+          cachedAt: agentEngineSnapshotCachedAt,
+        });
+      }
+      refreshAgentEngineSnapshotInBackground(true);
       return {
         ...result,
-        snapshot: getMergedExternalAgentEnvironmentSnapshot(),
+        snapshot: agentEngineSnapshotCache ?? result.snapshot,
       };
     } catch (error) {
       return {

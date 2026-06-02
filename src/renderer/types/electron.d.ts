@@ -162,6 +162,7 @@ interface CliCommandStatus {
   path: string | null;
   version: string | null;
   error: string | null;
+  checking?: boolean;
   config: CliAppConfigSnapshot;
 }
 
@@ -300,6 +301,8 @@ interface ExternalAgentModelImportResult {
 interface CoworkAgentEngineListResult {
   success: boolean;
   snapshot?: ExternalAgentEnvironmentSnapshot;
+  refreshing?: boolean;
+  cachedAt?: number;
   error?: string;
 }
 
@@ -688,7 +691,7 @@ interface IElectronAPI {
     respondToPermission: (options: { requestId: string; result: CoworkPermissionResult }) => Promise<{ success: boolean; error?: string }>;
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;
     setConfig: (config: CoworkConfigUpdate) => Promise<{ success: boolean; error?: string }>;
-    listAgentEngines: () => Promise<CoworkAgentEngineListResult>;
+    listAgentEngines: (input?: { forceRefresh?: boolean }) => Promise<CoworkAgentEngineListResult>;
     getRuntimeMetricsSummary: (filters: RuntimeMetricsFilters) => Promise<{ success: boolean; summary?: RuntimeMetricsSummary; error?: string }>;
     listRuntimeCalls: (filters: RuntimeMetricsFilters) => Promise<{ success: boolean; total?: number; calls?: RuntimeCallRecord[]; error?: string }>;
     getRuntimeCallDetail: (callId: string) => Promise<{ success: boolean; call?: RuntimeCallRecord | null; error?: string }>;
@@ -722,6 +725,7 @@ interface IElectronAPI {
     syncQwenCodeGlobalConfig: () => Promise<ExternalAgentProviderListResult>;
     syncDeepSeekTuiGlobalConfig: () => Promise<ExternalAgentProviderListResult>;
     onAgentCliInstallProgress: (callback: (progress: ExternalAgentCliInstallProgress) => void) => () => void;
+    onAgentEnginesChanged: (callback: (result: CoworkAgentEngineListResult) => void) => () => void;
     listMemoryEntries: (input: {
       query?: string;
       limit?: number;

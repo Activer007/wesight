@@ -311,6 +311,7 @@ export interface CliCommandStatus {
   path: string | null;
   version: string | null;
   error: string | null;
+  checking?: boolean;
   config: CliAppConfigSnapshot;
 }
 
@@ -449,6 +450,8 @@ export interface ExternalAgentModelImportResult {
 export interface CoworkAgentEngineListResult {
   success: boolean;
   snapshot?: ExternalAgentEnvironmentSnapshot;
+  refreshing?: boolean;
+  cachedAt?: number;
   error?: string;
 }
 

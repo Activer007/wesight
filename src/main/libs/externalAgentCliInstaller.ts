@@ -3,7 +3,10 @@ import { EventEmitter } from 'events';
 import os from 'os';
 
 import type { CliAppType, ExternalAgentEnvironmentSnapshot } from './externalAgentEnvironment';
-import { getExternalAgentEnvironmentSnapshot } from './externalAgentEnvironment';
+import {
+  getExternalAgentEnvironmentSnapshot,
+  getPlaceholderExternalAgentEnvironmentSnapshot,
+} from './externalAgentEnvironment';
 
 export type ExternalAgentCliInstallPhase =
   | 'starting'
@@ -138,6 +141,14 @@ const INSTALL_TARGETS: Record<CliAppType, InstallTarget> = {
       },
     ],
   },
+};
+
+const readInstallSnapshot = async (): Promise<ExternalAgentEnvironmentSnapshot> => {
+  try {
+    return (await getExternalAgentEnvironmentSnapshot()).snapshot;
+  } catch {
+    return getPlaceholderExternalAgentEnvironmentSnapshot();
+  }
 };
 
 const quoteForShell = (value: string): string => {
@@ -317,7 +328,7 @@ export class ExternalAgentCliInstaller extends EventEmitter {
         appType,
         unsupported: true,
         error: message,
-        snapshot: getExternalAgentEnvironmentSnapshot(),
+        snapshot: await readInstallSnapshot(),
       };
     }
 
@@ -412,7 +423,7 @@ export class ExternalAgentCliInstaller extends EventEmitter {
       child.stdout?.on('data', (chunk: Buffer) => handleOutput(chunk, 'stdout'));
       child.stderr?.on('data', (chunk: Buffer) => handleOutput(chunk, 'stderr'));
 
-      child.on('error', (error) => {
+      child.on('error', async (error) => {
         const message = `Failed to start ${target.displayName} installer: ${error.message}`;
         this.emitProgress({
           appType,
@@ -427,11 +438,11 @@ export class ExternalAgentCliInstaller extends EventEmitter {
           binaryPath,
           version,
           error: message,
-          snapshot: getExternalAgentEnvironmentSnapshot(),
+          snapshot: await readInstallSnapshot(),
         });
       });
 
-      child.on('close', (code, signal) => {
+      child.on('close', async (code, signal) => {
         if (code === 0) {
           const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
           this.emitProgress({
@@ -447,7 +458,7 @@ export class ExternalAgentCliInstaller extends EventEmitter {
             command: target.command,
             binaryPath,
             version,
-            snapshot: getExternalAgentEnvironmentSnapshot(),
+            snapshot: await readInstallSnapshot(),
           });
           return;
         }
@@ -469,7 +480,7 @@ export class ExternalAgentCliInstaller extends EventEmitter {
           binaryPath,
           version,
           error: message,
-          snapshot: getExternalAgentEnvironmentSnapshot(),
+          snapshot: await readInstallSnapshot(),
         });
       });
     });
