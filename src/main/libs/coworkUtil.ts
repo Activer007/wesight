@@ -108,10 +108,25 @@ let cachedUserShellPath: string | null | undefined;
 
 /**
  * Resolve the user's login shell PATH on macOS/Linux.
+ *
  * Packaged Electron apps on macOS don't inherit the user's shell profile,
  * so node/npm and other tools won't be in PATH unless we resolve it.
+ *
+ * We try two probe strategies and merge the results:
+ *
+ * 1. `<shell> -lic` (interactive + login + command) — sources every file
+ *    Terminal.app would source on launch: `.zprofile` / `.zshenv` / `.zshrc`
+ *    (or `.bash_profile` / `.bashrc` for bash). This is the only reliable
+ *    way to pick up `nvm`, `fnm`, `volta`, `bun`, `asdf`, `pyenv`, etc. that
+ *    most users initialize in `.zshrc` / `.bashrc`.
+ *
+ * 2. `<shell> -lc` (non-interactive login) — fallback for users whose
+ *    `.zshrc` errors out under `-i` but works under non-interactive mode,
+ *    or whose tool init lives in `.zprofile` / `.zshenv` only.
+ *
+ * `</dev/null` prevents the interactive shell from blocking on stdin.
  */
-function resolveUserShellPath(): string | null {
+export function resolveUserShellPath(): string | null {
   if (cachedUserShellPath !== undefined) return cachedUserShellPath;
 
   if (process.platform === 'win32') {
@@ -121,30 +136,42 @@ function resolveUserShellPath(): string | null {
 
   try {
     const shell = process.env.SHELL || '/bin/bash';
-    // Prefer non-interactive login shell first to avoid potential side effects
-    // from interactive startup scripts (which may launch extra GUI processes).
     const pathProbes = [
-      `${shell} -lc 'echo __PATH__=$PATH'`,
+      `${shell} -lic 'echo __PATH__=$PATH' < /dev/null`,
+      `${shell} -lc 'echo __PATH__=$PATH' < /dev/null`,
     ];
 
-    let resolved: string | null = null;
+    const seenEntries = new Set<string>();
+    const mergedEntries: string[] = [];
+
     for (const probe of pathProbes) {
       try {
         const result = execSync(probe, {
           encoding: 'utf-8',
-          timeout: 5000,
+          timeout: 8000,
           env: { ...process.env },
         });
         const match = result.match(/__PATH__=(.+)/);
-        if (match?.[1]) {
-          resolved = match[1].trim();
-          break;
+        if (!match?.[1]) continue;
+        for (const entry of match[1].trim().split(delimiter)) {
+          if (entry && !seenEntries.has(entry)) {
+            seenEntries.add(entry);
+            mergedEntries.push(entry);
+          }
         }
       } catch {
         // Try next probe.
       }
     }
-    cachedUserShellPath = resolved;
+
+    cachedUserShellPath = mergedEntries.length > 0 ? mergedEntries.join(delimiter) : null;
+    if (cachedUserShellPath) {
+      coworkLog(
+        'INFO',
+        'resolveUserShellPath',
+        `Resolved user shell PATH with ${mergedEntries.length} entries (probes tried: ${pathProbes.length})`,
+      );
+    }
   } catch (error) {
     console.warn('[coworkUtil] Failed to resolve user shell PATH:', error);
     cachedUserShellPath = null;

@@ -9,7 +9,7 @@ import path from 'path';
 import { SkillsIpcChannel } from '../shared/skills/constants';
 import { cpRecursiveSync } from './fsCompat';
 import { t } from './i18n';
-import { getElectronNodeRuntimePath } from './libs/coworkUtil';
+import { getElectronNodeRuntimePath, resolveUserShellPath } from './libs/coworkUtil';
 import { appendPythonRuntimeToEnv } from './libs/pythonRuntime';
 import { mergeReports,scanMultipleSkillDirs, scanSkillSecurity } from './libs/skillSecurity/skillSecurityScanner';
 import type { SecurityReportAction,SkillSecurityReport } from './libs/skillSecurity/skillSecurityTypes';
@@ -20,30 +20,6 @@ import type {
 } from './skillHubMarketplace';
 import { fetchSkillHubMarketplace } from './skillHubMarketplace';
 import { SqliteStore } from './sqliteStore';
-
-/**
- * Resolve the user's login shell PATH on macOS/Linux.
- * Packaged Electron apps on macOS don't inherit the user's shell profile,
- * so node/npm won't be in PATH unless we resolve it explicitly.
- */
-function resolveUserShellPath(): string | null {
-  if (process.platform === 'win32') return null;
-
-  try {
-    const shell = process.env.SHELL || '/bin/bash';
-    // Use non-interactive login shell to avoid side effects in interactive startup scripts.
-    const result = execSync(`${shell} -lc 'echo __PATH__=$PATH'`, {
-      encoding: 'utf-8',
-      timeout: 5000,
-      env: { ...process.env },
-    });
-    const match = result.match(/__PATH__=(.+)/);
-    return match ? match[1].trim() : null;
-  } catch (error) {
-    console.warn('[skills] Failed to resolve user shell PATH:', error);
-    return null;
-  }
-}
 
 /**
  * Check if a command exists in the given environment.
