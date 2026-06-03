@@ -17,7 +17,6 @@ function isMacTarget(context) {
 }
 
 function resolveTargetArch(context) {
-  if (context?.arch === 4) return 'universal';
   if (context?.arch === 3) return 'arm64';
   if (context?.arch === 0) return 'ia32';
   if (context?.arch === 1) return 'x64';
@@ -31,9 +30,6 @@ function resolveOpenClawRuntimeTargetId(context) {
   const arch = resolveTargetArch(context);
 
   if (platform === 'darwin') {
-    if (arch === 'universal') {
-      return 'mac-universal';
-    }
     return arch === 'x64' ? 'mac-x64' : 'mac-arm64';
   }
   if (platform === 'win32') {
@@ -71,14 +67,6 @@ function syncCurrentOpenClawRuntimeForTarget(context) {
   const runtimeBase = path.join(__dirname, '..', 'vendor', 'openclaw-runtime');
   const currentRoot = path.join(runtimeBase, 'current');
   const targetId = resolveOpenClawRuntimeTargetId(context);
-  const buildHint = getOpenClawRuntimeBuildHint(targetId);
-
-  if (targetId === 'mac-universal') {
-    throw new Error(
-      '[electron-builder-hooks] macOS universal packaging is not supported because OpenClaw runtime is architecture-specific. '
-      + 'Build separate packages with `npm run dist:mac:x64:full` and `npm run dist:mac:arm64:full`.',
-    );
-  }
 
   if (!targetId) {
     return { runtimeRoot: currentRoot, targetId: null };
@@ -86,23 +74,7 @@ function syncCurrentOpenClawRuntimeForTarget(context) {
 
   const targetRoot = path.join(runtimeBase, targetId);
   if (!existsSync(targetRoot)) {
-    if (isMacTarget(context)) {
-      throw new Error(
-        '[electron-builder-hooks] Target OpenClaw runtime is missing: '
-        + targetRoot
-        + `. Run \`${buildHint}\` before packaging.`,
-      );
-    }
     return { runtimeRoot: currentRoot, targetId };
-  }
-
-  const targetBuildInfo = readRuntimeBuildInfo(targetRoot);
-  if (isMacTarget(context) && targetBuildInfo?.target !== targetId) {
-    throw new Error(
-      '[electron-builder-hooks] Target OpenClaw runtime metadata does not match the macOS package architecture. '
-      + `Expected ${targetId}, got ${targetBuildInfo?.target || 'unknown'}. `
-      + `Run \`${buildHint}\` before packaging.`,
-    );
   }
 
   const currentBuildInfo = readRuntimeBuildInfo(currentRoot);
@@ -511,7 +483,9 @@ function installSkillDependencies() {
 }
 
 async function beforePack(context) {
-  ensureBundledOpenClawRuntime(context);
+  if (!isMacTarget(context)) {
+    ensureBundledOpenClawRuntime(context);
+  }
   // Install skill dependencies first (for all platforms)
   installSkillDependencies();
 

@@ -237,18 +237,12 @@ npm run lint
 # macOS
 npm run dist:mac
 
-# macOS single-architecture packages with bundled OpenClaw runtime
-npm run openclaw:runtime:mac-x64
+# macOS single-architecture packages
 npm run dist:mac:x64
-npm run openclaw:runtime:mac-arm64
 npm run dist:mac:arm64
 
-# Convenience commands for release-style local builds
-npm run dist:mac:x64:full
-npm run dist:mac:arm64:full
-
-# Do not use npm run dist:mac:universal until native modules and OpenClaw
-# runtime have an explicit merge strategy for both macOS architectures.
+# Do not use npm run dist:mac:universal until native modules have an
+# explicit merge strategy for both macOS architectures.
 
 # Windows
 npm run dist:win

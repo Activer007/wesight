@@ -35,7 +35,7 @@ jobs:
           node -e "if (process.arch !== 'arm64') process.exit(1)"
 
       - name: Build macOS arm64
-        run: npm run dist:mac:arm64:full
+        run: npm run dist:mac:arm64 -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
@@ -70,7 +70,7 @@ jobs:
           node -e "if (process.arch !== 'x64') process.exit(1)"
 
       - name: Build macOS x64
-        run: npm run dist:mac:x64:full
+        run: npm run dist:mac:x64 -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 

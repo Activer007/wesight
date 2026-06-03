@@ -77,13 +77,6 @@
     },
     "extraResources": [
       {
-        "from": "vendor/openclaw-runtime/current",
-        "to": "cfmind",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
         "from": "SKILLs",
         "to": "SKILLs",
         "filter": [

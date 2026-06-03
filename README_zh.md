@@ -237,17 +237,11 @@ npm run lint
 # macOS
 npm run dist:mac
 
-# 带内置 OpenClaw runtime 的 macOS 单架构包
-npm run openclaw:runtime:mac-x64
+# macOS 单架构安装包
 npm run dist:mac:x64
-npm run openclaw:runtime:mac-arm64
 npm run dist:mac:arm64
 
-# 发布风格本地构建便捷命令
-npm run dist:mac:x64:full
-npm run dist:mac:arm64:full
-
-# 在 native modules 和 OpenClaw runtime 具备双架构合并策略前，不要使用 npm run dist:mac:universal
+# 在 native modules 具备双架构合并策略前，不要使用 npm run dist:mac:universal
 
 # Windows
 npm run dist:win

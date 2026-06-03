@@ -4,14 +4,19 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const MacRuntimeTarget = {
+const MacArtifactTarget = {
   X64: 'mac-x64',
   Arm64: 'mac-arm64',
 };
 
 const NativeArchToken = {
-  [MacRuntimeTarget.X64]: 'x86_64',
-  [MacRuntimeTarget.Arm64]: 'arm64',
+  [MacArtifactTarget.X64]: 'x86_64',
+  [MacArtifactTarget.Arm64]: 'arm64',
+};
+
+const NativeTargetPathToken = {
+  [MacArtifactTarget.X64]: ['x64-darwin', 'darwin-x64'],
+  [MacArtifactTarget.Arm64]: ['arm64-darwin', 'darwin-arm64'],
 };
 
 const rootDir = path.resolve(__dirname, '..');
@@ -26,16 +31,8 @@ function log(message) {
   console.log(`[verify-mac-artifact] ${message}`);
 }
 
-if (!Object.values(MacRuntimeTarget).includes(target)) {
-  fail(`Usage: node scripts/verify-mac-artifact.cjs ${MacRuntimeTarget.X64}|${MacRuntimeTarget.Arm64}`);
-}
-
-function readJson(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return null;
-  }
+if (!Object.values(MacArtifactTarget).includes(target)) {
+  fail(`Usage: node scripts/verify-mac-artifact.cjs ${MacArtifactTarget.X64}|${MacArtifactTarget.Arm64}`);
 }
 
 function walk(dir, visitor) {
@@ -62,24 +59,6 @@ function findPackagedApps() {
   return apps.sort();
 }
 
-function readRuntimeTarget(appPath) {
-  const buildInfoPath = path.join(
-    appPath,
-    'Contents',
-    'Resources',
-    'cfmind',
-    'runtime-build-info.json',
-  );
-  const buildInfo = readJson(buildInfoPath);
-  return typeof buildInfo?.target === 'string' ? buildInfo.target : null;
-}
-
-function selectApp(apps) {
-  const matching = apps.find((appPath) => readRuntimeTarget(appPath) === target);
-  if (matching) return matching;
-  return apps[0] || null;
-}
-
 function runFile(filePath) {
   const result = spawnSync('file', [filePath], {
     encoding: 'utf8',
@@ -91,6 +70,15 @@ function runFile(filePath) {
   return (result.stdout || '').trim();
 }
 
+function selectApp(apps, expectedToken) {
+  const matching = apps.find((appPath) => {
+    const executablePath = path.join(appPath, 'Contents', 'MacOS', 'WeSight');
+    return fs.existsSync(executablePath) && runFile(executablePath).includes(expectedToken);
+  });
+  if (matching) return matching;
+  return apps[0] || null;
+}
+
 function assertFileHasArch(filePath, expectedToken) {
   const output = runFile(filePath);
   if (!output.includes(expectedToken)) {
@@ -99,17 +87,25 @@ function assertFileHasArch(filePath, expectedToken) {
   log(output);
 }
 
+function shouldInspectNativeModule(filePath) {
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  const targetPathTokens = NativeTargetPathToken[target];
+  if (targetPathTokens.some((token) => normalizedPath.includes(`/${token}/`) || normalizedPath.includes(`/${token}.node`))) {
+    return true;
+  }
+
+  const packagedTargetPattern = /\/(?:x64|arm64)-(?:darwin|linux|win32)\/|\/(?:darwin|linux|win32)-(?:x64|arm64)\//;
+  return !packagedTargetPattern.test(normalizedPath);
+}
+
 const apps = findPackagedApps();
-const appPath = selectApp(apps);
+const expectedArchToken = NativeArchToken[target];
+const appPath = selectApp(apps, expectedArchToken);
 if (!appPath) {
   fail(`No packaged .app found under ${path.join(rootDir, 'release')}`);
 }
 
-const resourcesDir = path.join(appPath, 'Contents', 'Resources');
-const cfmindDir = path.join(resourcesDir, 'cfmind');
-const buildInfoPath = path.join(cfmindDir, 'runtime-build-info.json');
 const executablePath = path.join(appPath, 'Contents', 'MacOS', 'WeSight');
-const expectedArchToken = NativeArchToken[target];
 
 log(`Checking ${appPath}`);
 
@@ -118,23 +114,17 @@ if (!fs.existsSync(executablePath)) {
 }
 assertFileHasArch(executablePath, expectedArchToken);
 
-if (!fs.existsSync(cfmindDir)) {
-  fail(`Packaged OpenClaw runtime is missing: ${cfmindDir}`);
-}
-if (!fs.existsSync(buildInfoPath)) {
-  fail(`OpenClaw runtime build metadata is missing: ${buildInfoPath}`);
-}
-
-const buildInfo = readJson(buildInfoPath);
-if (buildInfo?.target !== target) {
-  fail(`Expected OpenClaw runtime target ${target}, got ${buildInfo?.target || 'unknown'}`);
-}
-log(`OpenClaw runtime target verified: ${target}`);
-
 const nativeModules = [];
+const skippedNativeModules = [];
 walk(appPath, (candidate, entry) => {
-  if (entry.isFile() && candidate.endsWith('.node')) {
+  if (!entry.isFile() || !candidate.endsWith('.node')) {
+    return;
+  }
+
+  if (shouldInspectNativeModule(candidate)) {
     nativeModules.push(candidate);
+  } else {
+    skippedNativeModules.push(candidate);
   }
 });
 
@@ -147,3 +137,6 @@ for (const nativeModule of nativeModules.sort()) {
 }
 
 log(`Verified ${nativeModules.length} native module(s).`);
+if (skippedNativeModules.length > 0) {
+  log(`Skipped ${skippedNativeModules.length} non-target vendor native module(s).`);
+}
