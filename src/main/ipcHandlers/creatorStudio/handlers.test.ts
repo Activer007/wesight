@@ -91,6 +91,7 @@ const createStore = () => ({
   retryBatchTask: vi.fn(() => ({ id: 'batch-1', projectId: 'project-1', tasks: [] })),
   skipBatchTask: vi.fn(() => ({ id: 'batch-1', projectId: 'project-1', tasks: [] })),
   failBatchTask: vi.fn(() => ({ id: 'batch-1', projectId: 'project-1', tasks: [] })),
+  prepareImageProcessingAsset: vi.fn(async (asset) => asset),
   createImageProcessingAsset: vi.fn(),
   getImageProcessingPlan: vi.fn(() => null),
   executeImageProcessingPlan: vi.fn(),

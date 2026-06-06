@@ -1,4 +1,5 @@
 import type {
+  CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
   CreatorImageProcessingJobStatus,
@@ -45,6 +46,15 @@ export interface CreatorImageProcessingInputItem {
   sourceAssetId: string | null;
   sourcePath: string;
   metadata: CreatorImageMetadata | null;
+  imageSource?: {
+    assetQuality: CreatorImageAssetQuality;
+    originalPath?: string | null;
+    thumbnailPath?: string | null;
+    originalUrl?: string | null;
+    thumbnailUrl?: string | null;
+    resolvedPath: string;
+    resolvedReason: string;
+  };
 }
 
 export interface CreatorImageProcessingOperationStep {

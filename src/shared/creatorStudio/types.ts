@@ -5,6 +5,7 @@ import type {
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
   CreatorCreativeModelOutputKind,
+  CreatorImageAssetQuality,
   CreatorImageProcessingOutputFormat,
   CreatorImageProcessingPresetId,
   CreatorProductionAssetKind,
@@ -243,8 +244,23 @@ export interface CreatorProductionAssetRecord {
   createdAt: number;
   updatedAt: number;
   sourceSessionAvailable: boolean;
+  imageSource: CreatorImageSourceFile | null;
   imageMetadata: CreatorImageMetadata | null;
   imageProcessing: CreatorImageProcessingAssetMetadata | null;
+}
+
+export interface CreatorImageSourceFile {
+  assetQuality: CreatorImageAssetQuality;
+  localPath: string | null;
+  originalPath: string | null;
+  thumbnailPath: string | null;
+  originalUrl: string | null;
+  thumbnailUrl: string | null;
+  provider: string | null;
+  resolvedPath: string | null;
+  resolvedReason: string | null;
+  downloadedAt?: number | null;
+  downloadError?: string | null;
 }
 
 export interface CreatorImageProcessingAssetMetadata {
@@ -292,6 +308,7 @@ export interface CreatorImageProcessingAssetCreateInput {
 
 export interface CreatorProductionAssetSourceLookup {
   asset: CreatorProductionAssetRecord;
+  sourceAsset: CreatorProductionAssetRecord | null;
   session: {
     id: string;
     title: string;

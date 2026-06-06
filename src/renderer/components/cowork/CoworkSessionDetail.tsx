@@ -426,6 +426,11 @@ type GeneratedImage = {
   name?: string;
   mimeType?: string;
   source?: string;
+  assetQuality?: string;
+  originalPath?: string;
+  thumbnailPath?: string;
+  originalUrl?: string;
+  thumbnailUrl?: string;
 };
 
 type ExpandedGeneratedImage = {

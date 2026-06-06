@@ -10,6 +10,7 @@ import {
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
+  CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
   CreatorImageProcessingJobStatus,
@@ -264,6 +265,45 @@ describe('CreatorAssetStore', () => {
       fileSize: 2048,
       status: CreatorImageMetadataStatus.Ready,
       warningCodes: ['large_pixel_count'],
+    });
+  });
+
+  test('preserves thumbnail and remote original source metadata for imported images', () => {
+    db.prepare('INSERT INTO cowork_sessions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('session-remote-original', 'Creative Producer', 'running', 1, 1);
+    const thumbnailPath = path.join(tempDir, 'thumbnail.png');
+    store.handleCoworkMessageInserted({
+      sessionId: 'session-remote-original',
+      message: {
+        id: 'message-remote-original',
+        type: 'assistant',
+        content: 'Generated image',
+        timestamp: 20,
+        sequence: 2,
+        metadata: {
+          generatedImages: [{
+            path: thumbnailPath,
+            name: 'thumbnail.png',
+            mimeType: 'image/png',
+            assetQuality: CreatorImageAssetQuality.Thumbnail,
+            thumbnailPath,
+            originalUrl: 'https://raw.githubusercontent.com/example/project/main/data/images/original.png',
+            thumbnailUrl: './creator-studio/images/thumbnail.png',
+            source: 'creator_import',
+          }],
+        },
+      },
+    });
+
+    const asset = store.listAssets().assets[0];
+
+    expect(asset.status).toBe(CreatorProductionAssetStatus.Ready);
+    expect(asset.imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Thumbnail,
+      localPath: thumbnailPath,
+      thumbnailPath,
+      originalUrl: 'https://raw.githubusercontent.com/example/project/main/data/images/original.png',
+      thumbnailUrl: './creator-studio/images/thumbnail.png',
     });
   });
 
@@ -1210,6 +1250,7 @@ describe('CreatorAssetStore', () => {
     expect(derived.licenseNote).toBe('license');
     expect(derived.usageNote).toBe('usage');
     expect(derived.imageMetadata?.format).toBe(CreatorImageProcessingOutputFormat.Webp);
+    expect(store.getAssetSource(derived.id)?.sourceAsset?.id).toBe('source-asset');
 
     const row = db.prepare('SELECT metadata FROM production_assets WHERE id = ?').get(derived.id) as { metadata: string };
     const metadata = JSON.parse(row.metadata) as { processing?: { sourceAssetId?: string; plan?: { id?: string } } };

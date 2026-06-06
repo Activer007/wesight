@@ -4,6 +4,7 @@ import {
   CreatorBatchRunKind,
   CreatorFeatureFlag,
   CreatorFeatureFlagDefaults,
+  CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
   CreatorImageProcessingJobStatus,
@@ -17,6 +18,7 @@ import {
   CreatorProductionAssetSource,
   isCreatorBatchRunKind,
   isCreatorFeatureFlag,
+  isCreatorImageAssetQuality,
   isCreatorImageMetadataStatus,
   isCreatorImageProcessingCreatedBy,
   isCreatorImageProcessingJobStatus,
@@ -36,6 +38,8 @@ test('accepts creator image processing constants through type guards', () => {
   expect(isCreatorProductionAssetSource(CreatorProductionAssetSource.LocalImageProcessing)).toBe(true);
   expect(isCreatorProductionAssetSource(CreatorProductionAssetSource.RecipePostProcessing)).toBe(true);
   expect(isCreatorBatchRunKind(CreatorBatchRunKind.ImageProcessing)).toBe(true);
+  expect(isCreatorImageAssetQuality(CreatorImageAssetQuality.Original)).toBe(true);
+  expect(isCreatorImageAssetQuality(CreatorImageAssetQuality.Thumbnail)).toBe(true);
   expect(isCreatorImageMetadataStatus(CreatorImageMetadataStatus.Ready)).toBe(true);
   expect(isCreatorImageProcessingSourceKind(CreatorImageProcessingSourceKind.CreatorAsset)).toBe(true);
   expect(isCreatorImageProcessingPlanStatus(CreatorImageProcessingPlanStatus.Ready)).toBe(true);
@@ -51,6 +55,7 @@ test('accepts creator image processing constants through type guards', () => {
 test('rejects non-string image processing constants', () => {
   expect(isCreatorFeatureFlag(null)).toBe(false);
   expect(isCreatorBatchRunKind(undefined)).toBe(false);
+  expect(isCreatorImageAssetQuality('full')).toBe(false);
   expect(isCreatorImageMetadataStatus(Symbol('status'))).toBe(false);
   expect(isCreatorImageProcessingSourceKind({})).toBe(false);
   expect(isCreatorImageProcessingPlanStatus(1)).toBe(false);

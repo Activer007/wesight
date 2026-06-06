@@ -1,4 +1,5 @@
 import {
+  CreatorImageAssetQuality,
   CreatorImageProcessingRisk,
 } from '@shared/creatorStudio/constants';
 import type { CreatorImageProcessingPlan } from '@shared/creatorStudio/imageProcessingTypes';
@@ -15,6 +16,18 @@ const riskClassName = (risk: CreatorImageProcessingRisk): string => {
     case CreatorImageProcessingRisk.Low:
     default:
       return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+  }
+};
+
+const getImageSourceQualityLabel = (quality: CreatorImageAssetQuality | undefined): string => {
+  switch (quality) {
+    case CreatorImageAssetQuality.Original:
+      return i18nService.t('creatorImageSourceOriginal');
+    case CreatorImageAssetQuality.Thumbnail:
+      return i18nService.t('creatorImageSourceThumbnail');
+    case CreatorImageAssetQuality.Unknown:
+    default:
+      return i18nService.t('creatorImageSourceUnknown');
   }
 };
 
@@ -46,6 +59,14 @@ export const ImageProcessingPlanCard: React.FC<{
         <span className="text-muted">{i18nService.t('creatorImageProcessingQuality')}</span>
         <span className="text-secondary">{plan.output.quality ?? i18nService.t('creatorImageUnknown')}</span>
       </div>
+      {plan.inputItems.map((item) => (
+        <div key={item.id} className="flex justify-between gap-3">
+          <span className="text-muted">{i18nService.t('creatorImageProcessingInputSource')}</span>
+          <span className="truncate text-right text-secondary">
+            {getImageSourceQualityLabel(item.imageSource?.assetQuality)}
+          </span>
+        </div>
+      ))}
       {plan.outputItems.map((item) => (
         <div key={item.inputItemId} className="rounded-lg bg-surface-raised p-2">
           <div className="flex justify-between gap-3">

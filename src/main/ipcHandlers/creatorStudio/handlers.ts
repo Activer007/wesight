@@ -279,10 +279,7 @@ export const registerCreatorStudioIpcHandlers = (
       if (!asset || asset.kind !== CreatorProductionAssetKind.Image) {
         return { success: false, error: 'Image asset not found' };
       }
-      if (!asset.imageMetadata) {
-        const inspected = await store.inspectImageAsset({ assetId: asset.id });
-        asset = inspected?.asset ?? asset;
-      }
+      asset = await store.prepareImageProcessingAsset(asset);
       const plan = createCreatorAssetImageProcessingPlan({
         asset,
         presetId: normalized.presetId,

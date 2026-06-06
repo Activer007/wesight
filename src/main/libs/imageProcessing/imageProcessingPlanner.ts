@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import path from 'path';
 
 import {
+  CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
   CreatorImageProcessingOperation,
@@ -288,6 +289,30 @@ const buildWarnings = (
         details: { inputItemId: item.id },
       });
     }
+
+    if (
+      item.imageSource?.assetQuality === CreatorImageAssetQuality.Thumbnail
+      || item.metadata?.warningCodes.includes('using_thumbnail_source')
+    ) {
+      warnings.push({
+        code: 'using_thumbnail_source',
+        severity: CreatorImageProcessingRisk.Medium,
+        messageKey: 'creatorImageProcessingWarningUsingThumbnail',
+        details: {
+          inputItemId: item.id,
+          resolvedPath: item.imageSource?.resolvedPath ?? item.sourcePath,
+        },
+      });
+    }
+
+    if (item.metadata?.warningCodes.includes('original_download_failed')) {
+      warnings.push({
+        code: 'original_download_failed',
+        severity: CreatorImageProcessingRisk.Medium,
+        messageKey: 'creatorImageProcessingWarningOriginalDownloadFailed',
+        details: { inputItemId: item.id },
+      });
+    }
   }
 
   for (const outputItem of outputItems) {
@@ -528,6 +553,17 @@ export const createCreatorAssetImageProcessingPlan = (
       sourceAssetId: input.asset.id,
       sourcePath: input.asset.filePath,
       metadata: input.asset.imageMetadata,
+      imageSource: input.asset.imageSource
+        ? {
+          assetQuality: input.asset.imageSource.assetQuality,
+          originalPath: input.asset.imageSource.originalPath,
+          thumbnailPath: input.asset.imageSource.thumbnailPath,
+          originalUrl: input.asset.imageSource.originalUrl,
+          thumbnailUrl: input.asset.imageSource.thumbnailUrl,
+          resolvedPath: input.asset.imageSource.resolvedPath ?? input.asset.filePath,
+          resolvedReason: input.asset.imageSource.resolvedReason ?? 'local',
+        }
+        : undefined,
     }],
     presetId: fallbackPreset.id,
     operations,
@@ -593,6 +629,17 @@ export const createCreatorAssetsImageProcessingPlan = (
       sourceAssetId: asset.id,
       sourcePath: asset.filePath,
       metadata: asset.imageMetadata,
+      imageSource: asset.imageSource
+        ? {
+          assetQuality: asset.imageSource.assetQuality,
+          originalPath: asset.imageSource.originalPath,
+          thumbnailPath: asset.imageSource.thumbnailPath,
+          originalUrl: asset.imageSource.originalUrl,
+          thumbnailUrl: asset.imageSource.thumbnailUrl,
+          resolvedPath: asset.imageSource.resolvedPath ?? asset.filePath,
+          resolvedReason: asset.imageSource.resolvedReason ?? 'local',
+        }
+        : undefined,
     })),
     presetId: fallbackPreset.id,
     operations,

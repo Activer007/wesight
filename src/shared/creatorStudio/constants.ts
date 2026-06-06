@@ -296,6 +296,21 @@ export const CreatorImageMetadataStatusValues = [
   CreatorImageMetadataStatus.Missing,
 ] as const;
 
+export const CreatorImageAssetQuality = {
+  Original: 'original',
+  Thumbnail: 'thumbnail',
+  Unknown: 'unknown',
+} as const;
+
+export type CreatorImageAssetQuality =
+  typeof CreatorImageAssetQuality[keyof typeof CreatorImageAssetQuality];
+
+export const CreatorImageAssetQualityValues = [
+  CreatorImageAssetQuality.Original,
+  CreatorImageAssetQuality.Thumbnail,
+  CreatorImageAssetQuality.Unknown,
+] as const;
+
 export const CreatorImageProcessingSourceKind = {
   CreatorAsset: 'creator_asset',
   CoworkGeneratedImage: 'cowork_generated_image',
@@ -560,6 +575,11 @@ export const isCreatorBatchRunKind = (value: unknown): value is CreatorBatchRunK
 export const isCreatorImageMetadataStatus = (value: unknown): value is CreatorImageMetadataStatus => (
   typeof value === 'string'
   && CreatorImageMetadataStatusValues.includes(value as CreatorImageMetadataStatus)
+);
+
+export const isCreatorImageAssetQuality = (value: unknown): value is CreatorImageAssetQuality => (
+  typeof value === 'string'
+  && CreatorImageAssetQualityValues.includes(value as CreatorImageAssetQuality)
 );
 
 export const isCreatorImageProcessingSourceKind = (

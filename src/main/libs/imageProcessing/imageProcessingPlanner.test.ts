@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 
 import {
+  CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
   CreatorImageProcessingJobStatus,
@@ -109,6 +110,37 @@ test('adds risk warnings for alpha images converted to jpeg', () => {
   expect(plan.warnings).toEqual([expect.objectContaining({
     severity: CreatorImageProcessingRisk.Medium,
   })]);
+  expect(plan.estimatedRisk).toBe(CreatorImageProcessingRisk.Medium);
+});
+
+test('warns when a plan will process a thumbnail fallback', () => {
+  const plan = createImageProcessingPlan({
+    id: 'plan-1',
+    projectId: 'project-1',
+    source: {
+      sourceKind: CreatorImageProcessingSourceKind.CreatorAsset,
+      assetId: 'asset-1',
+    },
+    inputItems: [{
+      ...createInputItem(createMetadata({
+        warningCodes: ['using_thumbnail_source'],
+      })),
+      imageSource: {
+        assetQuality: CreatorImageAssetQuality.Thumbnail,
+        originalUrl: 'https://example.com/original.png',
+        thumbnailUrl: './creator-studio/images/thumb.png',
+        resolvedPath: '/workspace/thumb.png',
+        resolvedReason: 'thumbnail_fallback',
+      },
+    }],
+    now: 456,
+  });
+
+  expect(plan.warnings).toContainEqual(expect.objectContaining({
+    code: 'using_thumbnail_source',
+    messageKey: 'creatorImageProcessingWarningUsingThumbnail',
+    severity: CreatorImageProcessingRisk.Medium,
+  }));
   expect(plan.estimatedRisk).toBe(CreatorImageProcessingRisk.Medium);
 });
 

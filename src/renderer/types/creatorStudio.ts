@@ -16,6 +16,8 @@ export interface CreatorStudioCase {
   sourceCaseId: number;
   title: string;
   image: string | null;
+  imageThumbnailPath?: string | null;
+  imageOriginalUrl?: string | null;
   imageOriginal: CreatorStudioImageMetadata | null;
   imageThumbnail: CreatorStudioImageMetadata | null;
   imageAlt: string;
@@ -59,6 +61,8 @@ export interface CreatorStudioTemplate {
   id: string;
   anchor: string;
   cover: string | null;
+  coverThumbnailPath?: string | null;
+  coverOriginalUrl?: string | null;
   title: LocalizedText;
   description: LocalizedText;
   category: string;
@@ -148,6 +152,7 @@ export type CreatorMaterialRole = typeof CreatorMaterialRole[keyof typeof Creato
 export const CreatorMaterialSource = {
   File: 'file',
   Clipboard: 'clipboard',
+  Case: 'case',
 } as const;
 
 export type CreatorMaterialSource = typeof CreatorMaterialSource[keyof typeof CreatorMaterialSource];
@@ -184,6 +189,9 @@ export interface CreatorBuilderMaterial {
   mimeType: string;
   size: number;
   previewUrl: string;
+  assetQuality?: 'original' | 'thumbnail' | 'unknown';
+  originalUrl?: string | null;
+  thumbnailUrl?: string | null;
   dataUrl?: string;
   imageAnalysis?: CreatorMaterialImageAnalysis;
   addedAt: number;
@@ -208,6 +216,9 @@ export interface CreatorPromptMaterial {
   name: string;
   path: string;
   mimeType: string;
+  assetQuality?: 'original' | 'thumbnail' | 'unknown';
+  originalUrl?: string | null;
+  thumbnailUrl?: string | null;
   hasImageAttachment: boolean;
   localPathAvailable: boolean;
   priority?: string;

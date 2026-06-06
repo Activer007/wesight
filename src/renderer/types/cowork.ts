@@ -60,7 +60,17 @@ export interface CoworkMessageMetadata {
   isFinal?: boolean;
   isThinking?: boolean;
   skillIds?: string[];  // Skills used for this message
-  generatedImages?: Array<{ path: string; name?: string; mimeType?: string; source?: string }>;
+  generatedImages?: Array<{
+    path: string;
+    name?: string;
+    mimeType?: string;
+    source?: string;
+    assetQuality?: string;
+    originalPath?: string;
+    thumbnailPath?: string;
+    originalUrl?: string;
+    thumbnailUrl?: string;
+  }>;
   [key: string]: unknown;
 }
 

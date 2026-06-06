@@ -302,6 +302,12 @@ const getAssetCases = (asset: CreatorProductionAssetRecord): CreatorStudioCase[]
     .filter((item): item is CreatorStudioCase => Boolean(item))
 );
 
+const hasOpenableAssetSource = (asset: CreatorProductionAssetRecord): boolean => (
+  asset.sourceSessionAvailable
+  || Boolean(asset.variantOfAssetId)
+  || Boolean(asset.imageProcessing?.sourceAssetId)
+);
+
 const isReadmeBannerPackRecipe = (recipe: CreatorRecipeRecord): boolean => {
   const output = recipe.defaultOutput;
   if (!output || typeof output !== 'object' || Array.isArray(output)) return false;
@@ -562,12 +568,12 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   };
 
   const handleOpenSource = async (asset: CreatorProductionAssetRecord) => {
-    if (!asset.sessionId) {
-      dispatchToast(i18nService.t('creatorAssetSourceUnavailable'));
-      return;
-    }
     try {
       const sourceLookup = await creatorStudioAssetService.getAssetSource(asset.id);
+      if (sourceLookup?.sourceAsset) {
+        setSelectedAsset(sourceLookup.sourceAsset);
+        return;
+      }
       if (!sourceLookup?.session) {
         dispatchToast(i18nService.t('creatorAssetSourceUnavailable'));
         await loadAssets();
@@ -1098,7 +1104,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                     ))}
                   </select>
                   <div className="text-xs text-muted">{new Date(asset.createdAt).toLocaleString()}</div>
-                  {!asset.sourceSessionAvailable && (
+                  {!hasOpenableAssetSource(asset) && (
                     <div className="text-xs text-muted">{i18nService.t('creatorAssetSourceMissing')}</div>
                   )}
                 </div>
@@ -1112,7 +1118,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   <IconAction label={i18nService.t('copy')} onClick={() => void handleCopyPrompt(asset)}>
                     <ClipboardDocumentIcon className="h-4 w-4" />
                   </IconAction>
-                  <IconAction label={i18nService.t('creatorAssetSource')} onClick={() => void handleOpenSource(asset)} disabled={!asset.sourceSessionAvailable}>
+                  <IconAction label={i18nService.t('creatorAssetSource')} onClick={() => void handleOpenSource(asset)} disabled={!hasOpenableAssetSource(asset)}>
                     <ArrowTopRightOnSquareIcon className="h-4 w-4" />
                   </IconAction>
                   <IconAction label={i18nService.t('creatorAssetDetails')} onClick={() => setSelectedAsset(asset)}>
@@ -1341,7 +1347,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                 <button type="button" onClick={() => onSendAssetToCowork(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground">
                   {i18nService.t('creatorAssetSendToCowork')}
                 </button>
-                <button type="button" onClick={() => void handleOpenSource(selectedAsset)} disabled={!selectedAsset.sourceSessionAvailable} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={() => void handleOpenSource(selectedAsset)} disabled={!hasOpenableAssetSource(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
                   {i18nService.t('creatorAssetSource')}
                 </button>
                 <button type="button" onClick={() => void handleRevealAsset(selectedAsset)} disabled={!selectedAssetCanReveal} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">

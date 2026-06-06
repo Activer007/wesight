@@ -11,7 +11,7 @@
       "styleLibrary": "refer/awesome-gpt-image-2/data/style-library.json"
     }
   },
-  "importedAt": "2026-06-05T09:32:17.266Z",
+  "importedAt": "2026-06-06T08:24:39.252Z",
   "counts": {
     "cases": 490,
     "categories": 13,
@@ -22,6 +22,8 @@
   "runtimeDependency": {
     "referPathRequired": false,
     "imageAssetsCopied": false,
+    "originalImagesCopied": false,
+    "originalImagesRemote": true,
     "thumbnailsCopied": true,
     "thumbnailMaxSize": 640,
     "thumbnailPath": "public/creator-studio/images"
