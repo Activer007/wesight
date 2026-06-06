@@ -24,6 +24,7 @@ import {
   CreatorRecipeImageProcessingPackKind,
   CreatorRecipeOutputKind,
   CreatorStudioDefaultProjectId,
+  CreatorStudioIpcChannel,
   isCreatorRecipeImageProcessingPackKind,
   isCreatorRecipeOutputKind,
   isCreatorRecipeOutputSchemaVersion,
@@ -357,6 +358,12 @@ const canPostProcessAsset = (asset: CreatorProductionAssetRecord): boolean => (
   )
 );
 
+const isMissingCreatorCaseImageHandlerError = (error: unknown): boolean => (
+  error instanceof Error
+  && error.message.includes('No handler registered')
+  && error.message.includes(CreatorStudioIpcChannel.AssetCreateCaseImage)
+);
+
 const isReadmeBannerPackRecipe = (recipe: CreatorRecipeRecord): boolean => {
   const output = recipe.defaultOutput;
   if (!output || typeof output !== 'object' || Array.isArray(output)) return false;
@@ -660,7 +667,9 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
       }
       setPostProcessingAsset(imageAsset);
     } catch (error) {
-      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingSourceMapFailed'));
+      dispatchToast(isMissingCreatorCaseImageHandlerError(error)
+        ? i18nService.t('creatorImageProcessingRestartRequired')
+        : error instanceof Error ? error.message : i18nService.t('creatorImageProcessingSourceMapFailed'));
     }
   };
 
