@@ -131,6 +131,25 @@ test('falls back to thumbnail when original download is rejected', async () => {
   expect(resolved.imageSource.downloadError).toContain('HTTPS');
 });
 
+test('falls back from virtual case image paths to bundled thumbnail files', async () => {
+  const asset = createAsset('creator://case-image/case206');
+  asset.imageSource = buildCreatorImageSourceFile({
+    localPath: 'creator://case-image/case206',
+    assetQuality: CreatorImageAssetQuality.Thumbnail,
+    originalUrl: 'http://example.com/original.png',
+    thumbnailUrl: './creator-studio/images/case206.jpg',
+  });
+
+  const resolved = await resolveCreatorImageSourceForProcessing(asset);
+
+  expect(resolved.sourcePath).toBe(path.resolve(process.cwd(), 'public', 'creator-studio/images/case206.jpg'));
+  expect(resolved.imageSource.resolvedReason).toBe('thumbnail_fallback');
+  expect(resolved.warningCodes).toEqual([
+    'original_download_failed',
+    'using_thumbnail_source',
+  ]);
+});
+
 test('can inspect local thumbnails without downloading remote originals', async () => {
   const thumbnailPath = path.join(tempDir, 'thumb.png');
   fs.writeFileSync(thumbnailPath, 'thumb');

@@ -3,7 +3,7 @@ import fs from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import sharp from 'sharp';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import {
   CreatorAssetAdoptionStatus,
@@ -45,6 +45,7 @@ import { ensureCreatorProductionSchema } from './creatorProductionSchema';
 let db: Database.Database;
 let store: CreatorAssetStore;
 let tempDir: string;
+const originalFetch = globalThis.fetch;
 
 const createCoworkTables = () => {
   db.exec(`
@@ -150,6 +151,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  globalThis.fetch = originalFetch;
   db.close();
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
@@ -669,6 +671,75 @@ describe('CreatorAssetStore', () => {
       status: CreatorImageMetadataStatus.Ready,
     });
     expect(store.listAssets({ projectId }).total).toBe(1);
+  });
+
+  test('prepares virtual creator case images by downloading the original source', async () => {
+    const workspace = store.createProject({ name: 'Case Image Original Project' });
+    const projectId = workspace.currentProjectId;
+    const originalBuffer = await sharp({
+      create: {
+        width: 44,
+        height: 28,
+        channels: 3,
+        background: { r: 30, g: 80, b: 130 },
+      },
+    }).png().toBuffer();
+    globalThis.fetch = vi.fn(async () => new Response(originalBuffer, {
+      status: 200,
+      headers: {
+        'content-type': 'image/png',
+        'content-length': String(originalBuffer.length),
+      },
+    })) as typeof fetch;
+    const imageAsset = store.createCaseImageAsset({
+      projectId,
+      caseId: 'case-original',
+      title: 'Original Remote Case',
+      promptText: 'Generate a reference image.',
+      imageThumbnailUrl: './creator-studio/images/case206.jpg',
+      imageOriginalUrl: 'https://example.com/creator-store-original.png',
+      mimeType: 'image/jpeg',
+    });
+
+    const prepared = await store.prepareImageProcessingAsset(imageAsset);
+
+    expect(prepared.filePath).not.toBe('creator://case-image/case-original');
+    expect(prepared.imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Original,
+      resolvedReason: 'downloaded_original_url',
+    });
+    expect(prepared.imageMetadata).toMatchObject({
+      width: 44,
+      height: 28,
+      status: CreatorImageMetadataStatus.Ready,
+    });
+  });
+
+  test('prepares virtual creator case images with bundled thumbnail fallback warnings', async () => {
+    const workspace = store.createProject({ name: 'Case Image Thumbnail Project' });
+    const projectId = workspace.currentProjectId;
+    const imageAsset = store.createCaseImageAsset({
+      projectId,
+      caseId: 'case-thumbnail',
+      title: 'Thumbnail Fallback Case',
+      promptText: 'Generate a reference image.',
+      imageThumbnailUrl: './creator-studio/images/case206.jpg',
+      imageOriginalUrl: 'http://example.com/original.png',
+      mimeType: 'image/jpeg',
+    });
+
+    const prepared = await store.prepareImageProcessingAsset(imageAsset);
+
+    expect(prepared.filePath).toBe(path.resolve(process.cwd(), 'public', 'creator-studio/images/case206.jpg'));
+    expect(prepared.imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Thumbnail,
+      resolvedReason: 'thumbnail_fallback',
+    });
+    expect(prepared.imageMetadata?.status).toBe(CreatorImageMetadataStatus.Ready);
+    expect(prepared.imageMetadata?.warningCodes).toEqual(expect.arrayContaining([
+      'original_download_failed',
+      'using_thumbnail_source',
+    ]));
   });
 
   test('imports a local image by reference as a ready image asset', async () => {

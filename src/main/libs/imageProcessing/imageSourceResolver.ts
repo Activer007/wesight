@@ -36,6 +36,13 @@ const normalizeLocalPath = (value: string | null): string | null => (
     : null
 );
 
+const resolveBundledCreatorImagePath = (value: string | null): string | null => {
+  if (!value?.trim()) return null;
+  const normalized = value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!normalized.startsWith('creator-studio/images/')) return null;
+  return path.resolve(process.cwd(), 'public', normalized);
+};
+
 export const parseCreatorImageSourceFile = (
   metadata: Record<string, unknown>,
   fallbackLocalPath: string,
@@ -201,8 +208,14 @@ export const resolveCreatorImageSourceForProcessing = async (
     }
   }
 
-  const localPath = current.localPath ?? asset.filePath;
-  if (localPath && fs.existsSync(localPath)) {
+  const localPathCandidates = [
+    current.localPath,
+    current.thumbnailPath,
+    resolveBundledCreatorImagePath(current.thumbnailUrl),
+    asset.filePath,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const localPath = localPathCandidates.find((candidate) => !candidate.startsWith('creator://') && fs.existsSync(candidate));
+  if (localPath) {
     if (current.assetQuality === CreatorImageAssetQuality.Thumbnail) {
       warningCodes.push('using_thumbnail_source');
     } else {

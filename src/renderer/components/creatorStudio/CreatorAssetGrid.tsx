@@ -191,6 +191,17 @@ const isRenderableImage = (asset: CreatorProductionAssetRecord): boolean => (
   && !isVirtualCreatorAssetPath(asset.filePath)
 );
 
+export const hasProcessableCreatorImageSource = (asset: CreatorProductionAssetRecord): boolean => {
+  if (asset.kind !== CreatorProductionAssetKind.Image) return false;
+  const source = asset.imageSource;
+  return isRenderableImage(asset)
+    || Boolean(source?.originalPath)
+    || Boolean(source?.originalUrl)
+    || Boolean(source?.thumbnailPath)
+    || Boolean(source?.thumbnailUrl)
+    || Boolean(source?.localPath && !isVirtualCreatorAssetPath(source.localPath));
+};
+
 const formatFileSize = (bytes: number | null | undefined): string => {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
     return i18nService.t('creatorImageUnknown');
@@ -355,12 +366,9 @@ const hasOpenableAssetSource = (asset: CreatorProductionAssetRecord): boolean =>
   || Boolean(getAssetCasePreview(asset))
 );
 
-const canPostProcessAsset = (asset: CreatorProductionAssetRecord): boolean => (
-  asset.status === CreatorProductionAssetStatus.Ready
-  && (
-    asset.kind === CreatorProductionAssetKind.Image
-    || Boolean(getAssetCasePreview(asset)?.image)
-  )
+export const canPostProcessAsset = (asset: CreatorProductionAssetRecord): boolean => (
+  hasProcessableCreatorImageSource(asset)
+  || Boolean(getAssetCasePreview(asset)?.image)
 );
 
 const isMissingCreatorCaseImageHandlerError = (error: unknown): boolean => (
@@ -672,7 +680,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
 
   const ensureImagePostProcessingAsset = async (asset: CreatorProductionAssetRecord): Promise<CreatorProductionAssetRecord | null> => {
     if (asset.kind === CreatorProductionAssetKind.Image) {
-      return asset.status === CreatorProductionAssetStatus.Ready ? asset : null;
+      return canPostProcessAsset(asset) ? asset : null;
     }
     const casePreview = getAssetCasePreview(asset);
     if (!casePreview?.image) return null;
@@ -1554,7 +1562,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   <FolderOpenIcon className="h-4 w-4" />
                   {i18nService.t('creatorAssetReveal')}
                 </button>
-                {imageProcessingEnabled && canPostProcessAsset(selectedAsset) && (
+                {imageProcessingEnabled && (
                   <button
                     type="button"
                     onClick={() => void handleOpenImagePostProcessing(selectedAsset)}
