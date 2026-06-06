@@ -1122,6 +1122,29 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     }
   };
 
+  const executeImageRecipe = async (
+    asset: CreatorProductionAssetRecord,
+    recipe: CreatorRecipeRecord,
+  ) => {
+    try {
+      const result = await creatorStudioAssetService.executeImageRecipe({
+        recipeId: recipe.id,
+        assetId: asset.id,
+      });
+      await Promise.all([
+        loadProjectAssets(asset.projectId),
+        loadImageProcessingJobs(asset.projectId),
+      ]);
+      dispatchToast(
+        result.outputAssetIds.length > 0
+          ? i18nService.t('creatorImageRecipeExecuted')
+          : i18nService.t('creatorImageProcessingCompleted')
+      );
+    } catch (error) {
+      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageRecipeExecuteFailed'));
+    }
+  };
+
   const skipBatchTask = async (taskId: string) => {
     try {
       const batchRun = await creatorStudioAssetService.skipBatchTask(taskId);
@@ -1417,9 +1440,11 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         )}
         {activeTab === CreatorStudioTab.Assets && (
           <CreatorAssetGrid
+            recipes={recipes}
             onOpenCoworkSession={onOpenCoworkSession}
             onUseAssetAsReference={useAssetAsReference}
             onSendAssetToCowork={sendAssetToCowork}
+            onExecuteImageRecipe={(asset, recipe) => void executeImageRecipe(asset, recipe)}
           />
         )}
         {activeTab === CreatorStudioTab.Board && (

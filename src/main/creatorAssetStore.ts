@@ -11,6 +11,7 @@ import {
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
   CreatorImageMetadataStatus,
+  CreatorImageProcessingCreatedBy,
   CreatorImageProcessingJobStatus,
   CreatorImageProcessingPlanStatus,
   CreatorImageProcessingSourceKind,
@@ -21,11 +22,19 @@ import {
   CreatorProductionRunSource,
   CreatorProductionRunStatus,
   CreatorPromptSpecSchemaVersion,
+  CreatorRecipeImageProcessingPackKind,
+  CreatorRecipeOutputKind,
+  CreatorRecipeOutputSchemaVersion,
   CreatorStudioDefaultProjectId,
   isCreatorImageMetadataStatus,
   isCreatorImageProcessingJobStatus,
+  isCreatorImageProcessingOutputFormat,
   isCreatorImageProcessingPlanStatus,
+  isCreatorImageProcessingPresetId,
   isCreatorImageProcessingTaskStatus,
+  isCreatorRecipeImageProcessingPackKind,
+  isCreatorRecipeOutputKind,
+  isCreatorRecipeOutputSchemaVersion,
 } from '../shared/creatorStudio/constants';
 import type {
   CreatorImageBatchCreateInput,
@@ -90,6 +99,8 @@ import type {
   CreatorPromptVersionListResult,
   CreatorPromptVersionRecord,
   CreatorRecipeCreateInput,
+  CreatorRecipeImageProcessingOutput,
+  CreatorRecipeImageProcessingRule,
   CreatorRecipeImportInput,
   CreatorRecipeListInput,
   CreatorRecipeListResult,
@@ -141,6 +152,14 @@ interface ProductionAssetRow {
   source_session_available?: number | null;
   collection_ids_json?: string | null;
   selected_status?: string | null;
+}
+
+export interface CreatorImageProcessingRecipeExecuteInput {
+  recipeId: string;
+  assetId: string;
+  ruleId?: string | null;
+  outputDirectory?: string | null;
+  waitForCompletion?: boolean;
 }
 
 interface ProductionRunRow {
@@ -375,6 +394,110 @@ const parseJsonObject = (value: string | null | undefined): Record<string, unkno
   }
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+);
+
+const optionalNumber = (value: unknown): number | null | undefined => (
+  value === null || value === undefined
+    ? value as null | undefined
+    : typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : undefined
+);
+
+const optionalString = (value: unknown): string | null | undefined => (
+  value === null || value === undefined
+    ? value as null | undefined
+    : typeof value === 'string'
+      ? value
+      : undefined
+);
+
+export const parseCreatorRecipeImageProcessingOutput = (
+  defaultOutput: unknown,
+): CreatorRecipeImageProcessingOutput | null => {
+  if (!isRecord(defaultOutput)) return null;
+  const candidate = isRecord(defaultOutput.imageProcessing)
+    ? defaultOutput.imageProcessing
+    : defaultOutput;
+  if (
+    !isCreatorRecipeOutputSchemaVersion(candidate.schemaVersion)
+    || !isCreatorRecipeOutputKind(candidate.kind)
+    || candidate.kind !== CreatorRecipeOutputKind.ImageProcessing
+    || !isCreatorRecipeImageProcessingPackKind(candidate.packKind)
+    || !Array.isArray(candidate.rules)
+  ) {
+    return null;
+  }
+
+  const rules: CreatorRecipeImageProcessingRule[] = candidate.rules
+    .filter(isRecord)
+    .map((rule): CreatorRecipeImageProcessingRule | null => {
+      const id = typeof rule.id === 'string' && rule.id.trim() ? rule.id.trim() : null;
+      const title = typeof rule.title === 'string' && rule.title.trim() ? rule.title.trim() : null;
+      const presetId = isCreatorImageProcessingPresetId(rule.presetId) ? rule.presetId : null;
+      if (!id || !title || !presetId) return null;
+      const readmeSuggestion = isRecord(rule.readmeSuggestion)
+        ? {
+          outputRelativePath: typeof rule.readmeSuggestion.outputRelativePath === 'string'
+            ? rule.readmeSuggestion.outputRelativePath
+            : '',
+          markdown: typeof rule.readmeSuggestion.markdown === 'string'
+            ? rule.readmeSuggestion.markdown
+            : '',
+          note: typeof rule.readmeSuggestion.note === 'string' ? rule.readmeSuggestion.note : null,
+        }
+        : null;
+      const parsedRule: CreatorRecipeImageProcessingRule = {
+        id,
+        title,
+        presetId,
+      };
+      if (isCreatorImageProcessingOutputFormat(rule.outputFormat)) parsedRule.outputFormat = rule.outputFormat;
+      if (optionalString(rule.outputFormat) === null) parsedRule.outputFormat = null;
+      const quality = optionalNumber(rule.quality);
+      if (quality !== undefined) parsedRule.quality = quality;
+      const width = optionalNumber(rule.width);
+      if (width !== undefined) parsedRule.width = width;
+      const height = optionalNumber(rule.height);
+      if (height !== undefined) parsedRule.height = height;
+      const maxWidth = optionalNumber(rule.maxWidth);
+      if (maxWidth !== undefined) parsedRule.maxWidth = maxWidth;
+      const maxHeight = optionalNumber(rule.maxHeight);
+      if (maxHeight !== undefined) parsedRule.maxHeight = maxHeight;
+      const cropRatio = optionalString(rule.cropRatio);
+      if (cropRatio !== undefined) parsedRule.cropRatio = cropRatio;
+      const rotate = optionalNumber(rule.rotate);
+      if (rotate !== undefined) parsedRule.rotate = rotate;
+      const outputDirectory = optionalString(rule.outputDirectory);
+      if (outputDirectory !== undefined) parsedRule.outputDirectory = outputDirectory;
+      const fileNamePattern = optionalString(rule.fileNamePattern);
+      if (fileNamePattern !== undefined) parsedRule.fileNamePattern = fileNamePattern;
+      if (readmeSuggestion) parsedRule.readmeSuggestion = readmeSuggestion;
+      return parsedRule;
+    })
+    .filter((rule): rule is CreatorRecipeImageProcessingRule => Boolean(rule));
+
+  if (rules.length === 0) return null;
+
+  return {
+    schemaVersion: CreatorRecipeOutputSchemaVersion.ImageProcessingV1,
+    kind: CreatorRecipeOutputKind.ImageProcessing,
+    packKind: candidate.packKind,
+    rules,
+    report: isRecord(candidate.report)
+      ? { enabled: candidate.report.enabled !== false }
+      : { enabled: true },
+    readmeSuggestion: isRecord(candidate.readmeSuggestion)
+      ? {
+        enabled: candidate.readmeSuggestion.enabled !== false,
+        note: typeof candidate.readmeSuggestion.note === 'string' ? candidate.readmeSuggestion.note : null,
+      }
+      : null,
+  };
+};
+
 const parseImageProcessingPlanJson = (value: string): CreatorImageProcessingPlan | null => {
   try {
     const parsed = JSON.parse(value);
@@ -435,6 +558,17 @@ const parseImageProcessingMetadata = (metadata: Record<string, unknown>): Creato
   const task = record.task && typeof record.task === 'object' && !Array.isArray(record.task)
     ? record.task as CreatorImageProcessingAssetMetadata['task']
     : null;
+  const tasks = Array.isArray(record.tasks)
+    ? record.tasks.filter((item): item is CreatorImageProcessingTask => (
+      Boolean(item) && typeof item === 'object' && !Array.isArray(item)
+    ))
+    : undefined;
+  const report = record.report && typeof record.report === 'object' && !Array.isArray(record.report)
+    ? record.report as CreatorImageProcessingAssetMetadata['report']
+    : null;
+  const readmeSuggestions = Array.isArray(record.readmeSuggestions)
+    ? record.readmeSuggestions as CreatorImageProcessingAssetMetadata['readmeSuggestions']
+    : undefined;
   const planOperations = plan?.operations ?? [];
   const operations = Array.isArray(record.operations)
     ? record.operations as CreatorImageProcessingAssetMetadata['operations']
@@ -442,11 +576,15 @@ const parseImageProcessingMetadata = (metadata: Record<string, unknown>): Creato
 
   return {
     sourceAssetId,
+    recipeId: typeof record.recipeId === 'string' ? record.recipeId : plan?.recipeId ?? null,
     presetId: typeof record.presetId === 'string' ? record.presetId : plan?.presetId ?? null,
     operations,
     plan,
     job,
     task,
+    tasks,
+    report,
+    readmeSuggestions,
   };
 };
 
@@ -1360,15 +1498,20 @@ export class CreatorAssetStore {
 
     const now = Date.now();
     const id = uuidv4();
+    const recipeId = input.recipeId ?? input.plan.recipeId ?? sourceAsset.recipeId;
+    const isRecipeProcessing = Boolean(input.recipeId ?? input.plan.recipeId)
+      || input.plan.createdBy === CreatorImageProcessingCreatedBy.Recipe;
     const metadata = {
       imageMetadata: input.imageMetadata,
       processing: {
         sourceAssetId: sourceAsset.id,
+        recipeId,
         plan: input.plan,
         job: input.job,
         task: input.task,
         presetId: input.plan.presetId,
         operations: input.plan.operations,
+        readmeSuggestions: input.plan.readmeSuggestions ?? [],
       },
     };
 
@@ -1416,7 +1559,7 @@ export class CreatorAssetStore {
       CreatorProductionAssetKind.Image,
       input.fileName,
       CreatorProductionAssetStatus.Ready,
-      CreatorProductionAssetSource.LocalImageProcessing,
+      isRecipeProcessing ? CreatorProductionAssetSource.RecipePostProcessing : CreatorProductionAssetSource.LocalImageProcessing,
       sourceAsset.runId,
       sourceAsset.runId,
       sourceAsset.id,
@@ -1432,7 +1575,7 @@ export class CreatorAssetStore {
       sourceAsset.promptText,
       sourceAsset.parentPromptAssetId,
       sourceAsset.promptVersionId,
-      sourceAsset.recipeId,
+      recipeId,
       sourceAsset.selectedDirectionId,
       input.outputPath,
       input.fileName,
@@ -1577,6 +1720,120 @@ export class CreatorAssetStore {
     `).get(planId) as ImageProcessingPlanRow | undefined;
     if (!row) return null;
     return this.mapImageProcessingPlanRow(row);
+  }
+
+  saveImageProcessingPlan(plan: CreatorImageProcessingPlan): CreatorImageProcessingPlan {
+    this.insertImageProcessingPlan(plan);
+    return plan;
+  }
+
+  async executeImageProcessingRecipe(
+    input: CreatorImageProcessingRecipeExecuteInput,
+  ): Promise<CreatorImageBatchCreateResult> {
+    const recipe = this.getRecipe(input.recipeId.trim());
+    if (!recipe) {
+      throw new Error('Creator recipe not found');
+    }
+    let asset = this.getAsset(input.assetId.trim());
+    if (!asset || asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready) {
+      throw new Error('At least one ready image asset is required');
+    }
+    if (!asset.imageMetadata) {
+      const inspected = await this.inspectImageAsset({ assetId: asset.id });
+      asset = inspected?.asset ?? asset;
+    }
+
+    const imageOutput = parseCreatorRecipeImageProcessingOutput(recipe.defaultOutput);
+    if (!imageOutput) {
+      throw new Error('Creator recipe does not declare image processing output');
+    }
+    const rule = input.ruleId?.trim()
+      ? imageOutput.rules.find((item) => item.id === input.ruleId?.trim())
+      : imageOutput.rules[0];
+    if (!rule) {
+      throw new Error('Creator recipe image processing rule not found');
+    }
+
+    const outputDirectory = input.outputDirectory?.trim()
+      || rule.outputDirectory?.trim()
+      || path.join(
+        path.dirname(asset.filePath),
+        '.wesight',
+        'creator-outputs',
+        'recipes',
+        recipe.id,
+        rule.id,
+      );
+    const plan = createCreatorAssetsImageProcessingPlan({
+      projectId: asset.projectId,
+      assets: [asset],
+      presetId: rule.presetId,
+      outputFormat: rule.outputFormat,
+      quality: rule.quality,
+      width: rule.width,
+      height: rule.height,
+      maxWidth: rule.maxWidth,
+      maxHeight: rule.maxHeight,
+      cropRatio: rule.cropRatio,
+      rotate: rule.rotate,
+      outputDirectory,
+      fileNamePattern: rule.fileNamePattern,
+      createdBy: CreatorImageProcessingCreatedBy.Recipe,
+      recipeId: recipe.id,
+    });
+    plan.readmeSuggestions = this.createReadmeSuggestionsForRecipeRule(plan, rule, imageOutput.packKind);
+    plan.updatedAt = Date.now();
+
+    const job = this.createImageProcessingJobShell(plan);
+    const tasks = plan.inputItems.map((_item, index) => this.createImageProcessingTaskShell(job, plan, index));
+    this.insertImageProcessingPlan(plan);
+    this.insertImageProcessingJob(job);
+    for (const task of tasks) {
+      this.insertImageProcessingTask(task);
+    }
+
+    if (input.waitForCompletion === false) {
+      void this.executeImageProcessingJobQueue(plan, job, tasks, 1).catch((error) => {
+        console.error('[CreatorImageProcessing] recipe job execution failed:', error);
+      });
+      return {
+        plan,
+        job,
+        tasks,
+        outputAssetIds: [],
+      };
+    }
+
+    const executed = await this.executeImageProcessingJobQueue(plan, job, tasks, 1);
+    return {
+      plan,
+      job: executed.job,
+      tasks: executed.tasks,
+      outputAssetIds: executed.tasks
+        .map((task) => task.outputAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId)),
+    };
+  }
+
+  private createReadmeSuggestionsForRecipeRule(
+    plan: CreatorImageProcessingPlan,
+    rule: CreatorRecipeImageProcessingRule,
+    packKind: CreatorRecipeImageProcessingPackKind,
+  ): NonNullable<CreatorImageProcessingPlan['readmeSuggestions']> {
+    if (packKind !== CreatorRecipeImageProcessingPackKind.ReadmeBannerPack) {
+      return [];
+    }
+    return plan.outputItems.map((outputItem) => {
+      const relativePath = rule.readmeSuggestion?.outputRelativePath?.trim()
+        || path.posix.join('assets', outputItem.fileName);
+      return {
+        outputPath: outputItem.outputPath,
+        markdown: rule.readmeSuggestion?.markdown?.trim()
+          || `![README banner](${relativePath})`,
+        note: rule.readmeSuggestion?.note
+          ?? 'Generated suggestion only. WeSight does not modify README files automatically.',
+      };
+    });
   }
 
   async retryImageProcessingTask(taskId: string): Promise<CreatorImageTaskRetryResult | null> {
@@ -1865,6 +2122,7 @@ export class CreatorAssetStore {
     const firstSourceAsset = plan.inputItems
       .map((item) => item.sourceAssetId ? this.getAsset(item.sourceAssetId) : null)
       .find((asset): asset is CreatorProductionAssetRecord => Boolean(asset));
+    const recipeId = plan.recipeId ?? firstSourceAsset?.recipeId ?? null;
     const now = Date.now();
     const id = uuidv4();
     const outputAssetIds = tasks
@@ -1883,9 +2141,11 @@ export class CreatorAssetStore {
         failureReasons: report.failureReasons,
         sourceAssetIds,
         outputAssetIds,
+        recipeId,
       },
       processing: {
         sourceAssetId: firstSourceAsset?.id ?? sourceAssetIds[0] ?? '',
+        recipeId,
         presetId: plan.presetId,
         operations: plan.operations,
         plan,
@@ -1895,6 +2155,7 @@ export class CreatorAssetStore {
           path: report.reportPath,
           title: report.title,
         },
+        readmeSuggestions: plan.readmeSuggestions ?? [],
       },
     };
 
@@ -1958,7 +2219,7 @@ export class CreatorAssetStore {
       firstSourceAsset?.promptText ?? '',
       firstSourceAsset?.parentPromptAssetId ?? null,
       firstSourceAsset?.promptVersionId ?? null,
-      firstSourceAsset?.recipeId ?? null,
+      recipeId,
       firstSourceAsset?.selectedDirectionId ?? null,
       report.reportPath,
       path.basename(report.reportPath),
@@ -2022,6 +2283,7 @@ export class CreatorAssetStore {
             plan: assetInput.plan,
             job,
             task: assetInput.task,
+            recipeId: plan.recipeId,
           });
         },
       });

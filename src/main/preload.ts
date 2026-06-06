@@ -552,6 +552,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CreatorStudioIpcChannel.ImageJobList, input),
     createImageBatch: (input: Record<string, unknown>) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.ImageBatchCreate, input),
+    executeImageRecipe: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageRecipeExecute, input),
     retryImageTask: (input: Record<string, unknown>) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.ImageTaskRetry, input),
     cancelImageTask: (input: Record<string, unknown>) =>

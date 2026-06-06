@@ -36,6 +36,7 @@ export interface CreatorImageProcessingSource {
   messageId?: string;
   artifactId?: string;
   filePath?: string;
+  recipeId?: string;
 }
 
 export interface CreatorImageProcessingInputItem {
@@ -91,6 +92,12 @@ export interface CreatorImageProcessingPlan {
   warnings: CreatorImageProcessingWarning[];
   estimatedRisk: CreatorImageProcessingRisk;
   createdBy: CreatorImageProcessingCreatedBy;
+  recipeId?: string | null;
+  readmeSuggestions?: Array<{
+    outputPath: string;
+    markdown: string;
+    note: string | null;
+  }>;
   status: CreatorImageProcessingPlanStatus;
   createdAt: number;
   updatedAt: number;
@@ -174,6 +181,8 @@ export interface CreatorImagePlanGetResult {
 
 export interface CreatorImageJobExecuteInput {
   planId: string;
+  coworkSessionId?: string;
+  coworkPlanMessageId?: string;
 }
 
 export interface CreatorImageJobExecuteResult {
@@ -222,6 +231,21 @@ export interface CreatorImageBatchCreateInput {
 }
 
 export interface CreatorImageBatchCreateResult {
+  plan: CreatorImageProcessingPlan;
+  job: CreatorImageProcessingJob;
+  tasks: CreatorImageProcessingTask[];
+  outputAssetIds: string[];
+}
+
+export interface CreatorImageRecipeExecuteInput {
+  recipeId: string;
+  assetId: string;
+  ruleId?: string | null;
+  outputDirectory?: string | null;
+  waitForCompletion?: boolean;
+}
+
+export interface CreatorImageRecipeExecuteResult {
   plan: CreatorImageProcessingPlan;
   job: CreatorImageProcessingJob;
   tasks: CreatorImageProcessingTask[];

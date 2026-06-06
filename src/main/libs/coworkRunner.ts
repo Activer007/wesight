@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 
 import { SCHEDULED_TASK_SWITCH_MESSAGE } from '../../scheduledTask/enginePrompt';
+import { CoworkImageToolName } from '../../shared/cowork/constants';
 import type { CoworkExecutionMode,CoworkMessage, CoworkStore } from '../coworkStore';
 import type { CoworkRuntimeMetric } from './agentEngine/types';
 import { loadClaudeSdk } from './claudeSdk';
@@ -665,6 +666,16 @@ export class CoworkRunner extends EventEmitter {
         reason: deleted ? undefined : 'memory not found',
       }),
       isError: !deleted,
+    };
+  }
+
+  private formatCoworkImageToolResult(result: { text: string; isError?: boolean }): any {
+    return {
+      content: [{
+        type: 'text',
+        text: result.text,
+      }],
+      isError: result.isError === true,
     };
   }
 
@@ -2051,6 +2062,80 @@ export class CoworkRunner extends EventEmitter {
           }
         ),
       ];
+      const imageToolSchema = {
+        assetId: z.string().optional(),
+        presetId: z.string().optional(),
+        outputFormat: z.enum(['png', 'jpeg', 'webp', 'avif']).optional(),
+        quality: z.number().min(1).max(100).optional(),
+        width: z.number().int().min(1).optional(),
+        height: z.number().int().min(1).optional(),
+        maxWidth: z.number().int().min(1).optional(),
+        maxHeight: z.number().int().min(1).optional(),
+        cropRatio: z.string().optional(),
+        rotate: z.number().optional(),
+        planId: z.string().optional(),
+        jobId: z.string().optional(),
+      };
+      memoryTools.push(
+        tool(
+          CoworkImageToolName.Inspect,
+          'Inspect a controlled Creator image asset for metadata. Does not write files.',
+          {
+            assetId: z.string().optional(),
+          },
+          async (args: Record<string, unknown>) => this.formatCoworkImageToolResult(
+            await this.store.runCoworkImageTool(sessionId, CoworkImageToolName.Inspect, args),
+          )
+        ),
+        tool(
+          CoworkImageToolName.PlanProcessing,
+          'Create and save an image processing plan for a controlled Creator image asset. Never executes or writes output files.',
+          imageToolSchema,
+          async (args: Record<string, unknown>) => this.formatCoworkImageToolResult(
+            await this.store.runCoworkImageTool(sessionId, CoworkImageToolName.PlanProcessing, args),
+          )
+        ),
+        tool(
+          CoworkImageToolName.ExecuteProcessing,
+          'Request execution for a saved image processing plan. This returns a confirmation-required response and does not write files.',
+          {
+            planId: z.string(),
+          },
+          async (args: Record<string, unknown>) => this.formatCoworkImageToolResult(
+            await this.store.runCoworkImageTool(sessionId, CoworkImageToolName.ExecuteProcessing, args),
+          )
+        ),
+        tool(
+          CoworkImageToolName.GetJobStatus,
+          'Get a controlled image processing job status.',
+          {
+            jobId: z.string(),
+          },
+          async (args: Record<string, unknown>) => this.formatCoworkImageToolResult(
+            await this.store.runCoworkImageTool(sessionId, CoworkImageToolName.GetJobStatus, args),
+          )
+        ),
+        tool(
+          CoworkImageToolName.RevealOutput,
+          'Describe controlled output availability. Actual reveal happens through WeSight UI.',
+          {
+            jobId: z.string(),
+          },
+          async (args: Record<string, unknown>) => this.formatCoworkImageToolResult(
+            await this.store.runCoworkImageTool(sessionId, CoworkImageToolName.RevealOutput, args),
+          )
+        ),
+        tool(
+          CoworkImageToolName.AttachToCreatorAsset,
+          'Attach the latest controlled Cowork image to Creator Assets context. Does not write output files.',
+          {
+            assetId: z.string().optional(),
+          },
+          async (args: Record<string, unknown>) => this.formatCoworkImageToolResult(
+            await this.store.runCoworkImageTool(sessionId, CoworkImageToolName.AttachToCreatorAsset, args),
+          )
+        ),
+      );
       if (config.memoryEnabled) {
         memoryTools.push(
           tool(

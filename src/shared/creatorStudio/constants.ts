@@ -42,6 +42,7 @@ export const CreatorStudioIpcChannel = {
   ImageJobGet: 'creatorStudio:imageJob:get',
   ImageJobList: 'creatorStudio:imageJob:list',
   ImageBatchCreate: 'creatorStudio:imageBatch:create',
+  ImageRecipeExecute: 'creatorStudio:imageRecipe:execute',
   ImageTaskRetry: 'creatorStudio:imageTask:retry',
   ImageTaskCancel: 'creatorStudio:imageTask:cancel',
   ImageOutputReveal: 'creatorStudio:imageOutput:reveal',
@@ -469,6 +470,41 @@ export const CreatorImageProcessingPresetIdValues = [
   CreatorImageProcessingPresetId.SocialCard1200x675,
 ] as const;
 
+export const CreatorRecipeOutputKind = {
+  ImageProcessing: 'image_processing',
+} as const;
+
+export type CreatorRecipeOutputKind =
+  typeof CreatorRecipeOutputKind[keyof typeof CreatorRecipeOutputKind];
+
+export const CreatorRecipeOutputKindValues = [
+  CreatorRecipeOutputKind.ImageProcessing,
+] as const;
+
+export const CreatorRecipeImageProcessingPackKind = {
+  ReadmeBannerPack: 'readme_banner_pack',
+  SocialMediaPack: 'social_media_pack',
+} as const;
+
+export type CreatorRecipeImageProcessingPackKind =
+  typeof CreatorRecipeImageProcessingPackKind[keyof typeof CreatorRecipeImageProcessingPackKind];
+
+export const CreatorRecipeImageProcessingPackKindValues = [
+  CreatorRecipeImageProcessingPackKind.ReadmeBannerPack,
+  CreatorRecipeImageProcessingPackKind.SocialMediaPack,
+] as const;
+
+export const CreatorRecipeOutputSchemaVersion = {
+  ImageProcessingV1: 'creator.recipe.imageProcessingOutput.v1',
+} as const;
+
+export type CreatorRecipeOutputSchemaVersion =
+  typeof CreatorRecipeOutputSchemaVersion[keyof typeof CreatorRecipeOutputSchemaVersion];
+
+export const CreatorRecipeOutputSchemaVersionValues = [
+  CreatorRecipeOutputSchemaVersion.ImageProcessingV1,
+] as const;
+
 export const CreatorStudioDefaultProjectId = 'creator-project-default';
 
 export const CreatorStudioAssetListDefaultLimit = 60;
@@ -592,6 +628,27 @@ export const isCreatorImageProcessingPresetId = (
 ): value is CreatorImageProcessingPresetId => (
   typeof value === 'string'
   && CreatorImageProcessingPresetIdValues.includes(value as CreatorImageProcessingPresetId)
+);
+
+export const isCreatorRecipeOutputKind = (
+  value: unknown,
+): value is CreatorRecipeOutputKind => (
+  typeof value === 'string'
+  && CreatorRecipeOutputKindValues.includes(value as CreatorRecipeOutputKind)
+);
+
+export const isCreatorRecipeImageProcessingPackKind = (
+  value: unknown,
+): value is CreatorRecipeImageProcessingPackKind => (
+  typeof value === 'string'
+  && CreatorRecipeImageProcessingPackKindValues.includes(value as CreatorRecipeImageProcessingPackKind)
+);
+
+export const isCreatorRecipeOutputSchemaVersion = (
+  value: unknown,
+): value is CreatorRecipeOutputSchemaVersion => (
+  typeof value === 'string'
+  && CreatorRecipeOutputSchemaVersionValues.includes(value as CreatorRecipeOutputSchemaVersion)
 );
 
 export const isCreatorAssetAdoptionStatus = (value: unknown): value is CreatorAssetAdoptionStatus => (

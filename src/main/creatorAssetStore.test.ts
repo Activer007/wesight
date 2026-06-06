@@ -17,6 +17,7 @@ import {
   CreatorImageProcessingOutputFormat,
   CreatorImageProcessingPlanSchemaVersion,
   CreatorImageProcessingPlanStatus,
+  CreatorImageProcessingPresetId,
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
@@ -25,9 +26,16 @@ import {
   CreatorProductionAssetStatus,
   CreatorProductionRunStatus,
   CreatorPromptSpecSchemaVersion,
+  CreatorRecipeImageProcessingPackKind,
+  CreatorRecipeOutputKind,
+  CreatorRecipeOutputSchemaVersion,
   CreatorStudioDefaultProjectId,
 } from '../shared/creatorStudio/constants';
-import { CreatorAssetStore, parseCreatorStudioSourceContext } from './creatorAssetStore';
+import {
+  CreatorAssetStore,
+  parseCreatorRecipeImageProcessingOutput,
+  parseCreatorStudioSourceContext,
+} from './creatorAssetStore';
 import { ensureCreatorImageProcessingSchema } from './creatorImageProcessingSchema';
 import { ensureCreatorProductionSchema } from './creatorProductionSchema';
 
@@ -1207,6 +1215,128 @@ describe('CreatorAssetStore', () => {
     const metadata = JSON.parse(row.metadata) as { processing?: { sourceAssetId?: string; plan?: { id?: string } } };
     expect(metadata.processing?.sourceAssetId).toBe('source-asset');
     expect(metadata.processing?.plan?.id).toBe('plan-1');
+  });
+
+  test('executes README banner pack recipe without modifying README files', async () => {
+    const sharp = (await import('sharp')).default;
+    const workspace = store.createProject({ name: 'Recipe Image Project' });
+    const inputPath = path.join(tempDir, 'hero.png');
+    const readmePath = path.join(tempDir, 'README.md');
+    fs.writeFileSync(readmePath, '# Existing README\n');
+    await sharp({
+      create: {
+        width: 1200,
+        height: 900,
+        channels: 4,
+        background: '#224466',
+      },
+    }).png().toFile(inputPath);
+
+    db.prepare(`
+      INSERT INTO production_assets (
+        id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id,
+        session_id, source_session_id, message_id, source_message_id, template_id, case_ids, case_ids_json,
+        prompt_spec, prompt_spec_json, prompt_text, parent_prompt_asset_id, prompt_version_id, recipe_id,
+        selected_direction_id, file_path, file_name, mime_type, favorite, adoption_status, tags_json,
+        license_note, usage_note, metadata, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'hero-asset',
+      workspace.currentProjectId,
+      CreatorProductionAssetKind.Image,
+      'Hero',
+      CreatorProductionAssetStatus.Ready,
+      CreatorProductionAssetSource.CoworkGeneratedImage,
+      null,
+      null,
+      null,
+      'session-1',
+      'session-1',
+      'message-1',
+      'message-1',
+      'readme-template',
+      JSON.stringify(['case-readme']),
+      JSON.stringify(['case-readme']),
+      JSON.stringify({ schemaVersion: CreatorPromptSpecSchemaVersion.V1, subject: 'Hero' }),
+      JSON.stringify({ schemaVersion: CreatorPromptSpecSchemaVersion.V1, subject: 'Hero' }),
+      'Generate a project hero.',
+      null,
+      null,
+      null,
+      null,
+      inputPath,
+      path.basename(inputPath),
+      'image/png',
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(['hero']),
+      'Owned by project',
+      'README only',
+      JSON.stringify({}),
+      1,
+      1,
+    );
+
+    const defaultOutput = {
+      schemaVersion: CreatorRecipeOutputSchemaVersion.ImageProcessingV1,
+      kind: CreatorRecipeOutputKind.ImageProcessing,
+      packKind: CreatorRecipeImageProcessingPackKind.ReadmeBannerPack,
+      rules: [{
+        id: 'readme-banner-webp',
+        title: 'README banner WebP',
+        presetId: CreatorImageProcessingPresetId.ReadmeBanner,
+        outputFormat: CreatorImageProcessingOutputFormat.Webp,
+        outputDirectory: path.join(tempDir, 'recipe-output'),
+        fileNamePattern: '{name}.readme-banner.{format}',
+      }],
+      report: { enabled: true },
+      readmeSuggestion: {
+        enabled: true,
+        note: 'Suggest README usage only.',
+      },
+    };
+    expect(parseCreatorRecipeImageProcessingOutput(defaultOutput)?.packKind)
+      .toBe(CreatorRecipeImageProcessingPackKind.ReadmeBannerPack);
+
+    const recipe = store.createRecipe({
+      projectId: workspace.currentProjectId,
+      title: 'README Banner Pack',
+      promptSpec: { schemaVersion: CreatorPromptSpecSchemaVersion.V1, subject: 'Hero' },
+      defaultOutput,
+      tags: ['readme'],
+    });
+    const result = await store.executeImageProcessingRecipe({
+      recipeId: recipe.id,
+      assetId: 'hero-asset',
+    });
+
+    expect(fs.readFileSync(readmePath, 'utf8')).toBe('# Existing README\n');
+    expect(result.plan.createdBy).toBe(CreatorImageProcessingCreatedBy.Recipe);
+    expect(result.plan.recipeId).toBe(recipe.id);
+    expect(result.plan.presetId).toBe(CreatorImageProcessingPresetId.ReadmeBanner);
+    expect(result.plan.readmeSuggestions?.[0]?.markdown).toContain('![README banner]');
+    expect(result.outputAssetIds).toHaveLength(1);
+
+    const outputAsset = store.getAsset(result.outputAssetIds[0]);
+    expect(outputAsset?.source).toBe(CreatorProductionAssetSource.RecipePostProcessing);
+    expect(outputAsset?.recipeId).toBe(recipe.id);
+    expect(outputAsset?.variantOfAssetId).toBe('hero-asset');
+    expect(outputAsset?.licenseNote).toBe('Owned by project');
+    expect(outputAsset?.usageNote).toBe('README only');
+    expect(outputAsset?.imageMetadata?.format).toBe(CreatorImageProcessingOutputFormat.Webp);
+    expect(outputAsset?.imageProcessing?.recipeId).toBe(recipe.id);
+    expect(outputAsset?.imageProcessing?.readmeSuggestions?.[0]?.markdown).toContain('![README banner]');
+    expect(outputAsset?.filePath.endsWith('.webp')).toBe(true);
+
+    const job = store.getImageProcessingJob(result.job.id);
+    expect(job?.job.reportAssetId).toBeTruthy();
+    const reportAsset = job?.job.reportAssetId ? store.getAsset(job.job.reportAssetId) : null;
+    expect(reportAsset?.kind).toBe(CreatorProductionAssetKind.Report);
+    expect(reportAsset?.recipeId).toBe(recipe.id);
+    expect(reportAsset?.imageProcessing?.tasks?.[0]?.outputAssetId).toBe(outputAsset?.id);
+    expect(reportAsset?.imageProcessing?.readmeSuggestions?.[0]?.markdown).toContain('![README banner]');
+    expect(reportAsset?.filePath.endsWith('-report.md')).toBe(true);
   });
 
   test('creates image processing batch job and keeps failed tasks isolated', async () => {

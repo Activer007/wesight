@@ -6,6 +6,9 @@
  *
  * Mocks the `electron` module so CoworkStore can be imported outside Electron.
  */
+import fs from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -20,8 +23,25 @@ vi.mock('electron', () => ({
 // ---------------------------------------------------------------------------
 import BetterSqlite3 from 'better-sqlite3';
 
-import { ExternalAgentConfigSource } from '../shared/cowork/constants';
+import { CoworkImageToolName, ExternalAgentConfigSource } from '../shared/cowork/constants';
+import {
+  CreatorAssetAdoptionStatus,
+  CreatorImageProcessingJobStatus,
+  CreatorImageProcessingOutputFormat,
+  CreatorImageProcessingPlanSchemaVersion,
+  CreatorImageProcessingPlanStatus,
+  CreatorImageProcessingPresetId,
+  CreatorImageProcessingRisk,
+  CreatorImageProcessingSourceKind,
+  CreatorImageProcessingTaskStatus,
+  CreatorProductionAssetKind,
+  CreatorProductionAssetSource,
+  CreatorProductionAssetStatus,
+} from '../shared/creatorStudio/constants';
 import { CoworkStore } from './coworkStore';
+import { CreatorAssetStore } from './creatorAssetStore';
+import { ensureCreatorImageProcessingSchema } from './creatorImageProcessingSchema';
+import { ensureCreatorProductionSchema } from './creatorProductionSchema';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -29,6 +49,7 @@ import { CoworkStore } from './coworkStore';
 
 let db: BetterSqlite3.Database;
 let store: CoworkStore;
+let creatorAssetStore: CreatorAssetStore;
 
 /** Initialise a fresh in-memory database with the minimum schema. */
 function setupDb(): void {
@@ -108,7 +129,11 @@ function setupDb(): void {
   `);
 
   // CoworkStore only needs (db)
+  ensureCreatorProductionSchema(db);
+  ensureCreatorImageProcessingSchema(db);
   store = new CoworkStore(db);
+  creatorAssetStore = new CreatorAssetStore(db);
+  store.setCreatorAssetStore(creatorAssetStore);
 }
 
 /** Insert a session row directly. */
@@ -118,6 +143,54 @@ function insertSession(id: string): void {
     `INSERT INTO cowork_sessions (id, title, claude_session_id, codex_app_thread_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, session_kind, parent_session_id, team_id, created_at, updated_at)
      VALUES (?, 'test', NULL, NULL, 'idle', 0, '/tmp', '', 'local', '[]', 'main', 'single', NULL, NULL, ?, ?)`,
   ).run(id, now, now);
+}
+
+function insertImageAsset(input: { id: string; sessionId: string; filePath: string; projectId?: string }): void {
+  db.prepare(`
+    INSERT INTO production_assets (
+      id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id,
+      session_id, source_session_id, message_id, source_message_id, template_id, case_ids, case_ids_json,
+      prompt_spec, prompt_spec_json, prompt_text, parent_prompt_asset_id, prompt_version_id, recipe_id,
+      selected_direction_id, file_path, file_name, mime_type, favorite, adoption_status, tags_json,
+      license_note, usage_note, metadata, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    input.id,
+    input.projectId ?? 'project-1',
+    CreatorProductionAssetKind.Image,
+    input.id,
+    CreatorProductionAssetStatus.Ready,
+    CreatorProductionAssetSource.CoworkGeneratedImage,
+    null,
+    null,
+    null,
+    input.sessionId,
+    input.sessionId,
+    'message-1',
+    'message-1',
+    null,
+    JSON.stringify([]),
+    JSON.stringify([]),
+    null,
+    null,
+    '',
+    null,
+    null,
+    null,
+    null,
+    input.filePath,
+    'image.png',
+    'image/png',
+    0,
+    CreatorAssetAdoptionStatus.Unset,
+    JSON.stringify([]),
+    null,
+    null,
+    JSON.stringify({}),
+    1,
+    1,
+  );
 }
 
 /** Insert a message row directly, bypassing CoworkStore.addMessage. */
@@ -274,4 +347,170 @@ test('addMessage assigns increasing sequences and stores config updates transact
     { key: 'memoryUserMemoriesMaxItems', value: '4' },
     { key: 'workingDirectory', value: '/tmp/work' },
   ]);
+});
+
+test('cowork image plan tool saves a plan without executing output files', async () => {
+  const sharp = (await import('sharp')).default;
+  insertSession('session-image-plan');
+  const tempDir = fs.mkdtempSync(path.join(tmpdir(), 'wesight-cowork-image-tool-'));
+  const sourcePath = path.join(tempDir, 'source.png');
+  await sharp({
+    create: {
+      width: 80,
+      height: 40,
+      channels: 3,
+      background: '#336699',
+    },
+  }).png().toFile(sourcePath);
+  insertImageAsset({ id: 'image-tool-asset', sessionId: 'session-image-plan', filePath: sourcePath });
+
+  const result = await store.runCoworkImageTool('session-image-plan', CoworkImageToolName.PlanProcessing, {
+    assetId: 'image-tool-asset',
+    presetId: CreatorImageProcessingPresetId.ReadmeBanner,
+    outputFormat: CreatorImageProcessingOutputFormat.Webp,
+  });
+
+  expect(result.isError).toBeFalsy();
+  expect(result.text).toContain('Created image processing plan');
+  const messages = store.getRecentMessages('session-image-plan', 10);
+  const planMessage = messages.find((message) => message.metadata?.kind === 'image_processing_plan');
+  expect(planMessage?.metadata?.requiresUserConfirmation).toBe(true);
+  const plan = planMessage?.metadata?.imageProcessingPlan as { id?: string; outputItems?: Array<{ outputPath: string }> } | undefined;
+  expect(plan?.id).toBeTruthy();
+  expect(creatorAssetStore.getImageProcessingPlan(plan!.id!)).toBeTruthy();
+  expect(fs.existsSync(plan!.outputItems![0].outputPath)).toBe(false);
+});
+
+test('cowork image execute tool requires confirmation and does not execute', async () => {
+  insertSession('session-image-execute');
+
+  const result = await store.runCoworkImageTool('session-image-execute', CoworkImageToolName.ExecuteProcessing, {
+    planId: 'plan-needs-confirm',
+  });
+
+  expect(result.isError).toBeFalsy();
+  expect(result.text).toContain('cannot execute it without user confirmation');
+  const message = store.getRecentMessages('session-image-execute', 10).find((item) => item.metadata?.kind === 'image_processing_execute_request');
+  expect(message?.metadata?.imageProcessingPlanId).toBe('plan-needs-confirm');
+  expect(message?.metadata?.requiresUserConfirmation).toBe(true);
+});
+
+test('records cowork image processing execution result metadata after confirmation', () => {
+  insertSession('session-image-result');
+  const plan = {
+    schemaVersion: CreatorImageProcessingPlanSchemaVersion.V1,
+    id: 'plan-confirmed',
+    projectId: 'project-1',
+    source: { sourceKind: CreatorImageProcessingSourceKind.CreatorAsset, assetId: 'asset-source' },
+    inputItems: [{
+      id: 'input-asset-source',
+      source: {
+        sourceKind: CreatorImageProcessingSourceKind.CreatorAsset,
+        assetId: 'asset-source',
+        messageId: 'message-source',
+      },
+      sourceAssetId: 'asset-source',
+      sourcePath: '/tmp/source.png',
+      metadata: null,
+    }],
+    presetId: CreatorImageProcessingPresetId.ReadmeBanner,
+    operations: [],
+    output: {
+      format: CreatorImageProcessingOutputFormat.Webp,
+      quality: 82,
+      outputDirectory: '/tmp/out',
+      fileNamePattern: '{name}.webp',
+      overwrite: false as const,
+    },
+    outputItems: [],
+    warnings: [],
+    estimatedRisk: CreatorImageProcessingRisk.Low,
+    createdBy: 'agent' as const,
+    status: CreatorImageProcessingPlanStatus.Ready,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const job = {
+    id: 'job-plan-confirmed',
+    projectId: 'project-1',
+    planId: plan.id,
+    status: CreatorImageProcessingJobStatus.Completed,
+    totalCount: 1,
+    successCount: 1,
+    failedCount: 0,
+    inputTotalSize: 100,
+    outputTotalSize: 40,
+    savedSize: 60,
+    savedPercentage: 60,
+    runtimeMetrics: null,
+    reportAssetId: 'report-asset',
+    reportPath: '/tmp/out/report.md',
+    createdAt: 1,
+    startedAt: 1,
+    completedAt: 2,
+  };
+  const tasks = [{
+    id: 'task-1',
+    jobId: job.id,
+    projectId: 'project-1',
+    sourceAssetId: 'asset-source',
+    outputAssetId: 'asset-output',
+    sourceArtifactId: null,
+    sourcePath: '/tmp/source.png',
+    outputPath: '/tmp/out/source.webp',
+    status: CreatorImageProcessingTaskStatus.Completed,
+    inputSize: 100,
+    outputSize: 40,
+    durationMs: 5,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: 1,
+    updatedAt: 2,
+    completedAt: 2,
+  }];
+
+  const message = store.recordImageProcessingExecutionResult({
+    sessionId: 'session-image-result',
+    plan,
+    job,
+    tasks,
+    outputAssetIds: ['asset-output'],
+    outputAssets: [{ id: 'asset-output', fileName: 'source.webp', mimeType: 'image/webp' }],
+    planMessageId: 'message-plan',
+  });
+
+  expect(message.metadata?.kind).toBe('image_processing_result');
+  expect(message.metadata?.imageProcessingPlanId).toBe('plan-confirmed');
+  expect(message.metadata?.imageProcessingJobId).toBe('job-plan-confirmed');
+  expect(message.metadata?.imageProcessingPlanMessageId).toBe('message-plan');
+  expect(message.metadata?.imageProcessingResult).toMatchObject({
+    planId: 'plan-confirmed',
+    jobId: 'job-plan-confirmed',
+    outputAssetIds: ['asset-output'],
+    reportAssetId: 'report-asset',
+  });
+  const persisted = store.getRecentMessages('session-image-result', 5)
+    .find((item) => item.metadata?.kind === 'image_processing_result');
+  expect(persisted?.metadata?.imageProcessingResult).toMatchObject({
+    successCount: 1,
+    failedCount: 0,
+  });
+});
+
+test('cowork image tool rejects disabled feature flag and unauthorized asset', async () => {
+  insertSession('session-image-auth');
+  insertSession('other-session');
+  insertImageAsset({ id: 'other-image', sessionId: 'other-session', filePath: '/tmp/other.png' });
+
+  const disabled = await store.runCoworkImageTool('session-image-auth', CoworkImageToolName.Inspect, {}, {
+    featureEnabled: false,
+  });
+  expect(disabled.isError).toBe(true);
+  expect(disabled.text).toContain('creator.imageProcessing.enabled');
+
+  const unauthorized = await store.runCoworkImageTool('session-image-auth', CoworkImageToolName.PlanProcessing, {
+    assetId: 'other-image',
+  });
+  expect(unauthorized.isError).toBe(true);
+  expect(unauthorized.text).toContain('No controlled image asset');
 });

@@ -4,14 +4,27 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import {
   CreatorAssetAdoptionStatus,
   CreatorImageMetadataStatus,
+  CreatorImageProcessingCreatedBy,
+  CreatorImageProcessingJobStatus,
   CreatorImageProcessingOutputFormat,
+  CreatorImageProcessingPlanSchemaVersion,
+  CreatorImageProcessingPlanStatus,
   CreatorImageProcessingPresetId,
+  CreatorImageProcessingRisk,
+  CreatorImageProcessingSourceKind,
+  CreatorImageProcessingTaskStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
   CreatorStudioAssetListMaxLimit,
   CreatorStudioIpcChannel,
 } from '../../../shared/creatorStudio/constants';
+import type {
+  CreatorImageProcessingJob,
+  CreatorImageProcessingPlan,
+  CreatorImageProcessingTask,
+} from '../../../shared/creatorStudio/imageProcessingTypes';
+import type { CoworkStore } from '../../coworkStore';
 import type { CreatorAssetStore } from '../../creatorAssetStore';
 import { registerCreatorStudioIpcHandlers } from './handlers';
 
@@ -79,6 +92,14 @@ const createStore = () => ({
   skipBatchTask: vi.fn(() => ({ id: 'batch-1', projectId: 'project-1', tasks: [] })),
   failBatchTask: vi.fn(() => ({ id: 'batch-1', projectId: 'project-1', tasks: [] })),
   createImageProcessingAsset: vi.fn(),
+  getImageProcessingPlan: vi.fn(() => null),
+  executeImageProcessingPlan: vi.fn(),
+  executeImageProcessingRecipe: vi.fn(() => ({
+    plan: { id: 'plan-recipe' },
+    job: { id: 'job-recipe' },
+    tasks: [],
+    outputAssetIds: ['asset-output'],
+  })),
 }) as unknown as CreatorAssetStore;
 
 beforeEach(() => {
@@ -123,6 +144,7 @@ test('registers creator studio asset IPC handlers with constant channels', () =>
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImagePlanGet, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageJobExecute, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageJobGet, expect.any(Function));
+  expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageRecipeExecute, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageOutputReveal, expect.any(Function));
 });
 
@@ -275,6 +297,217 @@ test('rejects image job execution without a saved plan', async () => {
   const result = await handler?.(null, { planId: 'missing-plan' });
 
   expect(result).toEqual({ success: false, error: 'Image processing plan not found' });
+});
+
+test('keeps image job execution successful when cowork result writeback fails', async () => {
+  const store = createStore();
+  const plan: CreatorImageProcessingPlan = {
+    schemaVersion: CreatorImageProcessingPlanSchemaVersion.V1,
+    id: 'plan-1',
+    projectId: 'project-1',
+    source: { sourceKind: CreatorImageProcessingSourceKind.CreatorAsset, assetId: 'asset-source' },
+    inputItems: [{
+      id: 'input-1',
+      source: { sourceKind: CreatorImageProcessingSourceKind.CreatorAsset, assetId: 'asset-source' },
+      sourceAssetId: 'asset-source',
+      sourcePath: '/tmp/source.png',
+      metadata: null,
+    }],
+    presetId: CreatorImageProcessingPresetId.WebOptimizedWebp,
+    operations: [],
+    output: {
+      format: CreatorImageProcessingOutputFormat.Webp,
+      quality: 82,
+      outputDirectory: '/tmp',
+      fileNamePattern: '{name}.webp',
+      overwrite: false,
+    },
+    outputItems: [{
+      inputItemId: 'input-1',
+      sourceAssetId: 'asset-source',
+      outputDirectory: '/tmp',
+      fileName: 'output.webp',
+      outputPath: '/tmp/output.webp',
+      width: null,
+      height: null,
+      format: CreatorImageProcessingOutputFormat.Webp,
+    }],
+    warnings: [],
+    estimatedRisk: CreatorImageProcessingRisk.Low,
+    createdBy: CreatorImageProcessingCreatedBy.Agent,
+    status: CreatorImageProcessingPlanStatus.Ready,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const job: CreatorImageProcessingJob = {
+    id: 'job-1',
+    projectId: 'project-1',
+    planId: plan.id,
+    status: CreatorImageProcessingJobStatus.Completed,
+    totalCount: 1,
+    successCount: 1,
+    failedCount: 0,
+    inputTotalSize: 100,
+    outputTotalSize: 60,
+    savedSize: 40,
+    savedPercentage: 40,
+    runtimeMetrics: null,
+    reportAssetId: null,
+    reportPath: null,
+    createdAt: 1,
+    startedAt: 1,
+    completedAt: 2,
+  };
+  const task: CreatorImageProcessingTask = {
+    id: 'task-1',
+    jobId: job.id,
+    projectId: 'project-1',
+    sourceAssetId: 'asset-source',
+    outputAssetId: 'asset-output',
+    sourceArtifactId: null,
+    sourcePath: '/tmp/source.png',
+    outputPath: '/tmp/output.webp',
+    status: CreatorImageProcessingTaskStatus.Completed,
+    inputSize: 100,
+    outputSize: 60,
+    durationMs: 10,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: 1,
+    updatedAt: 2,
+    completedAt: 2,
+  };
+  vi.mocked(store.getImageProcessingPlan).mockReturnValue(plan);
+  vi.mocked(store.executeImageProcessingPlan).mockResolvedValue({
+    job,
+    tasks: [task],
+    outputAssetIds: ['asset-output'],
+  });
+  vi.mocked(store.getAsset).mockImplementation((assetId) => ({
+    id: assetId,
+    projectId: 'project-1',
+    kind: CreatorProductionAssetKind.Image,
+    status: CreatorProductionAssetStatus.Ready,
+    source: CreatorProductionAssetSource.LocalImageProcessing,
+    runId: null,
+    variantOfAssetId: assetId === 'asset-output' ? 'asset-source' : null,
+    sessionId: null,
+    messageId: null,
+    templateId: null,
+    caseIds: [],
+    promptSpec: null,
+    promptText: '',
+    parentPromptAssetId: null,
+    promptVersionId: null,
+    recipeId: null,
+    selectedDirectionId: null,
+    filePath: assetId === 'asset-output' ? '/tmp/output.webp' : '/tmp/source.png',
+    fileName: assetId === 'asset-output' ? 'output.webp' : 'source.png',
+    mimeType: assetId === 'asset-output' ? 'image/webp' : 'image/png',
+    favorite: false,
+    adoptionStatus: CreatorAssetAdoptionStatus.Unset,
+    tags: [],
+    collectionIds: [],
+    selected: false,
+    licenseNote: null,
+    usageNote: null,
+    createdAt: 1,
+    updatedAt: 1,
+    sourceSessionAvailable: true,
+    imageMetadata: null,
+    imageProcessing: null,
+  }));
+  const coworkStore = {
+    recordImageProcessingExecutionResult: vi.fn(() => {
+      throw new Error('session not found');
+    }),
+  } as unknown as CoworkStore;
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  registerCreatorStudioIpcHandlers(ipcMain, () => store, () => coworkStore);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.ImageJobExecute);
+  expect(handler).toBeDefined();
+  try {
+    const result = await handler?.(null, {
+      planId: 'plan-1',
+      coworkSessionId: 'missing-session',
+      coworkPlanMessageId: 'message-1',
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      outputAssetIds: ['asset-output'],
+      outputAssets: [expect.objectContaining({ id: 'asset-output' })],
+    });
+    expect(coworkStore.recordImageProcessingExecutionResult).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[CreatorStudio] image processing cowork result writeback failed:',
+      expect.any(Error)
+    );
+  } finally {
+    warnSpy.mockRestore();
+  }
+});
+
+test('normalizes image recipe execution before reaching the store', async () => {
+  const store = createStore();
+  vi.mocked(store.getAsset).mockReturnValue({
+    id: 'asset-output',
+    projectId: 'project-1',
+    kind: CreatorProductionAssetKind.Image,
+    status: CreatorProductionAssetStatus.Ready,
+    source: CreatorProductionAssetSource.RecipePostProcessing,
+    runId: null,
+    variantOfAssetId: 'asset-source',
+    sessionId: null,
+    messageId: null,
+    templateId: null,
+    caseIds: [],
+    promptSpec: null,
+    promptText: '',
+    parentPromptAssetId: null,
+    promptVersionId: null,
+    recipeId: 'recipe-1',
+    selectedDirectionId: null,
+    filePath: '/tmp/output.webp',
+    fileName: 'output.webp',
+    mimeType: 'image/webp',
+    favorite: false,
+    adoptionStatus: CreatorAssetAdoptionStatus.Unset,
+    tags: [],
+    collectionIds: [],
+    selected: false,
+    licenseNote: null,
+    usageNote: null,
+    createdAt: 1,
+    updatedAt: 1,
+    sourceSessionAvailable: true,
+    imageMetadata: null,
+    imageProcessing: null,
+  });
+  registerCreatorStudioIpcHandlers(ipcMain, () => store);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.ImageRecipeExecute);
+  expect(handler).toBeDefined();
+  const result = await handler?.(null, {
+    recipeId: ' recipe-1 ',
+    assetId: ' asset-source ',
+    ruleId: ' readme-banner-webp ',
+    outputDirectory: ' /tmp/output ',
+    unsafePath: '/tmp/ignored',
+  });
+
+  expect(result).toMatchObject({
+    success: true,
+    outputAssetIds: ['asset-output'],
+    outputAssets: [expect.objectContaining({ id: 'asset-output' })],
+  });
+  expect(store.executeImageProcessingRecipe).toHaveBeenCalledWith({
+    recipeId: 'recipe-1',
+    assetId: 'asset-source',
+    ruleId: 'readme-banner-webp',
+    outputDirectory: '/tmp/output',
+  });
 });
 
 test('normalizes creator batch run creation before reaching the store', async () => {

@@ -37,6 +37,8 @@ export interface CreateImageProcessingPlanInput {
   operations?: CreatorImageProcessingOperationStep[];
   output?: CreatorImageProcessingOutput;
   createdBy?: CreatorImageProcessingCreatedBy;
+  recipeId?: string | null;
+  readmeSuggestions?: CreatorImageProcessingPlan['readmeSuggestions'];
   now?: number;
   id?: string;
 }
@@ -53,6 +55,10 @@ export interface CreateCreatorAssetImageProcessingPlanInput {
   cropRatio?: string | null;
   rotate?: number | null;
   outputDirectory?: string | null;
+  fileNamePattern?: string | null;
+  createdBy?: CreatorImageProcessingCreatedBy;
+  recipeId?: string | null;
+  readmeSuggestions?: CreatorImageProcessingPlan['readmeSuggestions'];
   now?: number;
   id?: string;
 }
@@ -332,13 +338,16 @@ const getFormatFromOperations = (
 
 const applyOutputOverrides = (
   output: CreatorImageProcessingOutput,
-  input: Pick<CreateCreatorAssetImageProcessingPlanInput, 'outputFormat' | 'quality' | 'outputDirectory'>,
+  input: Pick<CreateCreatorAssetImageProcessingPlanInput, 'outputFormat' | 'quality' | 'outputDirectory' | 'fileNamePattern'>,
 ): CreatorImageProcessingOutput => ({
   ...output,
   ...(input.outputFormat ? { format: input.outputFormat } : {}),
   ...(typeof input.quality === 'number' ? { quality: clampInteger(input.quality, 1, 100) } : {}),
   ...(typeof input.outputDirectory === 'string' && input.outputDirectory.trim()
     ? { outputDirectory: input.outputDirectory.trim() }
+    : {}),
+  ...(typeof input.fileNamePattern === 'string' && input.fileNamePattern.trim()
+    ? { fileNamePattern: input.fileNamePattern.trim() }
     : {}),
   overwrite: false,
 });
@@ -471,6 +480,8 @@ export const createImageProcessingPlan = (
     warnings,
     estimatedRisk: estimateRisk(warnings),
     createdBy: input.createdBy ?? CreatorImageProcessingCreatedBy.User,
+    recipeId: input.recipeId ?? input.source.recipeId ?? null,
+    readmeSuggestions: input.readmeSuggestions,
     status: CreatorImageProcessingPlanStatus.Ready,
     createdAt: now,
     updatedAt: now,
@@ -505,6 +516,7 @@ export const createCreatorAssetImageProcessingPlan = (
   const source: CreatorImageProcessingSource = {
     sourceKind: CreatorImageProcessingSourceKind.CreatorAsset,
     assetId: input.asset.id,
+    ...(input.recipeId ? { recipeId: input.recipeId } : {}),
   };
 
   return createImageProcessingPlan({
@@ -520,6 +532,9 @@ export const createCreatorAssetImageProcessingPlan = (
     presetId: fallbackPreset.id,
     operations,
     output,
+    createdBy: input.createdBy,
+    recipeId: input.recipeId,
+    readmeSuggestions: input.readmeSuggestions,
     now: input.now,
     id: input.id,
   });
@@ -562,6 +577,7 @@ export const createCreatorAssetsImageProcessingPlan = (
   const output = applyOutputOverrides(fallbackPreset.output, input);
   const source: CreatorImageProcessingSource = {
     sourceKind: CreatorImageProcessingSourceKind.CreatorAsset,
+    ...(input.recipeId ? { recipeId: input.recipeId } : {}),
   };
 
   return createImageProcessingPlan({
@@ -572,6 +588,7 @@ export const createCreatorAssetsImageProcessingPlan = (
       source: {
         sourceKind: CreatorImageProcessingSourceKind.CreatorAsset,
         assetId: asset.id,
+        ...(input.recipeId ? { recipeId: input.recipeId } : {}),
       },
       sourceAssetId: asset.id,
       sourcePath: asset.filePath,
@@ -580,6 +597,9 @@ export const createCreatorAssetsImageProcessingPlan = (
     presetId: fallbackPreset.id,
     operations,
     output,
+    createdBy: input.createdBy,
+    recipeId: input.recipeId,
+    readmeSuggestions: input.readmeSuggestions,
     now: input.now,
     id: input.id,
   });

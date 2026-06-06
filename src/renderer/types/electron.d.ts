@@ -29,6 +29,8 @@ import type {
   CreatorImagePlanCreateResult,
   CreatorImagePlanGetInput,
   CreatorImagePlanGetResult,
+  CreatorImageRecipeExecuteInput,
+  CreatorImageRecipeExecuteResult,
   CreatorImageReportOpenInput,
   CreatorImageTaskCancelInput,
   CreatorImageTaskCancelResult,
@@ -882,6 +884,15 @@ interface IElectronAPI {
       job?: CreatorImageBatchCreateResult['job'];
       tasks?: CreatorImageBatchCreateResult['tasks'];
       outputAssetIds?: CreatorImageBatchCreateResult['outputAssetIds'];
+      error?: string;
+    }>;
+    executeImageRecipe: (input: CreatorImageRecipeExecuteInput) => Promise<{
+      success: boolean;
+      plan?: CreatorImageRecipeExecuteResult['plan'];
+      job?: CreatorImageRecipeExecuteResult['job'];
+      tasks?: CreatorImageRecipeExecuteResult['tasks'];
+      outputAssetIds?: CreatorImageRecipeExecuteResult['outputAssetIds'];
+      outputAssets?: CreatorProductionAssetRecord[];
       error?: string;
     }>;
     retryImageTask: (input: CreatorImageTaskRetryInput) => Promise<{

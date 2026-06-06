@@ -18,6 +18,7 @@ import type {
   CreatorImageBatchCreateInput,
   CreatorImageJobListInput,
   CreatorImagePlanCreateInput,
+  CreatorImageRecipeExecuteInput,
 } from '../../../shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorAssetUpdateInput,
@@ -29,6 +30,7 @@ import type {
   CreatorPromptAssetCreateInput,
   CreatorRecipeCreateInput,
 } from '../../../shared/creatorStudio/types';
+import type { CoworkStore } from '../../coworkStore';
 import type { CreatorAssetStore } from '../../creatorAssetStore';
 import { createCreatorAssetImageProcessingPlan } from '../../libs/imageProcessing/imageProcessingPlanner';
 import { createImageProcessingService } from '../../libs/imageProcessing/imageProcessingService';
@@ -193,11 +195,26 @@ const normalizeImageBatchCreateInput = (input: unknown): CreatorImageBatchCreate
   };
 };
 
+const normalizeImageRecipeExecuteInput = (input: unknown): CreatorImageRecipeExecuteInput | null => {
+  const record = normalizeObject(input);
+  const recipeId = toTrimmedString(record?.recipeId);
+  const assetId = toTrimmedString(record?.assetId);
+  if (!recipeId || !assetId) return null;
+  return {
+    recipeId,
+    assetId,
+    ...(toTrimmedString(record?.ruleId) ? { ruleId: toTrimmedString(record?.ruleId) } : {}),
+    ...(toTrimmedString(record?.outputDirectory) ? { outputDirectory: toTrimmedString(record?.outputDirectory) } : {}),
+    ...(typeof record?.waitForCompletion === 'boolean' ? { waitForCompletion: record.waitForCompletion } : {}),
+  };
+};
+
 const imageProcessingService = createImageProcessingService();
 
 export const registerCreatorStudioIpcHandlers = (
   ipcMain: IpcMain,
-  getCreatorAssetStore: () => CreatorAssetStore
+  getCreatorAssetStore: () => CreatorAssetStore,
+  getCoworkStore?: () => CoworkStore
 ): void => {
   ipcMain.handle(CreatorStudioIpcChannel.AssetList, async (_event, input: unknown) => {
     try {
@@ -280,6 +297,7 @@ export const registerCreatorStudioIpcHandlers = (
         outputDirectory: normalized.outputDirectory,
       });
       imageProcessingService.savePlan(plan);
+      store.saveImageProcessingPlan?.(plan);
       return { success: true, plan };
     } catch (error) {
       return {
@@ -294,7 +312,8 @@ export const registerCreatorStudioIpcHandlers = (
     if (!planId) {
       return { success: false, error: 'planId is required' };
     }
-    const plan = imageProcessingService.getPlan(planId);
+    const storePlan = getCreatorAssetStore().getImageProcessingPlan?.(planId) ?? null;
+    const plan = imageProcessingService.getPlan(planId) ?? storePlan;
     if (!plan) {
       return { success: false, error: 'Image processing plan not found' };
     }
@@ -303,11 +322,13 @@ export const registerCreatorStudioIpcHandlers = (
 
   ipcMain.handle(CreatorStudioIpcChannel.ImageJobExecute, async (_event, input: unknown) => {
     try {
-      const planId = toTrimmedString(normalizeObject(input)?.planId) ?? toTrimmedString(input);
+      const record = normalizeObject(input);
+      const planId = toTrimmedString(record?.planId) ?? toTrimmedString(input);
       if (!planId) {
         return { success: false, error: 'planId is required' };
       }
-      const plan = imageProcessingService.getPlan(planId);
+      const storePlan = getCreatorAssetStore().getImageProcessingPlan?.(planId) ?? null;
+      const plan = imageProcessingService.getPlan(planId) ?? storePlan;
       if (!plan) {
         return { success: false, error: 'Image processing plan not found' };
       }
@@ -316,14 +337,31 @@ export const registerCreatorStudioIpcHandlers = (
         return { success: false, error: 'source asset is required' };
       }
       const result = await getCreatorAssetStore().executeImageProcessingPlan(plan);
+      const outputAssets = result.outputAssetIds
+        .map((assetId) => getCreatorAssetStore().getAsset(assetId))
+        .filter((asset): asset is CreatorProductionAssetRecord => Boolean(asset));
+      const coworkSessionId = toTrimmedString(record?.coworkSessionId);
+      if (coworkSessionId && getCoworkStore) {
+        try {
+          getCoworkStore().recordImageProcessingExecutionResult({
+            sessionId: coworkSessionId,
+            plan,
+            job: result.job,
+            tasks: result.tasks,
+            outputAssetIds: result.outputAssetIds,
+            outputAssets,
+            planMessageId: toTrimmedString(record?.coworkPlanMessageId),
+          });
+        } catch (writebackError) {
+          console.warn('[CreatorStudio] image processing cowork result writeback failed:', writebackError);
+        }
+      }
       return {
         success: true,
         job: result.job,
         tasks: result.tasks,
         outputAssetIds: result.outputAssetIds,
-        outputAssets: result.outputAssetIds
-          .map((assetId) => getCreatorAssetStore().getAsset(assetId))
-          .filter((asset): asset is CreatorProductionAssetRecord => Boolean(asset)),
+        outputAssets,
       };
     } catch (error) {
       return {
@@ -372,6 +410,28 @@ export const registerCreatorStudioIpcHandlers = (
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to create image processing batch job',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageRecipeExecute, async (_event, input: unknown) => {
+    try {
+      const normalized = normalizeImageRecipeExecuteInput(input);
+      if (!normalized) {
+        return { success: false, error: 'recipeId and assetId are required' };
+      }
+      const result = await getCreatorAssetStore().executeImageProcessingRecipe(normalized);
+      return {
+        success: true,
+        ...result,
+        outputAssets: result.outputAssetIds
+          .map((assetId) => getCreatorAssetStore().getAsset(assetId))
+          .filter((asset): asset is CreatorProductionAssetRecord => Boolean(asset)),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to execute image processing recipe',
       };
     }
   });

@@ -11,7 +11,10 @@ import {
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { CoworkAgentEngine } from '@shared/cowork/constants';
 import { CoworkFileActivityStatus } from '@shared/cowork/fileActivity';
-import type { CreatorImageMetadata } from '@shared/creatorStudio/imageProcessingTypes';
+import type {
+  CreatorImageMetadata,
+  CreatorImageProcessingPlan,
+} from '@shared/creatorStudio/imageProcessingTypes';
 import type { CreatorProductionAssetRecord } from '@shared/creatorStudio/types';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -445,6 +448,17 @@ const getGeneratedImages = (metadata?: CoworkMessageMetadata): GeneratedImage[] 
     && typeof (image as GeneratedImage).path === 'string'
     && (image as GeneratedImage).path.trim().length > 0
   ));
+};
+
+const getCoworkImageProcessingPlan = (
+  metadata?: CoworkMessageMetadata,
+): CreatorImageProcessingPlan | null => {
+  const plan = metadata?.imageProcessingPlan;
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return null;
+  const record = plan as Partial<CreatorImageProcessingPlan>;
+  return typeof record.id === 'string' && record.output && Array.isArray(record.outputItems)
+    ? record as CreatorImageProcessingPlan
+    : null;
 };
 
 const encodeLocalFileSrc = (filePath: string): string => {
@@ -1288,8 +1302,11 @@ const AssistantMessageItem: React.FC<{
   const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
   const [isPreparingPostProcessing, setIsPreparingPostProcessing] = useState(false);
   const [postProcessingStatus, setPostProcessingStatus] = useState<ImageDownloadStatus | null>(null);
+  const [isExecutingPlanCard, setIsExecutingPlanCard] = useState(false);
+  const [planCardStatus, setPlanCardStatus] = useState<ImageDownloadStatus | null>(null);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
   const generatedImages = getGeneratedImages(message.metadata);
+  const imageProcessingPlan = getCoworkImageProcessingPlan(message.metadata);
   const imageProcessingEnabled = isCreatorImageProcessingEnabled();
 
   const openGeneratedImage = useCallback((image: GeneratedImage, src: string, name: string) => {
@@ -1422,6 +1439,32 @@ const AssistantMessageItem: React.FC<{
     });
   }, []);
 
+  const handleExecutePlanCard = useCallback(async () => {
+    if (!imageProcessingPlan || isExecutingPlanCard) return;
+    setIsExecutingPlanCard(true);
+    setPlanCardStatus(null);
+    try {
+      const result = await creatorStudioAssetService.executeImageJob({
+        planId: imageProcessingPlan.id,
+        coworkSessionId: sessionId,
+        coworkPlanMessageId: message.id,
+      });
+      setPlanCardStatus({
+        type: 'success',
+        message: result.outputAssetIds.length > 0
+          ? i18nService.t('creatorImageProcessingCoworkExecuteDone')
+          : i18nService.t('creatorImageProcessingCompleted'),
+      });
+    } catch (error) {
+      setPlanCardStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : i18nService.t('creatorImageProcessingExecuteFailed'),
+      });
+    } finally {
+      setIsExecutingPlanCard(false);
+    }
+  }, [imageProcessingPlan, isExecutingPlanCard, message.id, sessionId]);
+
   return (
     <div
       className="relative"
@@ -1458,6 +1501,37 @@ const AssistantMessageItem: React.FC<{
                 </button>
               );
             })}
+          </div>
+        )}
+        {imageProcessingPlan && (
+          <div className="mt-3 rounded-lg border border-border bg-surface p-3 text-sm">
+            <div className="font-medium text-foreground">{i18nService.t('creatorImageProcessingPlan')}</div>
+            <div className="mt-2 grid gap-1 text-xs text-muted">
+              <div>{i18nService.t('creatorImageProcessingPlanId')}: {imageProcessingPlan.id}</div>
+              <div>{i18nService.t('creatorImageProcessingPreset')}: {imageProcessingPlan.presetId ?? i18nService.t('creatorImageProcessingPresetCustom')}</div>
+              <div>{i18nService.t('creatorImageProcessingOutputFormat')}: {imageProcessingPlan.output.format}</div>
+              <div>{i18nService.t('creatorImageProcessingOutputFile')}: {imageProcessingPlan.outputItems[0]?.fileName ?? '-'}</div>
+            </div>
+            <div className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              {i18nService.t('creatorImageProcessingAgentConfirmHint')}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExecutePlanCard}
+                disabled={!imageProcessingEnabled || isExecutingPlanCard}
+                className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isExecutingPlanCard
+                  ? i18nService.t('creatorImageProcessingExecuting')
+                  : i18nService.t('creatorImageProcessingConfirmExecute')}
+              </button>
+              {planCardStatus && (
+                <span className={planCardStatus.type === 'success' ? 'text-xs text-emerald-600' : 'text-xs text-red-500'}>
+                  {planCardStatus.message}
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>

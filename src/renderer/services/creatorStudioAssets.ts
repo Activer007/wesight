@@ -12,6 +12,8 @@ import type {
   CreatorImagePlanCreateResult,
   CreatorImagePlanGetInput,
   CreatorImagePlanGetResult,
+  CreatorImageRecipeExecuteInput,
+  CreatorImageRecipeExecuteResult,
   CreatorImageReportOpenInput,
   CreatorImageTaskCancelInput,
   CreatorImageTaskCancelResult,
@@ -157,6 +159,22 @@ class CreatorStudioAssetService {
       job: result.job,
       tasks: result.tasks,
       outputAssetIds: result.outputAssetIds ?? [],
+    };
+  }
+
+  async executeImageRecipe(input: CreatorImageRecipeExecuteInput): Promise<
+    CreatorImageRecipeExecuteResult & { outputAssets: CreatorProductionAssetRecord[] }
+  > {
+    const result = await window.electron.creatorStudio.executeImageRecipe(input);
+    if (!result.success || !result.plan || !result.job || !result.tasks) {
+      throw new Error(result.error || 'Failed to execute image processing recipe');
+    }
+    return {
+      plan: result.plan,
+      job: result.job,
+      tasks: result.tasks,
+      outputAssetIds: result.outputAssetIds ?? [],
+      outputAssets: result.outputAssets ?? [],
     };
   }
 

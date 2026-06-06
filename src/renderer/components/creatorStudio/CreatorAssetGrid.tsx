@@ -21,12 +21,18 @@ import {
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
+  CreatorRecipeImageProcessingPackKind,
+  CreatorRecipeOutputKind,
   CreatorStudioDefaultProjectId,
+  isCreatorRecipeImageProcessingPackKind,
+  isCreatorRecipeOutputKind,
+  isCreatorRecipeOutputSchemaVersion,
 } from '@shared/creatorStudio/constants';
 import type { CreatorImageMetadata } from '@shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorProductionAssetRecord,
   CreatorPromptVersionRecord,
+  CreatorRecipeRecord,
   CreatorWorkspaceSnapshot,
 } from '@shared/creatorStudio/types';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -39,9 +45,11 @@ import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcess
 import { ImagePostProcessingDrawer } from './ImagePostProcessingDrawer';
 
 interface CreatorAssetGridProps {
+  recipes?: CreatorRecipeRecord[];
   onOpenCoworkSession: (sessionId: string) => Promise<boolean>;
   onUseAssetAsReference: (asset: CreatorProductionAssetRecord) => void;
   onSendAssetToCowork: (asset: CreatorProductionAssetRecord) => void;
+  onExecuteImageRecipe?: (asset: CreatorProductionAssetRecord, recipe: CreatorRecipeRecord) => Promise<void> | void;
 }
 
 const dispatchToast = (message: string) => {
@@ -294,10 +302,28 @@ const getAssetCases = (asset: CreatorProductionAssetRecord): CreatorStudioCase[]
     .filter((item): item is CreatorStudioCase => Boolean(item))
 );
 
+const isReadmeBannerPackRecipe = (recipe: CreatorRecipeRecord): boolean => {
+  const output = recipe.defaultOutput;
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return false;
+  const record = output as Record<string, unknown>;
+  const candidate = record.imageProcessing && typeof record.imageProcessing === 'object' && !Array.isArray(record.imageProcessing)
+    ? record.imageProcessing as Record<string, unknown>
+    : record;
+  return isCreatorRecipeOutputSchemaVersion(candidate.schemaVersion)
+    && isCreatorRecipeOutputKind(candidate.kind)
+    && candidate.kind === CreatorRecipeOutputKind.ImageProcessing
+    && isCreatorRecipeImageProcessingPackKind(candidate.packKind)
+    && candidate.packKind === CreatorRecipeImageProcessingPackKind.ReadmeBannerPack
+    && Array.isArray(candidate.rules)
+    && candidate.rules.length > 0;
+};
+
 export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
+  recipes = [],
   onOpenCoworkSession,
   onUseAssetAsReference,
   onSendAssetToCowork,
+  onExecuteImageRecipe,
 }) => {
   const [workspace, setWorkspace] = useState<CreatorWorkspaceSnapshot | null>(null);
   const [currentProjectId, setCurrentProjectId] = useState('');
@@ -324,6 +350,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const [isLoadingPromptVersions, setIsLoadingPromptVersions] = useState(false);
   const [inspectingImageAssetIds, setInspectingImageAssetIds] = useState<Set<string>>(() => new Set());
   const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [executingRecipeAssetId, setExecutingRecipeAssetId] = useState<string | null>(null);
   const [batchImageAssetIds, setBatchImageAssetIds] = useState<Set<string>>(() => new Set());
   const [isCreatingImageBatch, setIsCreatingImageBatch] = useState(false);
   const [imageBatchMaxWidth, setImageBatchMaxWidth] = useState('1600');
@@ -575,6 +602,20 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
     }
   };
 
+  const handleExecuteImageRecipe = async (
+    asset: CreatorProductionAssetRecord,
+    recipe: CreatorRecipeRecord,
+  ) => {
+    if (!onExecuteImageRecipe) return;
+    setExecutingRecipeAssetId(asset.id);
+    try {
+      await onExecuteImageRecipe(asset, recipe);
+      await loadAssets();
+    } finally {
+      setExecutingRecipeAssetId(null);
+    }
+  };
+
   const handleChangeAdoptionStatus = async (
     asset: CreatorProductionAssetRecord,
     nextStatus: CreatorAssetAdoptionStatusType
@@ -688,6 +729,10 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const selectedAssetCases = useMemo(
     () => selectedAsset ? getAssetCases(selectedAsset) : [],
     [selectedAsset]
+  );
+  const readmeBannerRecipe = useMemo(
+    () => recipes.find(isReadmeBannerPackRecipe) ?? null,
+    [recipes]
   );
   const selectedAssetCanReveal = Boolean(selectedAsset && isFileBackedImage(selectedAsset));
   const selectedBatchImageAssetIds = useMemo(
@@ -1312,6 +1357,22 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   >
                     <AdjustmentsHorizontalIcon className="h-4 w-4" />
                     {i18nService.t('creatorImagePostProcessingAction')}
+                  </button>
+                )}
+                {imageProcessingEnabled && selectedAsset.kind === CreatorProductionAssetKind.Image && readmeBannerRecipe && (
+                  <button
+                    type="button"
+                    onClick={() => void handleExecuteImageRecipe(selectedAsset, readmeBannerRecipe)}
+                    disabled={
+                      selectedAsset.status !== CreatorProductionAssetStatus.Ready
+                      || executingRecipeAssetId === selectedAsset.id
+                    }
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <SparklesIcon className="h-4 w-4" />
+                    {executingRecipeAssetId === selectedAsset.id
+                      ? i18nService.t('creatorImageRecipeExecuting')
+                      : i18nService.t('creatorImageRecipeReadmeBanner')}
                   </button>
                 )}
               </div>

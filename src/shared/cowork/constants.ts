@@ -182,6 +182,31 @@ export const RuntimeCallSourceValues = [
   RuntimeCallSource.Unknown,
 ] as const;
 
+export const CoworkImageToolName = {
+  Inspect: 'image.inspect',
+  PlanProcessing: 'image.planProcessing',
+  ExecuteProcessing: 'image.executeProcessing',
+  GetJobStatus: 'image.getJobStatus',
+  RevealOutput: 'image.revealOutput',
+  AttachToCreatorAsset: 'image.attachToCreatorAsset',
+} as const;
+
+export type CoworkImageToolName = typeof CoworkImageToolName[keyof typeof CoworkImageToolName];
+
+export const CoworkImageToolNameValues = [
+  CoworkImageToolName.Inspect,
+  CoworkImageToolName.PlanProcessing,
+  CoworkImageToolName.ExecuteProcessing,
+  CoworkImageToolName.GetJobStatus,
+  CoworkImageToolName.RevealOutput,
+  CoworkImageToolName.AttachToCreatorAsset,
+] as const;
+
+export function isCoworkImageToolName(value: unknown): value is CoworkImageToolName {
+  return typeof value === 'string'
+    && CoworkImageToolNameValues.includes(value as CoworkImageToolName);
+}
+
 export function isRuntimeCallStatus(value: unknown): value is RuntimeCallStatus {
   return typeof value === 'string'
     && RuntimeCallStatusValues.includes(value as RuntimeCallStatus);
