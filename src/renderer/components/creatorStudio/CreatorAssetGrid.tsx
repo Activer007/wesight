@@ -18,18 +18,22 @@ import {
   type CreatorAssetAdoptionStatus as CreatorAssetAdoptionStatusType,
   CreatorImageMetadataStatus,
   CreatorImageProcessingOutputFormat,
+  CreatorLocalImageImportMode,
+  type CreatorLocalImageImportMode as CreatorLocalImageImportModeType,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
   CreatorRecipeImageProcessingPackKind,
   CreatorRecipeOutputKind,
   CreatorStudioDefaultProjectId,
+  CreatorStudioIpcChannel,
   isCreatorRecipeImageProcessingPackKind,
   isCreatorRecipeOutputKind,
   isCreatorRecipeOutputSchemaVersion,
 } from '@shared/creatorStudio/constants';
 import type { CreatorImageMetadata } from '@shared/creatorStudio/imageProcessingTypes';
 import type {
+  CreatorLocalImageImportResult,
   CreatorProductionAssetRecord,
   CreatorPromptVersionRecord,
   CreatorRecipeRecord,
@@ -42,7 +46,7 @@ import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
 import type { CreatorStudioCase } from '../../types/creatorStudio';
 import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
-import { ImagePostProcessingDrawer } from './ImagePostProcessingDrawer';
+import { ImageQuickEditDrawer } from './ImageQuickEditDrawer';
 
 interface CreatorAssetGridProps {
   recipes?: CreatorRecipeRecord[];
@@ -166,18 +170,37 @@ const getProjectLabel = (projectId: string, name: string): string => (
 
 const creatorCases = casesData as CreatorStudioCase[];
 const creatorCaseMap = new Map<string, CreatorStudioCase>();
+const creatorCaseTitleMap = new Map<string, CreatorStudioCase>();
 for (const item of creatorCases) {
   creatorCaseMap.set(item.id, item);
   creatorCaseMap.set(`case-${item.sourceCaseId}`, item);
+  creatorCaseTitleMap.set(item.title.trim().toLowerCase(), item);
 }
 
 const isFileBackedImage = (asset: CreatorProductionAssetRecord): boolean => (
   asset.kind === CreatorProductionAssetKind.Image
 );
 
-const isRenderableImage = (asset: CreatorProductionAssetRecord): boolean => (
-  isFileBackedImage(asset) && asset.status === CreatorProductionAssetStatus.Ready
+const isVirtualCreatorAssetPath = (filePath: string): boolean => (
+  filePath.trim().startsWith('creator://')
 );
+
+const isRenderableImage = (asset: CreatorProductionAssetRecord): boolean => (
+  isFileBackedImage(asset)
+  && asset.status === CreatorProductionAssetStatus.Ready
+  && !isVirtualCreatorAssetPath(asset.filePath)
+);
+
+export const hasProcessableCreatorImageSource = (asset: CreatorProductionAssetRecord): boolean => {
+  if (asset.kind !== CreatorProductionAssetKind.Image) return false;
+  const source = asset.imageSource;
+  return isRenderableImage(asset)
+    || Boolean(source?.originalPath)
+    || Boolean(source?.originalUrl)
+    || Boolean(source?.thumbnailPath)
+    || Boolean(source?.thumbnailUrl)
+    || Boolean(source?.localPath && !isVirtualCreatorAssetPath(source.localPath));
+};
 
 const formatFileSize = (bytes: number | null | undefined): string => {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
@@ -229,12 +252,36 @@ const formatProcessingOperations = (asset: CreatorProductionAssetRecord): string
   return operations.map((item) => item.operation).join(', ');
 };
 
-const getCasePreview = (asset: CreatorProductionAssetRecord): CreatorStudioCase | null => {
-  if (asset.kind !== CreatorProductionAssetKind.Case && asset.source !== CreatorProductionAssetSource.CreatorCase) {
-    return null;
-  }
+const getAssetCasePreview = (asset: CreatorProductionAssetRecord): CreatorStudioCase | null => {
   for (const caseId of asset.caseIds) {
     const item = creatorCaseMap.get(caseId);
+    if (item?.image) return item;
+  }
+  const promptSpec = asset.promptSpec && typeof asset.promptSpec === 'object' && !Array.isArray(asset.promptSpec)
+    ? asset.promptSpec as Record<string, unknown>
+    : null;
+  const promptSpecSource = promptSpec?.source && typeof promptSpec.source === 'object' && !Array.isArray(promptSpec.source)
+    ? promptSpec.source as Record<string, unknown>
+    : null;
+  const sourceId = typeof promptSpec?.sourceId === 'string'
+    ? promptSpec.sourceId.trim()
+    : typeof promptSpecSource?.sourceId === 'string'
+      ? promptSpecSource.sourceId.trim()
+      : '';
+  if (sourceId) {
+    const item = creatorCaseMap.get(sourceId);
+    if (item?.image) return item;
+  }
+  const titleCandidates = [
+    typeof promptSpec?.sourceTitle === 'string' ? promptSpec.sourceTitle : '',
+    typeof promptSpecSource?.sourceTitle === 'string' ? promptSpecSource.sourceTitle : '',
+    typeof promptSpec?.subject === 'string' ? promptSpec.subject : '',
+    asset.fileName.replace(/\.prompt\.txt$/i, ''),
+  ];
+  for (const candidate of titleCandidates) {
+    const normalized = candidate.trim().toLowerCase();
+    if (!normalized) continue;
+    const item = creatorCaseTitleMap.get(normalized);
     if (item?.image) return item;
   }
   return null;
@@ -253,7 +300,15 @@ const getAssetPreview = (asset: CreatorProductionAssetRecord): {
     };
   }
 
-  const casePreview = getCasePreview(asset);
+  if (asset.kind === CreatorProductionAssetKind.Image && asset.imageSource?.thumbnailUrl) {
+    return {
+      src: asset.imageSource.thumbnailUrl,
+      filePath: null,
+      alt: asset.fileName,
+    };
+  }
+
+  const casePreview = getAssetCasePreview(asset);
   if (casePreview?.image) {
     return {
       src: casePreview.image,
@@ -290,6 +345,8 @@ const getAssetSourceLabel = (source: CreatorProductionAssetSource): string => {
       return i18nService.t('creatorAssetSourcePrompt');
     case CreatorProductionAssetSource.CreatorCase:
       return i18nService.t('creatorAssetSourceCase');
+    case CreatorProductionAssetSource.LocalImageImport:
+      return i18nService.t('creatorAssetSourceLocalImageImport');
     case CreatorProductionAssetSource.CoworkGeneratedImage:
     default:
       return i18nService.t('creatorAssetSourceCowork');
@@ -300,6 +357,24 @@ const getAssetCases = (asset: CreatorProductionAssetRecord): CreatorStudioCase[]
   asset.caseIds
     .map((caseId) => creatorCaseMap.get(caseId))
     .filter((item): item is CreatorStudioCase => Boolean(item))
+);
+
+const hasOpenableAssetSource = (asset: CreatorProductionAssetRecord): boolean => (
+  asset.sourceSessionAvailable
+  || Boolean(asset.variantOfAssetId)
+  || Boolean(asset.imageProcessing?.sourceAssetId)
+  || Boolean(getAssetCasePreview(asset))
+);
+
+export const canPostProcessAsset = (asset: CreatorProductionAssetRecord): boolean => (
+  hasProcessableCreatorImageSource(asset)
+  || Boolean(getAssetCasePreview(asset)?.image)
+);
+
+const isMissingCreatorCaseImageHandlerError = (error: unknown): boolean => (
+  error instanceof Error
+  && error.message.includes('No handler registered')
+  && error.message.includes(CreatorStudioIpcChannel.AssetCreateCaseImage)
 );
 
 const isReadmeBannerPackRecipe = (recipe: CreatorRecipeRecord): boolean => {
@@ -349,12 +424,15 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const [promptVersionDiff, setPromptVersionDiff] = useState('');
   const [isLoadingPromptVersions, setIsLoadingPromptVersions] = useState(false);
   const [inspectingImageAssetIds, setInspectingImageAssetIds] = useState<Set<string>>(() => new Set());
-  const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [quickEditAsset, setQuickEditAsset] = useState<CreatorProductionAssetRecord | null>(null);
   const [executingRecipeAssetId, setExecutingRecipeAssetId] = useState<string | null>(null);
   const [batchImageAssetIds, setBatchImageAssetIds] = useState<Set<string>>(() => new Set());
   const [isCreatingImageBatch, setIsCreatingImageBatch] = useState(false);
   const [imageBatchMaxWidth, setImageBatchMaxWidth] = useState('1600');
   const [imageBatchMaxHeight, setImageBatchMaxHeight] = useState('1600');
+  const [localImageImportMode, setLocalImageImportMode] = useState<CreatorLocalImageImportModeType>(CreatorLocalImageImportMode.Reference);
+  const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
+  const [isImportingLocalImages, setIsImportingLocalImages] = useState(false);
   const imageProcessingEnabled = isCreatorImageProcessingEnabled();
 
   const currentCollections = useMemo(
@@ -396,6 +474,45 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
       setIsLoading(false);
     }
   }, [adoptionStatus, collectionId, currentProjectId, favoriteOnly, source, tag, templateId, workspace?.currentProjectId]);
+
+  const getLocalImageImportSummary = (result: CreatorLocalImageImportResult): string => {
+    if (result.total === 0) {
+      return i18nService.t('creatorLocalImageImportEmpty');
+    }
+    const summary = i18nService.t('creatorLocalImageImportDone')
+      .replace('{imported}', String(result.imported))
+      .replace('{reused}', String(result.reused))
+      .replace('{skipped}', String(result.skipped));
+    return result.failures.length > 0
+      ? `${summary} ${i18nService.t('creatorLocalImageImportPartialFailed').replace('{count}', String(result.failures.length))}`
+      : summary;
+  };
+
+  const handleImportLocalImages = async (kind: 'files' | 'folder') => {
+    const projectId = currentProjectId || workspace?.currentProjectId;
+    if (!projectId) {
+      dispatchToast(i18nService.t('creatorWorkspaceLoadFailed'));
+      return;
+    }
+    setIsImportingLocalImages(true);
+    setIsImportMenuOpen(false);
+    try {
+      const input = {
+        projectId,
+        mode: localImageImportMode,
+        ...(collectionId ? { collectionId } : {}),
+      };
+      const result = kind === 'files'
+        ? await creatorStudioAssetService.importLocalImages(input)
+        : await creatorStudioAssetService.importLocalImageFolder(input);
+      dispatchToast(getLocalImageImportSummary(result));
+      await loadAssets();
+    } catch (importError) {
+      dispatchToast(importError instanceof Error ? importError.message : i18nService.t('creatorLocalImageImportFailed'));
+    } finally {
+      setIsImportingLocalImages(false);
+    }
+  };
 
   useEffect(() => {
     void loadWorkspace().catch((loadError) => {
@@ -561,14 +678,70 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
     }
   };
 
-  const handleOpenSource = async (asset: CreatorProductionAssetRecord) => {
-    if (!asset.sessionId) {
-      dispatchToast(i18nService.t('creatorAssetSourceUnavailable'));
-      return;
+  const ensureImagePostProcessingAsset = async (asset: CreatorProductionAssetRecord): Promise<CreatorProductionAssetRecord | null> => {
+    if (asset.kind === CreatorProductionAssetKind.Image) {
+      return canPostProcessAsset(asset) ? asset : null;
     }
+    const casePreview = getAssetCasePreview(asset);
+    if (!casePreview?.image) return null;
+    const projectId = currentProjectId || workspace?.currentProjectId || asset.projectId;
+    const imageAsset = await creatorStudioAssetService.createCaseImageAsset({
+      projectId,
+      caseId: casePreview.id,
+      title: casePreview.title,
+      promptText: casePreview.prompt,
+      imageThumbnailUrl: casePreview.imageThumbnailPath ?? casePreview.image,
+      imageOriginalUrl: casePreview.imageOriginalUrl ?? null,
+      mimeType: casePreview.imageOriginal?.mimeType ?? casePreview.imageThumbnail?.mimeType ?? null,
+      width: casePreview.imageOriginal?.width ?? casePreview.imageThumbnail?.width ?? null,
+      height: casePreview.imageOriginal?.height ?? casePreview.imageThumbnail?.height ?? null,
+      byteSize: casePreview.imageOriginal?.byteSize ?? casePreview.imageThumbnail?.byteSize ?? null,
+      sourceLabel: casePreview.sourceLabel,
+      sourceUrl: casePreview.sourceUrl,
+      githubUrl: casePreview.githubUrl,
+      category: casePreview.category,
+      styles: casePreview.styles,
+      scenes: casePreview.scenes,
+      tags: casePreview.tags,
+    });
+    if (imageAsset) {
+      setAssets((items) => (
+        items.some((item) => item.id === imageAsset.id) ? items : [imageAsset, ...items]
+      ));
+    }
+    return imageAsset;
+  };
+
+  const handleOpenImagePostProcessing = async (asset: CreatorProductionAssetRecord) => {
+    if (!canPostProcessAsset(asset)) return;
+    try {
+      const imageAsset = await ensureImagePostProcessingAsset(asset);
+      if (!imageAsset) {
+        dispatchToast(i18nService.t('creatorImageProcessingSourceMapFailed'));
+        return;
+      }
+      setQuickEditAsset(imageAsset);
+    } catch (error) {
+      dispatchToast(isMissingCreatorCaseImageHandlerError(error)
+        ? i18nService.t('creatorImageProcessingRestartRequired')
+        : error instanceof Error ? error.message : i18nService.t('creatorImageProcessingSourceMapFailed'));
+    }
+  };
+
+  const handleOpenSource = async (asset: CreatorProductionAssetRecord) => {
     try {
       const sourceLookup = await creatorStudioAssetService.getAssetSource(asset.id);
+      if (sourceLookup?.sourceAsset) {
+        setSelectedAsset(sourceLookup.sourceAsset);
+        return;
+      }
       if (!sourceLookup?.session) {
+        const casePreview = getAssetCasePreview(asset);
+        const sourceUrl = casePreview?.githubUrl || casePreview?.sourceUrl || null;
+        if (sourceUrl) {
+          const opened = await window.electron.shell.openExternal(sourceUrl);
+          if (opened.success) return;
+        }
         dispatchToast(i18nService.t('creatorAssetSourceUnavailable'));
         await loadAssets();
         return;
@@ -812,6 +985,44 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                 placeholder={i18nService.t('creatorImageBatchMaxHeight')}
                 className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary"
               />
+              <select
+                value={localImageImportMode}
+                onChange={(event) => setLocalImageImportMode(event.target.value as CreatorLocalImageImportModeType)}
+                className="h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+                aria-label={i18nService.t('creatorLocalImageImportMode')}
+              >
+                <option value={CreatorLocalImageImportMode.Reference}>{i18nService.t('creatorLocalImageImportModeReference')}</option>
+                <option value={CreatorLocalImageImportMode.Copy}>{i18nService.t('creatorLocalImageImportModeCopy')}</option>
+              </select>
+              <div className="relative">
+                <button
+                  type="button"
+                  disabled={isImportingLocalImages}
+                  onClick={() => setIsImportMenuOpen((open) => !open)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <PhotoIcon className="h-4 w-4" />
+                  {isImportingLocalImages ? i18nService.t('creatorLocalImageImporting') : i18nService.t('creatorLocalImageImport')}
+                </button>
+                {isImportMenuOpen && (
+                  <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => void handleImportLocalImages('files')}
+                      className="block w-full px-3 py-2 text-left text-sm text-secondary hover:bg-surface-raised hover:text-foreground"
+                    >
+                      {i18nService.t('creatorLocalImageImportFiles')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleImportLocalImages('folder')}
+                      className="block w-full px-3 py-2 text-left text-sm text-secondary hover:bg-surface-raised hover:text-foreground"
+                    >
+                      {i18nService.t('creatorLocalImageImportFolder')}
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => setIsProjectFormOpen(true)}
@@ -933,6 +1144,9 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
               </option>
               <option value={CreatorProductionAssetSource.CreatorCase}>
                 {i18nService.t('creatorAssetSourceCase')}
+              </option>
+              <option value={CreatorProductionAssetSource.LocalImageImport}>
+                {i18nService.t('creatorAssetSourceLocalImageImport')}
               </option>
             </select>
             <button
@@ -1098,7 +1312,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                     ))}
                   </select>
                   <div className="text-xs text-muted">{new Date(asset.createdAt).toLocaleString()}</div>
-                  {!asset.sourceSessionAvailable && (
+                  {!hasOpenableAssetSource(asset) && (
                     <div className="text-xs text-muted">{i18nService.t('creatorAssetSourceMissing')}</div>
                   )}
                 </div>
@@ -1112,7 +1326,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   <IconAction label={i18nService.t('copy')} onClick={() => void handleCopyPrompt(asset)}>
                     <ClipboardDocumentIcon className="h-4 w-4" />
                   </IconAction>
-                  <IconAction label={i18nService.t('creatorAssetSource')} onClick={() => void handleOpenSource(asset)} disabled={!asset.sourceSessionAvailable}>
+                  <IconAction label={i18nService.t('creatorAssetSource')} onClick={() => void handleOpenSource(asset)} disabled={!hasOpenableAssetSource(asset)}>
                     <ArrowTopRightOnSquareIcon className="h-4 w-4" />
                   </IconAction>
                   <IconAction label={i18nService.t('creatorAssetDetails')} onClick={() => setSelectedAsset(asset)}>
@@ -1120,9 +1334,9 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   </IconAction>
                   {imageProcessingEnabled && (
                     <IconAction
-                      label={i18nService.t('creatorImagePostProcessingAction')}
-                      onClick={() => setPostProcessingAsset(asset)}
-                      disabled={asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready}
+                      label={i18nService.t('creatorImageQuickEditAction')}
+                      onClick={() => void handleOpenImagePostProcessing(asset)}
+                      disabled={!canPostProcessAsset(asset)}
                     >
                       <AdjustmentsHorizontalIcon className="h-4 w-4" />
                     </IconAction>
@@ -1341,22 +1555,22 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                 <button type="button" onClick={() => onSendAssetToCowork(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground">
                   {i18nService.t('creatorAssetSendToCowork')}
                 </button>
-                <button type="button" onClick={() => void handleOpenSource(selectedAsset)} disabled={!selectedAsset.sourceSessionAvailable} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={() => void handleOpenSource(selectedAsset)} disabled={!hasOpenableAssetSource(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
                   {i18nService.t('creatorAssetSource')}
                 </button>
                 <button type="button" onClick={() => void handleRevealAsset(selectedAsset)} disabled={!selectedAssetCanReveal} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
                   <FolderOpenIcon className="h-4 w-4" />
                   {i18nService.t('creatorAssetReveal')}
                 </button>
-                {imageProcessingEnabled && selectedAsset.kind === CreatorProductionAssetKind.Image && (
+                {imageProcessingEnabled && (
                   <button
                     type="button"
-                    onClick={() => setPostProcessingAsset(selectedAsset)}
-                    disabled={selectedAsset.status !== CreatorProductionAssetStatus.Ready}
+                    onClick={() => void handleOpenImagePostProcessing(selectedAsset)}
+                    disabled={!canPostProcessAsset(selectedAsset)}
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <AdjustmentsHorizontalIcon className="h-4 w-4" />
-                    {i18nService.t('creatorImagePostProcessingAction')}
+                    {i18nService.t('creatorImageQuickEditAction')}
                   </button>
                 )}
                 {imageProcessingEnabled && selectedAsset.kind === CreatorProductionAssetKind.Image && readmeBannerRecipe && (
@@ -1393,9 +1607,9 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
           </div>
         )}
       </aside>
-      <ImagePostProcessingDrawer
-        asset={postProcessingAsset}
-        onClose={() => setPostProcessingAsset(null)}
+      <ImageQuickEditDrawer
+        asset={quickEditAsset}
+        onClose={() => setQuickEditAsset(null)}
         onCompleted={handleImageProcessingCompleted}
       />
     </section>

@@ -4,6 +4,7 @@ import {
   CreatorBatchRunKind,
   CreatorFeatureFlag,
   CreatorFeatureFlagDefaults,
+  CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
   CreatorImageProcessingJobStatus,
@@ -14,9 +15,13 @@ import {
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorImageQuickEditOperation,
+  CreatorImageQuickEditSaveMode,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetSource,
   isCreatorBatchRunKind,
   isCreatorFeatureFlag,
+  isCreatorImageAssetQuality,
   isCreatorImageMetadataStatus,
   isCreatorImageProcessingCreatedBy,
   isCreatorImageProcessingJobStatus,
@@ -27,21 +32,31 @@ import {
   isCreatorImageProcessingRisk,
   isCreatorImageProcessingSourceKind,
   isCreatorImageProcessingTaskStatus,
+  isCreatorImageQuickEditOperation,
+  isCreatorImageQuickEditSaveMode,
+  isCreatorLocalImageImportMode,
   isCreatorProductionAssetSource,
   resolveCreatorFeatureFlag,
 } from './constants';
 
 test('accepts creator image processing constants through type guards', () => {
   expect(isCreatorFeatureFlag(CreatorFeatureFlag.ImageProcessingEnabled)).toBe(true);
+  expect(isCreatorLocalImageImportMode(CreatorLocalImageImportMode.Reference)).toBe(true);
+  expect(isCreatorLocalImageImportMode(CreatorLocalImageImportMode.Copy)).toBe(true);
+  expect(isCreatorProductionAssetSource(CreatorProductionAssetSource.LocalImageImport)).toBe(true);
   expect(isCreatorProductionAssetSource(CreatorProductionAssetSource.LocalImageProcessing)).toBe(true);
   expect(isCreatorProductionAssetSource(CreatorProductionAssetSource.RecipePostProcessing)).toBe(true);
   expect(isCreatorBatchRunKind(CreatorBatchRunKind.ImageProcessing)).toBe(true);
+  expect(isCreatorImageAssetQuality(CreatorImageAssetQuality.Original)).toBe(true);
+  expect(isCreatorImageAssetQuality(CreatorImageAssetQuality.Thumbnail)).toBe(true);
   expect(isCreatorImageMetadataStatus(CreatorImageMetadataStatus.Ready)).toBe(true);
   expect(isCreatorImageProcessingSourceKind(CreatorImageProcessingSourceKind.CreatorAsset)).toBe(true);
   expect(isCreatorImageProcessingPlanStatus(CreatorImageProcessingPlanStatus.Ready)).toBe(true);
   expect(isCreatorImageProcessingJobStatus(CreatorImageProcessingJobStatus.Pending)).toBe(true);
   expect(isCreatorImageProcessingTaskStatus(CreatorImageProcessingTaskStatus.Pending)).toBe(true);
   expect(isCreatorImageProcessingOperation(CreatorImageProcessingOperation.Resize)).toBe(true);
+  expect(isCreatorImageQuickEditOperation(CreatorImageQuickEditOperation.CropRatio)).toBe(true);
+  expect(isCreatorImageQuickEditSaveMode(CreatorImageQuickEditSaveMode.Copy)).toBe(true);
   expect(isCreatorImageProcessingOutputFormat(CreatorImageProcessingOutputFormat.Webp)).toBe(true);
   expect(isCreatorImageProcessingPlanSchemaVersion(CreatorImageProcessingPlanSchemaVersion.V1)).toBe(true);
   expect(isCreatorImageProcessingRisk(CreatorImageProcessingRisk.Low)).toBe(true);
@@ -50,13 +65,17 @@ test('accepts creator image processing constants through type guards', () => {
 
 test('rejects non-string image processing constants', () => {
   expect(isCreatorFeatureFlag(null)).toBe(false);
+  expect(isCreatorLocalImageImportMode('link')).toBe(false);
   expect(isCreatorBatchRunKind(undefined)).toBe(false);
+  expect(isCreatorImageAssetQuality('full')).toBe(false);
   expect(isCreatorImageMetadataStatus(Symbol('status'))).toBe(false);
   expect(isCreatorImageProcessingSourceKind({})).toBe(false);
   expect(isCreatorImageProcessingPlanStatus(1)).toBe(false);
   expect(isCreatorImageProcessingJobStatus(false)).toBe(false);
   expect(isCreatorImageProcessingTaskStatus([])).toBe(false);
   expect(isCreatorImageProcessingOperation(null)).toBe(false);
+  expect(isCreatorImageQuickEditOperation('free_crop')).toBe(false);
+  expect(isCreatorImageQuickEditSaveMode('replace')).toBe(false);
   expect(isCreatorImageProcessingOutputFormat(undefined)).toBe(false);
   expect(isCreatorImageProcessingPlanSchemaVersion({})).toBe(false);
   expect(isCreatorImageProcessingRisk(1)).toBe(false);

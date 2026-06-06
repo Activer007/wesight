@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import sharp from 'sharp';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import {
   CreatorAssetAdoptionStatus,
@@ -10,6 +11,7 @@ import {
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
+  CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
   CreatorImageProcessingJobStatus,
@@ -21,6 +23,8 @@ import {
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorImageQuickEditSaveMode,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -42,6 +46,7 @@ import { ensureCreatorProductionSchema } from './creatorProductionSchema';
 let db: Database.Database;
 let store: CreatorAssetStore;
 let tempDir: string;
+const originalFetch = globalThis.fetch;
 
 const createCoworkTables = () => {
   db.exec(`
@@ -147,6 +152,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  globalThis.fetch = originalFetch;
   db.close();
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
@@ -264,6 +270,45 @@ describe('CreatorAssetStore', () => {
       fileSize: 2048,
       status: CreatorImageMetadataStatus.Ready,
       warningCodes: ['large_pixel_count'],
+    });
+  });
+
+  test('preserves thumbnail and remote original source metadata for imported images', () => {
+    db.prepare('INSERT INTO cowork_sessions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('session-remote-original', 'Creative Producer', 'running', 1, 1);
+    const thumbnailPath = path.join(tempDir, 'thumbnail.png');
+    store.handleCoworkMessageInserted({
+      sessionId: 'session-remote-original',
+      message: {
+        id: 'message-remote-original',
+        type: 'assistant',
+        content: 'Generated image',
+        timestamp: 20,
+        sequence: 2,
+        metadata: {
+          generatedImages: [{
+            path: thumbnailPath,
+            name: 'thumbnail.png',
+            mimeType: 'image/png',
+            assetQuality: CreatorImageAssetQuality.Thumbnail,
+            thumbnailPath,
+            originalUrl: 'https://raw.githubusercontent.com/example/project/main/data/images/original.png',
+            thumbnailUrl: './creator-studio/images/thumbnail.png',
+            source: 'creator_import',
+          }],
+        },
+      },
+    });
+
+    const asset = store.listAssets().assets[0];
+
+    expect(asset.status).toBe(CreatorProductionAssetStatus.Ready);
+    expect(asset.imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Thumbnail,
+      localPath: thumbnailPath,
+      thumbnailPath,
+      originalUrl: 'https://raw.githubusercontent.com/example/project/main/data/images/original.png',
+      thumbnailUrl: './creator-studio/images/thumbnail.png',
     });
   });
 
@@ -576,6 +621,354 @@ describe('CreatorAssetStore', () => {
     expect(store.listAssets({ projectId }).total).toBe(2);
     expect(store.listAssets({ projectId, source: CreatorProductionAssetSource.CreatorPrompt }).total).toBe(1);
     expect(store.listAssets({ projectId, tag: 'typography' }).total).toBe(1);
+  });
+
+  test('creates reusable creator case image assets for processing', () => {
+    const workspace = store.createProject({ name: 'Case Image Project' });
+    const projectId = workspace.currentProjectId;
+
+    const imageAsset = store.createCaseImageAsset({
+      projectId,
+      caseId: 'case-77',
+      title: 'Fish Market Cat',
+      promptText: 'Generate a CCD street photo.',
+      imageThumbnailUrl: './creator-studio/images/case77.jpg',
+      imageOriginalUrl: 'https://raw.githubusercontent.com/example/repo/main/data/images/case77.jpg',
+      mimeType: 'image/jpeg',
+      width: 1024,
+      height: 768,
+      byteSize: 12345,
+      sourceLabel: 'awesome-gpt-image-2',
+      sourceUrl: 'https://example.com/case-77',
+      githubUrl: 'https://github.com/example/repo',
+      category: 'street',
+      styles: ['ccd'],
+      scenes: ['market'],
+    });
+    const reused = store.createCaseImageAsset({
+      projectId,
+      caseId: 'case-77',
+      title: 'Fish Market Cat',
+      promptText: 'Generate a CCD street photo.',
+      imageThumbnailUrl: './creator-studio/images/case77.jpg',
+      imageOriginalUrl: 'https://raw.githubusercontent.com/example/repo/main/data/images/case77.jpg',
+    });
+
+    expect(reused.id).toBe(imageAsset.id);
+    expect(imageAsset.kind).toBe(CreatorProductionAssetKind.Image);
+    expect(imageAsset.source).toBe(CreatorProductionAssetSource.CreatorCase);
+    expect(imageAsset.status).toBe(CreatorProductionAssetStatus.Ready);
+    expect(imageAsset.filePath).toBe('creator://case-image/case-77');
+    expect(imageAsset.caseIds).toEqual(['case-77']);
+    expect(imageAsset.imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Thumbnail,
+      originalUrl: 'https://raw.githubusercontent.com/example/repo/main/data/images/case77.jpg',
+      thumbnailUrl: './creator-studio/images/case77.jpg',
+    });
+    expect(imageAsset.imageMetadata).toMatchObject({
+      width: 1024,
+      height: 768,
+      fileSize: 12345,
+      status: CreatorImageMetadataStatus.Ready,
+    });
+    expect(store.listAssets({ projectId }).total).toBe(1);
+  });
+
+  test('prepares virtual creator case images by downloading the original source', async () => {
+    const workspace = store.createProject({ name: 'Case Image Original Project' });
+    const projectId = workspace.currentProjectId;
+    const originalBuffer = await sharp({
+      create: {
+        width: 44,
+        height: 28,
+        channels: 3,
+        background: { r: 30, g: 80, b: 130 },
+      },
+    }).png().toBuffer();
+    globalThis.fetch = vi.fn(async () => new Response(originalBuffer, {
+      status: 200,
+      headers: {
+        'content-type': 'image/png',
+        'content-length': String(originalBuffer.length),
+      },
+    })) as typeof fetch;
+    const imageAsset = store.createCaseImageAsset({
+      projectId,
+      caseId: 'case-original',
+      title: 'Original Remote Case',
+      promptText: 'Generate a reference image.',
+      imageThumbnailUrl: './creator-studio/images/case206.jpg',
+      imageOriginalUrl: 'https://example.com/creator-store-original.png',
+      mimeType: 'image/jpeg',
+    });
+
+    const prepared = await store.prepareImageProcessingAsset(imageAsset);
+
+    expect(prepared.filePath).not.toBe('creator://case-image/case-original');
+    expect(prepared.imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Original,
+      resolvedReason: 'downloaded_original_url',
+    });
+    expect(prepared.imageMetadata).toMatchObject({
+      width: 44,
+      height: 28,
+      status: CreatorImageMetadataStatus.Ready,
+    });
+  });
+
+  test('prepares virtual creator case images with bundled thumbnail fallback warnings', async () => {
+    const workspace = store.createProject({ name: 'Case Image Thumbnail Project' });
+    const projectId = workspace.currentProjectId;
+    const imageAsset = store.createCaseImageAsset({
+      projectId,
+      caseId: 'case-thumbnail',
+      title: 'Thumbnail Fallback Case',
+      promptText: 'Generate a reference image.',
+      imageThumbnailUrl: './creator-studio/images/case206.jpg',
+      imageOriginalUrl: 'http://example.com/original.png',
+      mimeType: 'image/jpeg',
+    });
+
+    const prepared = await store.prepareImageProcessingAsset(imageAsset);
+
+    expect(prepared.filePath).toBe(path.resolve(process.cwd(), 'public', 'creator-studio/images/case206.jpg'));
+    expect(prepared.imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Thumbnail,
+      resolvedReason: 'thumbnail_fallback',
+    });
+    expect(prepared.imageMetadata?.status).toBe(CreatorImageMetadataStatus.Ready);
+    expect(prepared.imageMetadata?.warningCodes).toEqual(expect.arrayContaining([
+      'original_download_failed',
+      'using_thumbnail_source',
+    ]));
+  });
+
+  test('imports a local image by reference as a ready image asset', async () => {
+    const workspace = store.createProject({ name: 'Local Import Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'local-reference.png');
+    await sharp({
+      create: {
+        width: 32,
+        height: 18,
+        channels: 4,
+        background: { r: 10, g: 20, b: 30, alpha: 1 },
+      },
+    }).png().toFile(imagePath);
+
+    const result = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+
+    expect(result).toMatchObject({ total: 1, imported: 1, reused: 0, skipped: 0, failures: [] });
+    expect(result.assets[0]).toMatchObject({
+      projectId,
+      kind: CreatorProductionAssetKind.Image,
+      source: CreatorProductionAssetSource.LocalImageImport,
+      status: CreatorProductionAssetStatus.Ready,
+      filePath: imagePath,
+      fileName: 'local-reference.png',
+      mimeType: 'image/png',
+    });
+    expect(result.assets[0].imageMetadata).toMatchObject({
+      width: 32,
+      height: 18,
+      format: 'png',
+      status: CreatorImageMetadataStatus.Ready,
+    });
+    expect(result.assets[0].imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Original,
+      localPath: imagePath,
+      provider: CreatorProductionAssetSource.LocalImageImport,
+      resolvedPath: imagePath,
+      resolvedReason: 'referenced_local_import',
+    });
+  });
+
+  test('reuses an existing referenced local image import in the same project', async () => {
+    const workspace = store.createProject({ name: 'Local Import Reuse Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'reuse-reference.jpg');
+    await sharp({
+      create: {
+        width: 20,
+        height: 12,
+        channels: 3,
+        background: { r: 240, g: 210, b: 120 },
+      },
+    }).jpeg().toFile(imagePath);
+
+    const first = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+    const second = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+
+    expect(first.imported).toBe(1);
+    expect(second).toMatchObject({ total: 1, imported: 0, reused: 1, skipped: 0, failures: [] });
+    expect(second.assets[0].id).toBe(first.assets[0].id);
+    expect(store.listAssets({ projectId }).total).toBe(1);
+  });
+
+  test('imports copied local images into a managed directory without overwriting files', async () => {
+    const workspace = store.createProject({ name: 'Local Import Copy Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'copy-source.webp');
+    const managedDirectory = path.join(tempDir, 'managed-local-images');
+    const existingPath = path.join(managedDirectory, 'copy-source.webp');
+    await fs.promises.mkdir(managedDirectory, { recursive: true });
+    await fs.promises.writeFile(existingPath, 'existing-file');
+    await sharp({
+      create: {
+        width: 24,
+        height: 24,
+        channels: 3,
+        background: { r: 20, g: 120, b: 180 },
+      },
+    }).webp().toFile(imagePath);
+
+    const result = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Copy,
+      managedDirectory,
+      filePaths: [imagePath],
+    });
+    const reused = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Copy,
+      managedDirectory,
+      filePaths: [imagePath],
+    });
+
+    expect(result).toMatchObject({ total: 1, imported: 1, reused: 0, skipped: 0, failures: [] });
+    expect(result.assets[0].filePath).toBe(path.join(managedDirectory, 'copy-source-1.webp'));
+    expect(result.assets[0].imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Original,
+      localPath: path.join(managedDirectory, 'copy-source-1.webp'),
+      resolvedReason: 'copied_local_import',
+    });
+    expect(reused).toMatchObject({ total: 1, imported: 0, reused: 1, skipped: 0, failures: [] });
+    expect(reused.assets[0].id).toBe(result.assets[0].id);
+    expect(await fs.promises.readFile(existingPath, 'utf8')).toBe('existing-file');
+  });
+
+  test('keeps importing valid local images when one file is corrupt', async () => {
+    const workspace = store.createProject({ name: 'Local Import Partial Project' });
+    const projectId = workspace.currentProjectId;
+    const validPath = path.join(tempDir, 'valid-local.png');
+    const corruptPath = path.join(tempDir, 'corrupt-local.png');
+    await sharp({
+      create: {
+        width: 16,
+        height: 16,
+        channels: 4,
+        background: { r: 80, g: 60, b: 180, alpha: 1 },
+      },
+    }).png().toFile(validPath);
+    await fs.promises.writeFile(corruptPath, 'not an image');
+
+    const result = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [validPath, corruptPath],
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.failures).toEqual([expect.objectContaining({ path: corruptPath })]);
+    expect(store.listAssets({ projectId }).total).toBe(1);
+    expect(store.listAssets({ projectId }).assets[0].filePath).toBe(validPath);
+  });
+
+  test('creates a derived asset when saving a quick edit copy', async () => {
+    const workspace = store.createProject({ name: 'Quick Edit Copy Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'quick-copy.png');
+    await sharp({
+      create: {
+        width: 80,
+        height: 40,
+        channels: 3,
+        background: { r: 80, g: 120, b: 180 },
+      },
+    }).png().toFile(imagePath);
+    const imported = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+
+    const result = await store.saveImageQuickEdit({
+      assetId: imported.assets[0].id,
+      saveMode: CreatorImageQuickEditSaveMode.Copy,
+      outputFormat: CreatorImageProcessingOutputFormat.Webp,
+      width: 40,
+      keepAspect: true,
+    });
+
+    expect(result.overwritten).toBe(false);
+    expect(result.asset).toMatchObject({
+      kind: CreatorProductionAssetKind.Image,
+      source: CreatorProductionAssetSource.LocalImageProcessing,
+      variantOfAssetId: imported.assets[0].id,
+      filePath: path.join(tempDir, 'quick-copy-edited.webp'),
+    });
+    expect(store.getAssetByFilePath(result.outputPath)?.id).toBe(result.asset?.id);
+    expect(result.asset?.imageProcessing).toMatchObject({
+      sourceAssetId: imported.assets[0].id,
+      quickEdit: {
+        saveMode: CreatorImageQuickEditSaveMode.Copy,
+        outputPath: path.join(tempDir, 'quick-copy-edited.webp'),
+      },
+    });
+    expect(result.imageMetadata).toMatchObject({
+      width: 40,
+      height: 20,
+      format: CreatorImageProcessingOutputFormat.Webp,
+    });
+  });
+
+  test('overwrites an imported local image without creating a derived asset', async () => {
+    const workspace = store.createProject({ name: 'Quick Edit Overwrite Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'quick-overwrite.png');
+    await sharp({
+      create: {
+        width: 30,
+        height: 60,
+        channels: 3,
+        background: { r: 180, g: 80, b: 120 },
+      },
+    }).png().toFile(imagePath);
+    const imported = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+
+    const result = await store.saveImageQuickEdit({
+      assetId: imported.assets[0].id,
+      saveMode: CreatorImageQuickEditSaveMode.Overwrite,
+      outputFormat: CreatorImageProcessingOutputFormat.Png,
+      rotate: 90,
+    });
+
+    expect(result.overwritten).toBe(true);
+    expect(result.asset?.id).toBe(imported.assets[0].id);
+    expect(store.listAssets({ projectId }).total).toBe(1);
+    const updated = store.getAsset(imported.assets[0].id);
+    expect(updated?.imageMetadata).toMatchObject({
+      width: 60,
+      height: 30,
+      format: CreatorImageProcessingOutputFormat.Png,
+    });
   });
 
   test('tracks prompt versions, recipes, diffs, and forks', () => {
@@ -1210,6 +1603,7 @@ describe('CreatorAssetStore', () => {
     expect(derived.licenseNote).toBe('license');
     expect(derived.usageNote).toBe('usage');
     expect(derived.imageMetadata?.format).toBe(CreatorImageProcessingOutputFormat.Webp);
+    expect(store.getAssetSource(derived.id)?.sourceAsset?.id).toBe('source-asset');
 
     const row = db.prepare('SELECT metadata FROM production_assets WHERE id = ?').get(derived.id) as { metadata: string };
     const metadata = JSON.parse(row.metadata) as { processing?: { sourceAssetId?: string; plan?: { id?: string } } };

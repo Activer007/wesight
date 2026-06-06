@@ -29,6 +29,9 @@ import type {
   CreatorImagePlanCreateResult,
   CreatorImagePlanGetInput,
   CreatorImagePlanGetResult,
+  CreatorImageQuickEditRevealInput,
+  CreatorImageQuickEditSaveInput,
+  CreatorImageQuickEditSaveResult,
   CreatorImageRecipeExecuteInput,
   CreatorImageRecipeExecuteResult,
   CreatorImageReportOpenInput,
@@ -57,9 +60,12 @@ import type {
   CreatorBoardWorkspaceSnapshot,
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
+  CreatorCaseImageAssetCreateInput,
   CreatorCreativeModelCapability,
   CreatorImageInspectInput,
   CreatorImageInspectResult,
+  CreatorLocalImageImportInput,
+  CreatorLocalImageImportResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -910,6 +916,16 @@ interface IElectronAPI {
     }>;
     revealImageOutput: (input: CreatorImageOutputRevealInput) => Promise<{ success: boolean; error?: string }>;
     openImageReport: (input: CreatorImageReportOpenInput) => Promise<{ success: boolean; error?: string }>;
+    saveImageQuickEdit: (input: CreatorImageQuickEditSaveInput) => Promise<{
+      success: boolean;
+      outputPath?: CreatorImageQuickEditSaveResult['outputPath'];
+      imageMetadata?: CreatorImageQuickEditSaveResult['imageMetadata'];
+      asset?: CreatorImageQuickEditSaveResult['asset'];
+      overwritten?: boolean;
+      warningCodes?: CreatorImageQuickEditSaveResult['warningCodes'];
+      error?: string;
+    }>;
+    revealImageQuickEdit: (input: CreatorImageQuickEditRevealInput) => Promise<{ success: boolean; error?: string }>;
     setAssetFavorite: (input: { assetId: string; favorite: boolean }) => Promise<{
       success: boolean;
       asset?: CreatorProductionAssetRecord;
@@ -928,6 +944,31 @@ interface IElectronAPI {
     createCaseAsset: (input: CreatorCaseAssetCreateInput) => Promise<{
       success: boolean;
       asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    createCaseImageAsset: (input: CreatorCaseImageAssetCreateInput) => Promise<{
+      success: boolean;
+      asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    importLocalImages: (input: CreatorLocalImageImportInput) => Promise<{
+      success: boolean;
+      assets?: CreatorLocalImageImportResult['assets'];
+      total?: number;
+      imported?: number;
+      reused?: number;
+      skipped?: number;
+      failures?: CreatorLocalImageImportResult['failures'];
+      error?: string;
+    }>;
+    importLocalImageFolder: (input: CreatorLocalImageImportInput) => Promise<{
+      success: boolean;
+      assets?: CreatorLocalImageImportResult['assets'];
+      total?: number;
+      imported?: number;
+      reused?: number;
+      skipped?: number;
+      failures?: CreatorLocalImageImportResult['failures'];
       error?: string;
     }>;
     revealAssetInFolder: (assetId: string) => Promise<{ success: boolean; error?: string }>;

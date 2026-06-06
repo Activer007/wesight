@@ -15,6 +15,7 @@ import {
 import {
   CreatorAssetAdoptionStatus,
   CreatorBatchTaskStatus,
+  CreatorImageAssetQuality,
   CreatorImageProcessingJobStatus,
   CreatorImageProcessingTaskStatus,
   CreatorProductionAssetKind,
@@ -621,6 +622,31 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         reverseEngineeredPrompt.formDraft.visualStyle,
       ].filter(Boolean).join(', '),
     });
+    const caseImage = item.image;
+    if (caseImage) {
+      setBuilderMaterials((materials) => [{
+        id: createMaterialId(),
+        role: CreatorMaterialRole.Reference,
+        source: CreatorMaterialSource.Case,
+        name: item.title,
+        path: caseImage,
+        mimeType: item.imageThumbnail?.mimeType ?? item.imageOriginal?.mimeType ?? 'image/jpeg',
+        size: item.imageThumbnail?.byteSize ?? 0,
+        previewUrl: caseImage,
+        assetQuality: CreatorImageAssetQuality.Thumbnail,
+        originalUrl: item.imageOriginalUrl ?? null,
+        thumbnailUrl: item.imageThumbnailPath ?? caseImage,
+        imageAnalysis: item.imageOriginal
+          ? {
+            width: item.imageOriginal.width,
+            height: item.imageOriginal.height,
+            dominantColors: [],
+            aspectRatio: `${item.imageOriginal.width}:${item.imageOriginal.height}`,
+          }
+          : undefined,
+        addedAt: Date.now(),
+      }, ...materials]);
+    }
     setActiveTab(CreatorStudioTab.Builder);
   };
 

@@ -10,12 +10,15 @@ import {
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
+  CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
   CreatorImageProcessingJobStatus,
   CreatorImageProcessingPlanStatus,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorImageQuickEditSaveMode,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -47,6 +50,8 @@ import type {
   CreatorImageProcessingReport,
   CreatorImageProcessingRuntimeMetrics,
   CreatorImageProcessingTask,
+  CreatorImageQuickEditSaveInput,
+  CreatorImageQuickEditSaveResult,
   CreatorImageTaskCancelResult,
   CreatorImageTaskRetryResult,
 } from '../shared/creatorStudio/imageProcessingTypes';
@@ -78,10 +83,12 @@ import type {
   CreatorBrandKitRecord,
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
+  CreatorCaseImageAssetCreateInput,
   CreatorImageInspectInput,
   CreatorImageInspectResult,
   CreatorImageProcessingAssetCreateInput,
   CreatorImageProcessingAssetMetadata,
+  CreatorLocalImageImportResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -113,6 +120,12 @@ import { inspectImageMetadata } from './libs/imageProcessing/imageMetadataInspec
 import { createCreatorAssetsImageProcessingPlan } from './libs/imageProcessing/imageProcessingPlanner';
 import { createImageProcessingReport } from './libs/imageProcessing/imageProcessingReport';
 import { executeImageProcessingTask } from './libs/imageProcessing/imageProcessingService';
+import { executeImageQuickEdit } from './libs/imageProcessing/imageQuickEditService';
+import {
+  buildCreatorImageSourceFile,
+  parseCreatorImageSourceFile,
+  resolveCreatorImageSourceForProcessing,
+} from './libs/imageProcessing/imageSourceResolver';
 
 interface ProductionAssetRow {
   id: string;
@@ -235,6 +248,11 @@ type GeneratedImageInput = {
   name?: string;
   mimeType?: string;
   source?: string;
+  assetQuality?: string;
+  originalPath?: string;
+  thumbnailPath?: string;
+  originalUrl?: string;
+  thumbnailUrl?: string;
 };
 
 interface CreatorGeneratedImageContext {
@@ -246,6 +264,25 @@ interface CreatorGeneratedImageContext {
   promptVersionId: string | null;
   recipeId: string | null;
   selectedDirectionId: string | null;
+}
+
+const LocalImageImportExtensions = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.avif',
+  '.gif',
+  '.tif',
+  '.tiff',
+]);
+
+export interface CreatorLocalImageImportStoreInput {
+  projectId: string;
+  filePaths: string[];
+  mode?: CreatorLocalImageImportMode | null;
+  collectionId?: string | null;
+  managedDirectory?: string | null;
 }
 
 interface ProjectRow {
@@ -540,6 +577,26 @@ const parseImageMetadata = (metadata: Record<string, unknown>): CreatorImageMeta
   };
 };
 
+const getGeneratedImageSourceMetadata = (image: GeneratedImageInput): Record<string, unknown> => {
+  const imageSource = buildCreatorImageSourceFile({
+    localPath: image.path,
+    assetQuality: image.assetQuality === CreatorImageAssetQuality.Original
+      ? CreatorImageAssetQuality.Original
+      : image.assetQuality === CreatorImageAssetQuality.Thumbnail
+        ? CreatorImageAssetQuality.Thumbnail
+        : CreatorImageAssetQuality.Unknown,
+    originalPath: image.originalPath ?? null,
+    thumbnailPath: image.thumbnailPath ?? null,
+    originalUrl: image.originalUrl ?? null,
+    thumbnailUrl: image.thumbnailUrl ?? null,
+    provider: image.source ?? null,
+  });
+  return {
+    generatedImageSource: image.source || null,
+    imageSource,
+  };
+};
+
 const parseImageProcessingMetadata = (metadata: Record<string, unknown>): CreatorImageProcessingAssetMetadata | null => {
   const value = metadata.processing;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -569,6 +626,9 @@ const parseImageProcessingMetadata = (metadata: Record<string, unknown>): Creato
   const readmeSuggestions = Array.isArray(record.readmeSuggestions)
     ? record.readmeSuggestions as CreatorImageProcessingAssetMetadata['readmeSuggestions']
     : undefined;
+  const quickEdit = record.quickEdit && typeof record.quickEdit === 'object' && !Array.isArray(record.quickEdit)
+    ? record.quickEdit as CreatorImageProcessingAssetMetadata['quickEdit']
+    : null;
   const planOperations = plan?.operations ?? [];
   const operations = Array.isArray(record.operations)
     ? record.operations as CreatorImageProcessingAssetMetadata['operations']
@@ -585,6 +645,7 @@ const parseImageProcessingMetadata = (metadata: Record<string, unknown>): Creato
     tasks,
     report,
     readmeSuggestions,
+    quickEdit,
   };
 };
 
@@ -897,6 +958,18 @@ const getImageName = (image: GeneratedImageInput): string => {
   return path.basename(image.path.trim()) || 'generated-image.png';
 };
 
+const buildUniqueLocalImageImportPath = (directory: string, fileName: string): string => {
+  const extension = path.extname(fileName);
+  const baseName = path.basename(fileName, extension) || 'image';
+  let candidate = path.join(directory, `${baseName}${extension}`);
+  let index = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(directory, `${baseName}-${index}${extension}`);
+    index += 1;
+  }
+  return candidate;
+};
+
 export class CreatorAssetStore {
   constructor(private readonly db: Database.Database) {}
 
@@ -995,6 +1068,189 @@ export class CreatorAssetStore {
       VALUES (?, ?, ?)
     `).run(collection.id, asset.id, Date.now());
     return this.getAsset(asset.id);
+  }
+
+  async importLocalImages(input: CreatorLocalImageImportStoreInput): Promise<CreatorLocalImageImportResult> {
+    const projectId = input.projectId.trim() || this.getCurrentProjectId();
+    const project = this.db.prepare('SELECT id FROM creator_projects WHERE id = ?').get(projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    const mode = input.mode === CreatorLocalImageImportMode.Copy
+      ? CreatorLocalImageImportMode.Copy
+      : CreatorLocalImageImportMode.Reference;
+    if (mode === CreatorLocalImageImportMode.Copy && !input.managedDirectory?.trim()) {
+      throw new Error('Managed image directory is required');
+    }
+
+    const uniqueSourcePaths = Array.from(new Set(input.filePaths
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => path.resolve(item))));
+    const failures: CreatorLocalImageImportResult['failures'] = [];
+    const assets: CreatorProductionAssetRecord[] = [];
+    let imported = 0;
+    let reused = 0;
+    let skipped = 0;
+
+    for (const sourcePath of uniqueSourcePaths) {
+      try {
+        const extension = path.extname(sourcePath).toLowerCase();
+        if (!LocalImageImportExtensions.has(extension)) {
+          skipped += 1;
+          failures.push({ path: sourcePath, reason: 'unsupported_extension' });
+          continue;
+        }
+
+        const stat = await fs.promises.stat(sourcePath);
+        if (!stat.isFile()) {
+          skipped += 1;
+          failures.push({ path: sourcePath, reason: 'not_a_file' });
+          continue;
+        }
+
+        const existing = mode === CreatorLocalImageImportMode.Reference
+          ? this.db.prepare(`
+            SELECT id FROM production_assets
+            WHERE project_id = ?
+              AND kind = ?
+              AND source = ?
+              AND file_path = ?
+            LIMIT 1
+          `).get(
+            projectId,
+            CreatorProductionAssetKind.Image,
+            CreatorProductionAssetSource.LocalImageImport,
+            sourcePath,
+          ) as { id: string } | undefined
+          : this.findCopiedLocalImageImport(projectId, sourcePath);
+        const existingAsset = existing ? this.getAsset(existing.id) : null;
+        if (existingAsset) {
+          if (input.collectionId) {
+            this.addAssetToCollection({ assetId: existingAsset.id, collectionId: input.collectionId });
+          }
+          assets.push(existingAsset);
+          reused += 1;
+          continue;
+        }
+
+        let filePath = sourcePath;
+        if (mode === CreatorLocalImageImportMode.Copy) {
+          const managedDirectory = path.resolve(input.managedDirectory!);
+          await fs.promises.mkdir(managedDirectory, { recursive: true });
+          filePath = buildUniqueLocalImageImportPath(managedDirectory, path.basename(sourcePath));
+          await fs.promises.copyFile(sourcePath, filePath, fs.constants.COPYFILE_EXCL);
+        }
+
+        const imageMetadata = await inspectImageMetadata(filePath);
+        if (
+          imageMetadata.status !== CreatorImageMetadataStatus.Ready
+          && imageMetadata.status !== CreatorImageMetadataStatus.Missing
+        ) {
+          skipped += 1;
+          failures.push({
+            path: sourcePath,
+            reason: imageMetadata.errorCode ?? imageMetadata.status,
+          });
+          continue;
+        }
+
+        const now = Date.now();
+        const id = uuidv4();
+        const fileName = path.basename(filePath);
+        const metadata = {
+          importMode: mode,
+          importedSourcePath: sourcePath,
+          imageSource: buildCreatorImageSourceFile({
+            localPath: filePath,
+            assetQuality: CreatorImageAssetQuality.Original,
+            provider: CreatorProductionAssetSource.LocalImageImport,
+            resolvedPath: filePath,
+            resolvedReason: mode === CreatorLocalImageImportMode.Copy
+              ? 'copied_local_import'
+              : 'referenced_local_import',
+          }),
+          imageMetadata,
+        };
+
+        this.db.prepare(`
+          INSERT INTO production_assets (
+            id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id, session_id,
+            source_session_id, message_id, source_message_id, template_id,
+            case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text,
+            parent_prompt_asset_id, prompt_version_id, recipe_id, selected_direction_id,
+            file_path, file_name, mime_type,
+            favorite, adoption_status, tags_json, license_note, usage_note, metadata, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, '', NULL, NULL, NULL, NULL, ?, ?, ?, 0, ?, '[]', NULL, NULL, ?, ?, ?)
+        `).run(
+          id,
+          projectId,
+          CreatorProductionAssetKind.Image,
+          fileName,
+          imageMetadata.status === CreatorImageMetadataStatus.Missing
+            ? CreatorProductionAssetStatus.Missing
+            : CreatorProductionAssetStatus.Ready,
+          CreatorProductionAssetSource.LocalImageImport,
+          JSON.stringify([]),
+          JSON.stringify([]),
+          filePath,
+          fileName,
+          imageMetadata.mimeType,
+          CreatorAssetAdoptionStatus.Unset,
+          JSON.stringify(metadata),
+          now,
+          now,
+        );
+
+        if (input.collectionId) {
+          this.addAssetToCollection({ assetId: id, collectionId: input.collectionId });
+        }
+        const asset = this.getAsset(id);
+        if (asset) {
+          assets.push(asset);
+        }
+        imported += 1;
+      } catch (error) {
+        skipped += 1;
+        failures.push({
+          path: sourcePath,
+          reason: error instanceof Error ? error.message : 'import_failed',
+        });
+      }
+    }
+
+    return {
+      assets,
+      total: uniqueSourcePaths.length,
+      imported,
+      reused,
+      skipped,
+      failures,
+    };
+  }
+
+  private findCopiedLocalImageImport(projectId: string, sourcePath: string): { id: string } | undefined {
+    const rows = this.db.prepare(`
+      SELECT id, file_path, metadata
+      FROM production_assets
+      WHERE project_id = ?
+        AND kind = ?
+        AND source = ?
+    `).all(
+      projectId,
+      CreatorProductionAssetKind.Image,
+      CreatorProductionAssetSource.LocalImageImport,
+    ) as Array<{ id: string; file_path: string; metadata: string | null }>;
+    return rows.find((row) => {
+      if (!fs.existsSync(row.file_path)) return false;
+      const metadata = parseJsonObject(row.metadata);
+      return metadata.importMode === CreatorLocalImageImportMode.Copy
+        && typeof metadata.importedSourcePath === 'string'
+        && path.resolve(metadata.importedSourcePath) === sourcePath;
+    });
   }
 
   createPromptAsset(input: CreatorPromptAssetCreateInput): CreatorProductionAssetRecord {
@@ -1130,6 +1386,118 @@ export class CreatorAssetStore {
       }),
       now,
       now
+    );
+    return this.getAsset(id)!;
+  }
+
+  createCaseImageAsset(input: CreatorCaseImageAssetCreateInput): CreatorProductionAssetRecord {
+    const projectId = input.projectId.trim() || this.getCurrentProjectId();
+    const project = this.db.prepare('SELECT id FROM creator_projects WHERE id = ?').get(projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+    const caseId = input.caseId.trim();
+    const thumbnailUrl = input.imageThumbnailUrl.trim();
+    if (!caseId || !thumbnailUrl) {
+      throw new Error('Case id and thumbnail image are required');
+    }
+    const virtualPath = `creator://case-image/${caseId}`;
+    const existing = this.db.prepare(`
+      SELECT id FROM production_assets
+      WHERE project_id = ?
+        AND kind = ?
+        AND file_path = ?
+      LIMIT 1
+    `).get(projectId, CreatorProductionAssetKind.Image, virtualPath) as { id: string } | undefined;
+    if (existing) {
+      return this.getAsset(existing.id)!;
+    }
+
+    const now = Date.now();
+    const id = uuidv4();
+    const title = input.title.trim().slice(0, 120) || 'Creator Case Image';
+    const promptText = input.promptText.trim();
+    const caseIds = [caseId];
+    const tags = normalizeTags([
+      input.category ?? '',
+      ...(input.styles ?? []),
+      ...(input.scenes ?? []),
+      ...(input.tags ?? []),
+    ]);
+    const mimeType = normalizeOptionalText(input.mimeType) ?? 'image/jpeg';
+    const format = mimeType.includes('/')
+      ? mimeType.split('/').pop()?.replace('jpeg', 'jpg') ?? null
+      : null;
+    const promptSpec = {
+      sourceType: 'case_image',
+      sourceId: caseId,
+      sourceTitle: title,
+      category: input.category ?? undefined,
+      caseIds,
+      styles: normalizeTags(input.styles ?? []),
+      scenes: normalizeTags(input.scenes ?? []),
+      referencePrompt: promptText,
+    };
+    const imageSource = buildCreatorImageSourceFile({
+      localPath: virtualPath,
+      assetQuality: CreatorImageAssetQuality.Thumbnail,
+      originalUrl: input.imageOriginalUrl ?? null,
+      thumbnailUrl,
+      provider: CreatorProductionAssetSource.CreatorCase,
+    });
+    const imageMetadata: CreatorImageMetadata = {
+      sourcePath: virtualPath,
+      width: typeof input.width === 'number' && Number.isFinite(input.width) ? input.width : null,
+      height: typeof input.height === 'number' && Number.isFinite(input.height) ? input.height : null,
+      fileSize: typeof input.byteSize === 'number' && Number.isFinite(input.byteSize) ? input.byteSize : 0,
+      format,
+      mimeType,
+      hasAlpha: null,
+      exifOrientation: null,
+      colorSpace: null,
+      inspectedAt: now,
+      status: CreatorImageMetadataStatus.Ready,
+      warningCodes: [],
+    };
+    const metadata = {
+      sourceLabel: input.sourceLabel ?? null,
+      sourceUrl: input.sourceUrl ?? null,
+      githubUrl: input.githubUrl ?? null,
+      imageSource,
+      imageMetadata,
+    };
+    const caseIdsJson = JSON.stringify(caseIds);
+    const promptSpecJson = JSON.stringify(promptSpec);
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id, session_id,
+        source_session_id, message_id, source_message_id, template_id,
+        case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text,
+        parent_prompt_asset_id, prompt_version_id, recipe_id, selected_direction_id,
+        file_path, file_name, mime_type,
+        favorite, adoption_status, tags_json, license_note, usage_note, metadata, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, 0, ?, ?, NULL, NULL, ?, ?, ?)
+    `).run(
+      id,
+      projectId,
+      CreatorProductionAssetKind.Image,
+      title,
+      CreatorProductionAssetStatus.Ready,
+      CreatorProductionAssetSource.CreatorCase,
+      caseIdsJson,
+      caseIdsJson,
+      promptSpecJson,
+      promptSpecJson,
+      promptText,
+      virtualPath,
+      `${title}.case-image`,
+      mimeType,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(tags),
+      JSON.stringify(metadata),
+      now,
+      now,
     );
     return this.getAsset(id)!;
   }
@@ -1416,6 +1784,7 @@ export class CreatorAssetStore {
   getAssetSource(id: string): CreatorProductionAssetSourceLookup | null {
     const asset = this.getAsset(id);
     if (!asset) return null;
+    const sourceAssetId = asset.variantOfAssetId ?? asset.imageProcessing?.sourceAssetId ?? null;
     const session = asset.sessionId
       ? this.db.prepare(`
         SELECT id, title, status, created_at, updated_at
@@ -1431,6 +1800,7 @@ export class CreatorAssetStore {
       : undefined;
     return {
       asset,
+      sourceAsset: sourceAssetId ? this.getAsset(sourceAssetId) : null,
       session: session
         ? {
           id: session.id,
@@ -1443,6 +1813,21 @@ export class CreatorAssetStore {
     };
   }
 
+  getAssetByFilePath(filePath: string): CreatorProductionAssetRecord | null {
+    const normalizedPath = path.resolve(filePath);
+    const rows = this.db.prepare(`
+      SELECT
+        a.*,
+        CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS source_session_available
+      FROM production_assets a
+      LEFT JOIN cowork_sessions s ON s.id = COALESCE(a.source_session_id, a.session_id)
+      WHERE a.file_path = ?
+    `).all(normalizedPath) as ProductionAssetRow[];
+    return rows.map((row) => this.mapAssetRow(row))
+      .find((asset) => !asset.filePath.startsWith('creator://') && path.resolve(asset.filePath) === normalizedPath)
+      ?? null;
+  }
+
   async inspectImageAsset(input: CreatorImageInspectInput): Promise<CreatorImageInspectResult | null> {
     const assetId = input.assetId?.trim();
     const asset = assetId
@@ -1452,7 +1837,10 @@ export class CreatorAssetStore {
       return null;
     }
 
-    const imageMetadata = await inspectImageMetadata(asset.filePath);
+    const resolvedSource = await resolveCreatorImageSourceForProcessing(asset, {
+      allowDownloadOriginal: false,
+    });
+    const imageMetadata = await inspectImageMetadata(resolvedSource.sourcePath);
     const currentMetadata = parseJsonObject(this.getAssetMetadataJson(asset.id));
     this.db.prepare(`
       UPDATE production_assets
@@ -1464,7 +1852,16 @@ export class CreatorAssetStore {
     `).run(
       JSON.stringify({
         ...currentMetadata,
-        imageMetadata,
+        imageSource: resolvedSource.imageSource,
+        imageMetadata: {
+          ...imageMetadata,
+          warningCodes: [
+            ...new Set([
+              ...imageMetadata.warningCodes,
+              ...resolvedSource.warningCodes,
+            ]),
+          ],
+        },
       }),
       imageMetadata.status === CreatorImageMetadataStatus.Missing
         ? CreatorProductionAssetStatus.Missing
@@ -1475,7 +1872,7 @@ export class CreatorAssetStore {
     );
 
     const updated = this.getAsset(asset.id);
-    return updated ? { asset: updated, imageMetadata } : null;
+    return updated?.imageMetadata ? { asset: updated, imageMetadata: updated.imageMetadata } : null;
   }
 
   resolveImageProcessingSourceAsset(input: CreatorImageInspectInput): CreatorProductionAssetRecord | null {
@@ -1485,6 +1882,54 @@ export class CreatorAssetStore {
       return asset?.kind === CreatorProductionAssetKind.Image ? asset : null;
     }
     return this.resolveControlledImageAsset(input.source);
+  }
+
+  async prepareImageProcessingAsset(asset: CreatorProductionAssetRecord): Promise<CreatorProductionAssetRecord> {
+    if (asset.kind !== CreatorProductionAssetKind.Image) return asset;
+    let current = asset;
+    if (!current.imageMetadata) {
+      const inspected = await this.inspectImageAsset({ assetId: current.id });
+      current = inspected?.asset ?? current;
+    }
+    const resolvedSource = await resolveCreatorImageSourceForProcessing(current);
+    if (resolvedSource.sourcePath === current.filePath && current.imageSource?.resolvedPath === resolvedSource.imageSource.resolvedPath) {
+      return current;
+    }
+    const imageMetadata = current.imageMetadata?.sourcePath === resolvedSource.sourcePath
+      ? current.imageMetadata
+      : await inspectImageMetadata(resolvedSource.sourcePath);
+    const currentMetadata = parseJsonObject(this.getAssetMetadataJson(current.id));
+    this.db.prepare(`
+      UPDATE production_assets
+      SET metadata = ?,
+        mime_type = COALESCE(?, mime_type),
+        updated_at = ?
+      WHERE id = ?
+    `).run(
+      JSON.stringify({
+        ...currentMetadata,
+        imageSource: resolvedSource.imageSource,
+        imageMetadata: {
+          ...imageMetadata,
+          warningCodes: [
+            ...new Set([
+              ...imageMetadata.warningCodes,
+              ...resolvedSource.warningCodes,
+            ]),
+          ],
+        },
+      }),
+      imageMetadata.mimeType,
+      Date.now(),
+      current.id,
+    );
+    const updated = this.getAsset(current.id) ?? current;
+    return {
+      ...updated,
+      filePath: resolvedSource.sourcePath,
+      imageMetadata: this.getAsset(current.id)?.imageMetadata ?? updated.imageMetadata,
+      imageSource: resolvedSource.imageSource,
+    };
   }
 
   createImageProcessingAsset(input: CreatorImageProcessingAssetCreateInput): CreatorProductionAssetRecord {
@@ -1503,6 +1948,13 @@ export class CreatorAssetStore {
       || input.plan.createdBy === CreatorImageProcessingCreatedBy.Recipe;
     const metadata = {
       imageMetadata: input.imageMetadata,
+      imageSource: buildCreatorImageSourceFile({
+        localPath: input.outputPath,
+        assetQuality: CreatorImageAssetQuality.Original,
+        provider: isRecipeProcessing ? CreatorProductionAssetSource.RecipePostProcessing : CreatorProductionAssetSource.LocalImageProcessing,
+        resolvedPath: input.outputPath,
+        resolvedReason: 'processed_output',
+      }),
       processing: {
         sourceAssetId: sourceAsset.id,
         recipeId,
@@ -1593,6 +2045,218 @@ export class CreatorAssetStore {
     return this.getAsset(id)!;
   }
 
+  private canOverwriteQuickEditAsset(
+    asset: CreatorProductionAssetRecord,
+    preparedAsset: CreatorProductionAssetRecord,
+  ): boolean {
+    if (asset.kind !== CreatorProductionAssetKind.Image) return false;
+    if (
+      asset.source !== CreatorProductionAssetSource.LocalImageImport
+      && asset.source !== CreatorProductionAssetSource.LocalImageProcessing
+    ) {
+      return false;
+    }
+    if (!asset.filePath || asset.filePath.startsWith('creator://')) return false;
+    const sourcePath = path.resolve(asset.filePath);
+    if (path.resolve(preparedAsset.filePath) !== sourcePath) return false;
+    try {
+      const stat = fs.statSync(sourcePath);
+      fs.accessSync(sourcePath, fs.constants.R_OK | fs.constants.W_OK);
+      return stat.isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  private updateQuickEditedAsset(
+    asset: CreatorProductionAssetRecord,
+    result: Awaited<ReturnType<typeof executeImageQuickEdit>>,
+  ): CreatorProductionAssetRecord {
+    const currentMetadata = parseJsonObject(this.getAssetMetadataJson(asset.id));
+    const imageSource = {
+      ...(asset.imageSource ?? buildCreatorImageSourceFile({
+        localPath: result.outputPath,
+        assetQuality: CreatorImageAssetQuality.Original,
+        provider: asset.source,
+      })),
+      assetQuality: CreatorImageAssetQuality.Original,
+      localPath: result.outputPath,
+      resolvedPath: result.outputPath,
+      resolvedReason: 'quick_edit_overwrite',
+    };
+    this.db.prepare(`
+      UPDATE production_assets
+      SET metadata = ?,
+        status = ?,
+        mime_type = COALESCE(?, mime_type),
+        file_name = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(
+      JSON.stringify({
+        ...currentMetadata,
+        imageSource,
+        imageMetadata: result.imageMetadata,
+        quickEdit: result.quickEdit,
+      }),
+      CreatorProductionAssetStatus.Ready,
+      result.mimeType,
+      result.fileName,
+      result.quickEdit.createdAt,
+      asset.id,
+    );
+    return this.getAsset(asset.id)!;
+  }
+
+  private createQuickEditImageAsset(
+    sourceAsset: CreatorProductionAssetRecord,
+    result: Awaited<ReturnType<typeof executeImageQuickEdit>>,
+  ): CreatorProductionAssetRecord {
+    if (path.resolve(sourceAsset.filePath) === path.resolve(result.outputPath)) {
+      throw new Error('Output file must not overwrite the source image');
+    }
+
+    const now = result.quickEdit.createdAt;
+    const id = uuidv4();
+    const processingMetadata: CreatorImageProcessingAssetMetadata = {
+      sourceAssetId: sourceAsset.id,
+      recipeId: sourceAsset.recipeId,
+      presetId: null,
+      operations: [],
+      plan: null,
+      job: null,
+      task: null,
+      quickEdit: result.quickEdit,
+    };
+    const metadata = {
+      imageMetadata: result.imageMetadata,
+      imageSource: buildCreatorImageSourceFile({
+        localPath: result.outputPath,
+        assetQuality: CreatorImageAssetQuality.Original,
+        provider: CreatorProductionAssetSource.LocalImageProcessing,
+        resolvedPath: result.outputPath,
+        resolvedReason: 'quick_edit_output',
+      }),
+      processing: processingMetadata,
+    };
+
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id,
+        project_id,
+        kind,
+        title,
+        status,
+        source,
+        run_id,
+        source_run_id,
+        variant_of_asset_id,
+        session_id,
+        source_session_id,
+        message_id,
+        source_message_id,
+        template_id,
+        case_ids,
+        case_ids_json,
+        prompt_spec,
+        prompt_spec_json,
+        prompt_text,
+        parent_prompt_asset_id,
+        prompt_version_id,
+        recipe_id,
+        selected_direction_id,
+        file_path,
+        file_name,
+        mime_type,
+        favorite,
+        adoption_status,
+        tags_json,
+        license_note,
+        usage_note,
+        metadata,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      sourceAsset.projectId,
+      CreatorProductionAssetKind.Image,
+      result.fileName,
+      CreatorProductionAssetStatus.Ready,
+      CreatorProductionAssetSource.LocalImageProcessing,
+      sourceAsset.runId,
+      sourceAsset.runId,
+      sourceAsset.id,
+      null,
+      sourceAsset.sessionId,
+      null,
+      sourceAsset.messageId,
+      sourceAsset.templateId,
+      JSON.stringify(sourceAsset.caseIds),
+      JSON.stringify(sourceAsset.caseIds),
+      sourceAsset.promptSpec ? JSON.stringify(sourceAsset.promptSpec) : null,
+      sourceAsset.promptSpec ? JSON.stringify(sourceAsset.promptSpec) : null,
+      sourceAsset.promptText,
+      sourceAsset.parentPromptAssetId,
+      sourceAsset.promptVersionId,
+      sourceAsset.recipeId,
+      sourceAsset.selectedDirectionId,
+      result.outputPath,
+      result.fileName,
+      result.mimeType,
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(sourceAsset.tags),
+      sourceAsset.licenseNote,
+      sourceAsset.usageNote,
+      JSON.stringify(metadata),
+      now,
+      now,
+    );
+
+    return this.getAsset(id)!;
+  }
+
+  async saveImageQuickEdit(input: CreatorImageQuickEditSaveInput): Promise<CreatorImageQuickEditSaveResult> {
+    const asset = this.getAsset(input.assetId.trim());
+    if (!asset || asset.kind !== CreatorProductionAssetKind.Image) {
+      throw new Error('Source image asset not found');
+    }
+    const preparedAsset = await this.prepareImageProcessingAsset(asset);
+    if (input.saveMode === CreatorImageQuickEditSaveMode.Overwrite && !this.canOverwriteQuickEditAsset(asset, preparedAsset)) {
+      throw new Error('Current image source cannot be overwritten');
+    }
+
+    const result = await executeImageQuickEdit({
+      sourceAssetId: asset.id,
+      sourcePath: preparedAsset.filePath,
+      saveMode: input.saveMode,
+      outputPath: input.outputPath,
+      outputDirectory: input.outputDirectory,
+      rotate: input.rotate,
+      cropRatio: input.cropRatio,
+      width: input.width,
+      height: input.height,
+      longestEdge: input.longestEdge,
+      keepAspect: input.keepAspect,
+      outputFormat: input.outputFormat,
+      quality: input.quality,
+    });
+
+    const outputAsset = result.overwritten
+      ? this.updateQuickEditedAsset(asset, result)
+      : this.createQuickEditImageAsset(asset, result);
+
+    return {
+      outputPath: result.outputPath,
+      imageMetadata: result.imageMetadata,
+      asset: outputAsset,
+      overwritten: result.overwritten,
+      warningCodes: result.imageMetadata.warningCodes,
+    };
+  }
+
   async executeImageProcessingPlan(plan: CreatorImageProcessingPlan): Promise<CreatorImageBatchCreateResult> {
     if (plan.inputItems.length === 0) {
       throw new Error('At least one image input is required');
@@ -1624,11 +2288,7 @@ export class CreatorAssetStore {
       if (!asset || asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready) {
         continue;
       }
-      if (!asset.imageMetadata) {
-        const inspected = await this.inspectImageAsset({ assetId: asset.id });
-        asset = inspected?.asset ?? asset;
-      }
-      assets.push(asset);
+      assets.push(await this.prepareImageProcessingAsset(asset));
     }
 
     if (assets.length === 0) {
@@ -1738,10 +2398,7 @@ export class CreatorAssetStore {
     if (!asset || asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready) {
       throw new Error('At least one ready image asset is required');
     }
-    if (!asset.imageMetadata) {
-      const inspected = await this.inspectImageAsset({ assetId: asset.id });
-      asset = inspected?.asset ?? asset;
-    }
+    asset = await this.prepareImageProcessingAsset(asset);
 
     const imageOutput = parseCreatorRecipeImageProcessingOutput(recipe.defaultOutput);
     if (!imageOutput) {
@@ -2408,7 +3065,7 @@ export class CreatorAssetStore {
       image,
       timestamp: row.created_at,
       source: CreatorProductionAssetSource.CoworkGeneratedImage,
-      metadata: { generatedImageSource: image.source || null },
+      metadata: getGeneratedImageSourceMetadata(image),
     });
   }
 
@@ -2445,7 +3102,7 @@ export class CreatorAssetStore {
           source: CreatorProductionAssetSource.CoworkGeneratedImage,
           metadata: {
             activityArtifactId: input.artifactId ?? null,
-            generatedImageSource: generatedImage.source || null,
+            ...getGeneratedImageSourceMetadata(generatedImage),
           },
         });
       }
@@ -2463,6 +3120,11 @@ export class CreatorAssetStore {
           metadata: {
             activityArtifactId: input.artifactId ?? null,
             activityArtifactSource: 'assistant_file_link',
+            imageSource: buildCreatorImageSourceFile({
+              localPath: input.filePath,
+              assetQuality: CreatorImageAssetQuality.Unknown,
+              provider: CreatorProductionAssetSource.CoworkGeneratedImage,
+            }),
           },
         });
       }
@@ -3187,7 +3849,7 @@ export class CreatorAssetStore {
           '[]',
           null,
           null,
-          JSON.stringify({ generatedImageSource: image.source || null }),
+          JSON.stringify(getGeneratedImageSourceMetadata(image)),
           now,
           now,
         );
@@ -3933,8 +4595,14 @@ export class CreatorAssetStore {
   }
 
   private mapAssetRow(row: ProductionAssetRow): CreatorProductionAssetRecord {
-    const exists = fs.existsSync(row.file_path);
     const metadata = parseJsonObject(row.metadata);
+    const imageSource = parseCreatorImageSourceFile(metadata, row.file_path);
+    const exists = fs.existsSync(row.file_path);
+    const hasResolvableImageSource = Boolean(
+      imageSource?.originalUrl
+      || (imageSource?.originalPath && fs.existsSync(imageSource.originalPath))
+      || (imageSource?.localPath && fs.existsSync(imageSource.localPath))
+    );
     const projectId = row.project_id || CreatorStudioDefaultProjectId;
     const adoptionStatus = isAdoptionStatus(row.adoption_status)
       ? row.adoption_status
@@ -3946,7 +4614,9 @@ export class CreatorAssetStore {
       kind: row.kind as CreatorProductionAssetKind,
       status: !isFileBackedImage || exists
         ? row.status as CreatorProductionAssetStatus
-        : CreatorProductionAssetStatus.Missing,
+        : hasResolvableImageSource
+          ? CreatorProductionAssetStatus.Ready
+          : CreatorProductionAssetStatus.Missing,
       source: row.source as CreatorProductionAssetSource,
       runId: row.source_run_id ?? row.run_id,
       variantOfAssetId: row.variant_of_asset_id,
@@ -3973,6 +4643,7 @@ export class CreatorAssetStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       sourceSessionAvailable: Boolean(row.source_session_available),
+      imageSource,
       imageMetadata: parseImageMetadata(metadata),
       imageProcessing: parseImageProcessingMetadata(metadata),
     };

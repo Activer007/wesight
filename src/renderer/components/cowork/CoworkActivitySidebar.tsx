@@ -36,7 +36,7 @@ import {
 } from '../../utils/coworkActivity';
 import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
 import { getCompactFolderName } from '../../utils/path';
-import { ImagePostProcessingDrawer } from '../creatorStudio/ImagePostProcessingDrawer';
+import { ImageQuickEditDrawer } from '../creatorStudio/ImageQuickEditDrawer';
 import { CoworkActivitySidebarMode } from './activitySidebarConstants';
 import DiffView from './DiffView';
 import { getLiveCodeInitialLineLimit, shouldAutoFollowLiveCodeScroll } from './liveCodePreviewUtils';
@@ -669,7 +669,7 @@ const CoworkActivitySidebar: React.FC<CoworkActivitySidebarProps> = ({
   onResizeStart,
   onClose,
 }) => {
-  const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [quickEditAsset, setQuickEditAsset] = useState<CreatorProductionAssetRecord | null>(null);
   const [postProcessingStatus, setPostProcessingStatus] = useState<string | null>(null);
   const [preparingArtifactId, setPreparingArtifactId] = useState<string | null>(null);
   const imageProcessingEnabled = isCreatorImageProcessingEnabled();
@@ -716,7 +716,7 @@ const CoworkActivitySidebar: React.FC<CoworkActivitySidebarProps> = ({
         setPostProcessingStatus(i18nService.t('creatorImageProcessingSourceMapFailed'));
         return;
       }
-      setPostProcessingAsset(result.asset);
+      setQuickEditAsset(result.asset);
     } catch (error) {
       setPostProcessingStatus(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingSourceMapFailed'));
     } finally {
@@ -888,7 +888,7 @@ const CoworkActivitySidebar: React.FC<CoworkActivitySidebarProps> = ({
                       <AdjustmentsHorizontalIcon className="h-3 w-3" />
                       {preparingArtifactId === artifact.id
                         ? i18nService.t('creatorImageProcessingPreparing')
-                        : i18nService.t('creatorImagePostProcessingAction')}
+                        : i18nService.t('creatorImageQuickEditAction')}
                     </button>
                   )}
                 </div>
@@ -902,9 +902,9 @@ const CoworkActivitySidebar: React.FC<CoworkActivitySidebarProps> = ({
           {postProcessingStatus}
         </div>
       )}
-      <ImagePostProcessingDrawer
-        asset={postProcessingAsset}
-        onClose={() => setPostProcessingAsset(null)}
+      <ImageQuickEditDrawer
+        asset={quickEditAsset}
+        onClose={() => setQuickEditAsset(null)}
         onCompleted={handlePostProcessingCompleted}
       />
 

@@ -38,6 +38,22 @@ const getSourceCommit = () => {
   }
 };
 
+const getOriginalImageRemoteUrl = (imagePath, repository, commit) => {
+  const normalized = normalizeImagePath(imagePath);
+  if (!normalized || !repository) {
+    return null;
+  }
+  const match = repository.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+  if (!match) {
+    return null;
+  }
+  const owner = match[1];
+  const repo = match[2];
+  const ref = commit || 'main';
+  const rawPath = `data/${normalized.replace(/^\/+/, '')}`;
+  return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${rawPath}`;
+};
+
 const normalizeImagePath = (imagePath) => {
   if (typeof imagePath !== 'string' || imagePath.trim() === '') {
     return null;
@@ -262,6 +278,8 @@ if (!fs.existsSync(styleLibraryPath)) {
 const sourceCasesData = readJson(casesPath);
 const sourceStyleLibrary = readJson(styleLibraryPath);
 const packageJson = readJson(packageJsonPath);
+const sourceCommit = getSourceCommit();
+const sourceRepository = sourceStyleLibrary.repository || sourceCasesData.repository;
 
 assertArray(sourceCasesData.cases, 'cases.json cases');
 assertArray(sourceStyleLibrary.categories, 'style-library categories');
@@ -306,6 +324,7 @@ const cases = sourceCasesData.cases.map((item) => {
   }
 
   const image = ensureThumbnail(item.image);
+  const imageOriginalUrl = getOriginalImageRemoteUrl(item.image, sourceRepository, sourceCommit);
   const imageSourcePath = getImageSourcePath(item.image);
   const thumbnailOutputPath = getThumbnailOutputPath(item.image);
 
@@ -314,6 +333,8 @@ const cases = sourceCasesData.cases.map((item) => {
     sourceCaseId: item.id,
     title: item.title || `Case ${item.id}`,
     image,
+    imageThumbnailPath: image,
+    imageOriginalUrl,
     imageOriginal: readImageMetadata(imageSourcePath),
     imageThumbnail: readImageMetadata(thumbnailOutputPath),
     imageAlt: item.imageAlt || item.title || `Case ${item.id}`,
@@ -367,6 +388,8 @@ const styleLibrary = {
   templates: sourceStyleLibrary.templates.map((template) => ({
     ...template,
     cover: ensureThumbnail(template.cover),
+    coverThumbnailPath: ensureThumbnail(template.cover),
+    coverOriginalUrl: getOriginalImageRemoteUrl(template.cover, sourceRepository, sourceCommit),
   })),
 };
 
@@ -375,9 +398,9 @@ const manifest = {
   appVersion: packageJson.version || null,
   source: {
     name: 'awesome-gpt-image-2',
-    repository: sourceStyleLibrary.repository || sourceCasesData.repository,
+    repository: sourceRepository,
     version: sourceStyleLibrary.version ?? null,
-    commit: getSourceCommit(),
+    commit: sourceCommit,
     paths: {
       cases: 'refer/awesome-gpt-image-2/data/cases.json',
       styleLibrary: 'refer/awesome-gpt-image-2/data/style-library.json',
@@ -394,6 +417,8 @@ const manifest = {
   runtimeDependency: {
     referPathRequired: false,
     imageAssetsCopied: false,
+    originalImagesCopied: false,
+    originalImagesRemote: true,
     thumbnailsCopied: true,
     thumbnailMaxSize,
     thumbnailPath: 'public/creator-studio/images',

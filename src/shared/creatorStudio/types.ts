@@ -5,8 +5,10 @@ import type {
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
   CreatorCreativeModelOutputKind,
+  CreatorImageAssetQuality,
   CreatorImageProcessingOutputFormat,
   CreatorImageProcessingPresetId,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -21,6 +23,7 @@ import type {
   CreatorImageProcessingJob,
   CreatorImageProcessingPlan,
   CreatorImageProcessingTask,
+  CreatorImageQuickEditRecord,
 } from './imageProcessingTypes';
 
 export interface CreatorPromptSpecSnapshot {
@@ -243,8 +246,23 @@ export interface CreatorProductionAssetRecord {
   createdAt: number;
   updatedAt: number;
   sourceSessionAvailable: boolean;
+  imageSource: CreatorImageSourceFile | null;
   imageMetadata: CreatorImageMetadata | null;
   imageProcessing: CreatorImageProcessingAssetMetadata | null;
+}
+
+export interface CreatorImageSourceFile {
+  assetQuality: CreatorImageAssetQuality;
+  localPath: string | null;
+  originalPath: string | null;
+  thumbnailPath: string | null;
+  originalUrl: string | null;
+  thumbnailUrl: string | null;
+  provider: string | null;
+  resolvedPath: string | null;
+  resolvedReason: string | null;
+  downloadedAt?: number | null;
+  downloadError?: string | null;
 }
 
 export interface CreatorImageProcessingAssetMetadata {
@@ -261,6 +279,7 @@ export interface CreatorImageProcessingAssetMetadata {
     title: string;
   } | null;
   readmeSuggestions?: CreatorImageProcessingPlan['readmeSuggestions'];
+  quickEdit?: CreatorImageQuickEditRecord | null;
 }
 
 export interface CreatorImageInspectInput {
@@ -292,6 +311,7 @@ export interface CreatorImageProcessingAssetCreateInput {
 
 export interface CreatorProductionAssetSourceLookup {
   asset: CreatorProductionAssetRecord;
+  sourceAsset: CreatorProductionAssetRecord | null;
   session: {
     id: string;
     title: string;
@@ -367,6 +387,26 @@ export interface CreatorAssetUpdateInput {
 export interface CreatorAssetCollectionAddInput {
   assetId: string;
   collectionId: string;
+}
+
+export interface CreatorLocalImageImportInput {
+  projectId: string;
+  mode?: CreatorLocalImageImportMode | null;
+  collectionId?: string | null;
+}
+
+export interface CreatorLocalImageImportFailure {
+  path: string;
+  reason: string;
+}
+
+export interface CreatorLocalImageImportResult {
+  assets: CreatorProductionAssetRecord[];
+  total: number;
+  imported: number;
+  reused: number;
+  skipped: number;
+  failures: CreatorLocalImageImportFailure[];
 }
 
 export interface CreatorPromptAssetCreateInput {
@@ -526,6 +566,26 @@ export interface CreatorCaseAssetCreateInput {
   caseId: string;
   title: string;
   promptText: string;
+  sourceLabel?: string | null;
+  sourceUrl?: string | null;
+  githubUrl?: string | null;
+  category?: string | null;
+  styles?: string[];
+  scenes?: string[];
+  tags?: string[];
+}
+
+export interface CreatorCaseImageAssetCreateInput {
+  projectId: string;
+  caseId: string;
+  title: string;
+  promptText: string;
+  imageThumbnailUrl: string;
+  imageOriginalUrl?: string | null;
+  mimeType?: string | null;
+  width?: number | null;
+  height?: number | null;
+  byteSize?: number | null;
   sourceLabel?: string | null;
   sourceUrl?: string | null;
   githubUrl?: string | null;

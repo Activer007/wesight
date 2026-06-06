@@ -580,7 +580,17 @@ export interface CoworkMessageMetadata {
   isStreaming?: boolean;
   isFinal?: boolean;
   skillIds?: string[];
-  generatedImages?: Array<{ path: string; name?: string; mimeType?: string; source?: string }>;
+  generatedImages?: Array<{
+    path: string;
+    name?: string;
+    mimeType?: string;
+    source?: string;
+    assetQuality?: string;
+    originalPath?: string;
+    thumbnailPath?: string;
+    originalUrl?: string;
+    thumbnailUrl?: string;
+  }>;
   [key: string]: unknown;
 }
 
@@ -960,6 +970,7 @@ export class CoworkStore {
         `Format: ${metadata.format ?? 'unknown'} (${metadata.mimeType ?? 'unknown'})`,
         `Size: ${metadata.width ?? 'unknown'} x ${metadata.height ?? 'unknown'}`,
         `File size: ${metadata.fileSize}`,
+        `Processing source: ${inspected.asset.imageSource?.assetQuality ?? 'unknown'} (${inspected.asset.imageSource?.resolvedReason ?? 'local'})`,
       ].join('\n'),
     };
   }
@@ -970,10 +981,7 @@ export class CoworkStore {
   ): Promise<{ text: string; isError?: boolean }> {
     let asset = this.resolveCoworkImageToolAsset(sessionId, args);
     if (!asset) return { text: 'No controlled image asset was found for this Cowork session.', isError: true };
-    if (!asset.imageMetadata) {
-      const inspected = await this.creatorAssetStore!.inspectImageAsset({ assetId: asset.id });
-      asset = inspected?.asset ?? asset;
-    }
+    asset = await this.creatorAssetStore!.prepareImageProcessingAsset(asset);
     const plan = createCreatorAssetImageProcessingPlan({
       asset,
       presetId: resolveCoworkImagePresetId(args.presetId),
@@ -1065,9 +1073,7 @@ export class CoworkStore {
   ): Promise<{ text: string; isError?: boolean }> {
     const asset = this.resolveCoworkImageToolAsset(sessionId, args);
     if (!asset) return { text: 'No controlled image asset was found for this Cowork session.', isError: true };
-    if (!asset.imageMetadata) {
-      await this.creatorAssetStore!.inspectImageAsset({ assetId: asset.id });
-    }
+    await this.creatorAssetStore!.prepareImageProcessingAsset(asset);
     return {
       text: `Attached controlled Creator image asset ${asset.id}. Use image.planProcessing before execution.`,
     };

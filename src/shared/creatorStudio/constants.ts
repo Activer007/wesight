@@ -5,6 +5,9 @@ export const CreatorStudioIpcChannel = {
   AssetUpdate: 'creatorStudio:asset:update',
   AssetCreatePrompt: 'creatorStudio:asset:createPrompt',
   AssetCreateCase: 'creatorStudio:asset:createCase',
+  AssetCreateCaseImage: 'creatorStudio:asset:createCaseImage',
+  AssetImportLocalImages: 'creatorStudio:asset:importLocalImages',
+  AssetImportLocalImageFolder: 'creatorStudio:asset:importLocalImageFolder',
   AssetRevealInFolder: 'creatorStudio:asset:revealInFolder',
   RecipeCreate: 'creatorStudio:recipe:create',
   RecipeList: 'creatorStudio:recipe:list',
@@ -47,6 +50,8 @@ export const CreatorStudioIpcChannel = {
   ImageTaskCancel: 'creatorStudio:imageTask:cancel',
   ImageOutputReveal: 'creatorStudio:imageOutput:reveal',
   ImageReportOpen: 'creatorStudio:imageReport:open',
+  ImageQuickEditSave: 'creatorStudio:imageQuickEdit:save',
+  ImageQuickEditReveal: 'creatorStudio:imageQuickEdit:reveal',
 } as const;
 
 export type CreatorStudioIpcChannel =
@@ -110,6 +115,7 @@ export const CreatorProductionAssetSource = {
   CoworkGeneratedImage: 'cowork_generated_image',
   CreatorPrompt: 'creator_prompt',
   CreatorCase: 'creator_case',
+  LocalImageImport: 'local_image_import',
   LocalImageProcessing: 'local_image_processing',
   ImageProcessingReport: 'image_processing_report',
   RecipePostProcessing: 'recipe_post_processing',
@@ -122,9 +128,23 @@ export const CreatorProductionAssetSourceValues = [
   CreatorProductionAssetSource.CoworkGeneratedImage,
   CreatorProductionAssetSource.CreatorPrompt,
   CreatorProductionAssetSource.CreatorCase,
+  CreatorProductionAssetSource.LocalImageImport,
   CreatorProductionAssetSource.LocalImageProcessing,
   CreatorProductionAssetSource.ImageProcessingReport,
   CreatorProductionAssetSource.RecipePostProcessing,
+] as const;
+
+export const CreatorLocalImageImportMode = {
+  Reference: 'reference',
+  Copy: 'copy',
+} as const;
+
+export type CreatorLocalImageImportMode =
+  typeof CreatorLocalImageImportMode[keyof typeof CreatorLocalImageImportMode];
+
+export const CreatorLocalImageImportModeValues = [
+  CreatorLocalImageImportMode.Reference,
+  CreatorLocalImageImportMode.Copy,
 ] as const;
 
 export const CreatorProductionRunStatus = {
@@ -296,6 +316,21 @@ export const CreatorImageMetadataStatusValues = [
   CreatorImageMetadataStatus.Missing,
 ] as const;
 
+export const CreatorImageAssetQuality = {
+  Original: 'original',
+  Thumbnail: 'thumbnail',
+  Unknown: 'unknown',
+} as const;
+
+export type CreatorImageAssetQuality =
+  typeof CreatorImageAssetQuality[keyof typeof CreatorImageAssetQuality];
+
+export const CreatorImageAssetQualityValues = [
+  CreatorImageAssetQuality.Original,
+  CreatorImageAssetQuality.Thumbnail,
+  CreatorImageAssetQuality.Unknown,
+] as const;
+
 export const CreatorImageProcessingSourceKind = {
   CreatorAsset: 'creator_asset',
   CoworkGeneratedImage: 'cowork_generated_image',
@@ -395,6 +430,42 @@ export const CreatorImageProcessingOperationValues = [
   CreatorImageProcessingOperation.Rotate,
   CreatorImageProcessingOperation.Convert,
   CreatorImageProcessingOperation.Compress,
+] as const;
+
+export const CreatorImageQuickEditOperation = {
+  Rotate: 'rotate',
+  CropRatio: 'crop_ratio',
+  Resize: 'resize',
+  Convert: 'convert',
+  Compress: 'compress',
+} as const;
+
+export type CreatorImageQuickEditOperation =
+  typeof CreatorImageQuickEditOperation[keyof typeof CreatorImageQuickEditOperation];
+
+export const CreatorImageQuickEditOperationValues = [
+  CreatorImageQuickEditOperation.Rotate,
+  CreatorImageQuickEditOperation.CropRatio,
+  CreatorImageQuickEditOperation.Resize,
+  CreatorImageQuickEditOperation.Convert,
+  CreatorImageQuickEditOperation.Compress,
+] as const;
+
+export const CreatorImageQuickEditSaveMode = {
+  Overwrite: 'overwrite',
+  Copy: 'copy',
+  SaveAs: 'save_as',
+  Export: 'export',
+} as const;
+
+export type CreatorImageQuickEditSaveMode =
+  typeof CreatorImageQuickEditSaveMode[keyof typeof CreatorImageQuickEditSaveMode];
+
+export const CreatorImageQuickEditSaveModeValues = [
+  CreatorImageQuickEditSaveMode.Overwrite,
+  CreatorImageQuickEditSaveMode.Copy,
+  CreatorImageQuickEditSaveMode.SaveAs,
+  CreatorImageQuickEditSaveMode.Export,
 ] as const;
 
 export const CreatorImageProcessingOutputFormat = {
@@ -542,6 +613,11 @@ export const isCreatorProductionAssetSource = (value: unknown): value is Creator
   && CreatorProductionAssetSourceValues.includes(value as CreatorProductionAssetSource)
 );
 
+export const isCreatorLocalImageImportMode = (value: unknown): value is CreatorLocalImageImportMode => (
+  typeof value === 'string'
+  && CreatorLocalImageImportModeValues.includes(value as CreatorLocalImageImportMode)
+);
+
 export const isCreatorProductionRunStatus = (value: unknown): value is CreatorProductionRunStatus => (
   typeof value === 'string'
   && CreatorProductionRunStatusValues.includes(value as CreatorProductionRunStatus)
@@ -560,6 +636,11 @@ export const isCreatorBatchRunKind = (value: unknown): value is CreatorBatchRunK
 export const isCreatorImageMetadataStatus = (value: unknown): value is CreatorImageMetadataStatus => (
   typeof value === 'string'
   && CreatorImageMetadataStatusValues.includes(value as CreatorImageMetadataStatus)
+);
+
+export const isCreatorImageAssetQuality = (value: unknown): value is CreatorImageAssetQuality => (
+  typeof value === 'string'
+  && CreatorImageAssetQualityValues.includes(value as CreatorImageAssetQuality)
 );
 
 export const isCreatorImageProcessingSourceKind = (
@@ -595,6 +676,20 @@ export const isCreatorImageProcessingOperation = (
 ): value is CreatorImageProcessingOperation => (
   typeof value === 'string'
   && CreatorImageProcessingOperationValues.includes(value as CreatorImageProcessingOperation)
+);
+
+export const isCreatorImageQuickEditOperation = (
+  value: unknown,
+): value is CreatorImageQuickEditOperation => (
+  typeof value === 'string'
+  && CreatorImageQuickEditOperationValues.includes(value as CreatorImageQuickEditOperation)
+);
+
+export const isCreatorImageQuickEditSaveMode = (
+  value: unknown,
+): value is CreatorImageQuickEditSaveMode => (
+  typeof value === 'string'
+  && CreatorImageQuickEditSaveModeValues.includes(value as CreatorImageQuickEditSaveMode)
 );
 
 export const isCreatorImageProcessingOutputFormat = (

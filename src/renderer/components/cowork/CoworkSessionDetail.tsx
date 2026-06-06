@@ -49,7 +49,7 @@ import {
 } from '../../utils/renderingGuards';
 import { getAgentEngineLabel } from '../agent/AgentEngineSelect';
 import Modal from '../common/Modal';
-import { ImagePostProcessingDrawer } from '../creatorStudio/ImagePostProcessingDrawer';
+import { ImageQuickEditDrawer } from '../creatorStudio/ImageQuickEditDrawer';
 import ComposeIcon from '../icons/ComposeIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
@@ -426,6 +426,11 @@ type GeneratedImage = {
   name?: string;
   mimeType?: string;
   source?: string;
+  assetQuality?: string;
+  originalPath?: string;
+  thumbnailPath?: string;
+  originalUrl?: string;
+  thumbnailUrl?: string;
 };
 
 type ExpandedGeneratedImage = {
@@ -1299,7 +1304,7 @@ const AssistantMessageItem: React.FC<{
   const [expandedImageMetadataError, setExpandedImageMetadataError] = useState<string | null>(null);
   const [isDownloadingImage, setIsDownloadingImage] = useState(false);
   const [imageDownloadStatus, setImageDownloadStatus] = useState<ImageDownloadStatus | null>(null);
-  const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [quickEditAsset, setQuickEditAsset] = useState<CreatorProductionAssetRecord | null>(null);
   const [isPreparingPostProcessing, setIsPreparingPostProcessing] = useState(false);
   const [postProcessingStatus, setPostProcessingStatus] = useState<ImageDownloadStatus | null>(null);
   const [isExecutingPlanCard, setIsExecutingPlanCard] = useState(false);
@@ -1419,7 +1424,7 @@ const AssistantMessageItem: React.FC<{
         });
         return;
       }
-      setPostProcessingAsset(result.asset);
+      setQuickEditAsset(result.asset);
     } catch (error) {
       setPostProcessingStatus({
         type: 'error',
@@ -1576,7 +1581,7 @@ const AssistantMessageItem: React.FC<{
                   <PhotoIcon className="h-4 w-4" />
                   {isPreparingPostProcessing
                     ? i18nService.t('creatorImageProcessingPreparing')
-                    : i18nService.t('creatorImagePostProcessingAction')}
+                    : i18nService.t('creatorImageQuickEditAction')}
                 </button>
               )}
               {(imageDownloadStatus || postProcessingStatus) && (
@@ -1591,9 +1596,9 @@ const AssistantMessageItem: React.FC<{
             </div>
           </div>
           <div onClick={(event) => event.stopPropagation()}>
-            <ImagePostProcessingDrawer
-              asset={postProcessingAsset}
-              onClose={() => setPostProcessingAsset(null)}
+            <ImageQuickEditDrawer
+              asset={quickEditAsset}
+              onClose={() => setQuickEditAsset(null)}
               onCompleted={handlePostProcessingCompleted}
             />
           </div>

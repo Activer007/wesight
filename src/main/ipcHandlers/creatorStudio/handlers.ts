@@ -1,8 +1,11 @@
 import type { IpcMain } from 'electron';
-import { shell } from 'electron';
+import { app, BrowserWindow, dialog, shell } from 'electron';
 import fs from 'fs';
+import path from 'path';
 
 import {
+  CreatorImageQuickEditSaveMode,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorStudioAssetListDefaultLimit,
   CreatorStudioAssetListMaxLimit,
@@ -12,12 +15,16 @@ import {
   isCreatorBoardMoveDirection,
   isCreatorImageProcessingOutputFormat,
   isCreatorImageProcessingPresetId,
+  isCreatorImageQuickEditSaveMode,
+  isCreatorLocalImageImportMode,
   isCreatorProductionAssetSource,
 } from '../../../shared/creatorStudio/constants';
 import type {
   CreatorImageBatchCreateInput,
   CreatorImageJobListInput,
   CreatorImagePlanCreateInput,
+  CreatorImageQuickEditRevealInput,
+  CreatorImageQuickEditSaveInput,
   CreatorImageRecipeExecuteInput,
 } from '../../../shared/creatorStudio/imageProcessingTypes';
 import type {
@@ -25,13 +32,16 @@ import type {
   CreatorBoardCardCreateInput,
   CreatorBoardCardUpdateInput,
   CreatorBrandKitUpdateInput,
+  CreatorCaseImageAssetCreateInput,
   CreatorImageInspectInput,
+  CreatorLocalImageImportInput,
   CreatorProductionAssetRecord,
   CreatorPromptAssetCreateInput,
   CreatorRecipeCreateInput,
 } from '../../../shared/creatorStudio/types';
 import type { CoworkStore } from '../../coworkStore';
 import type { CreatorAssetStore } from '../../creatorAssetStore';
+import { t } from '../../i18n';
 import { createCreatorAssetImageProcessingPlan } from '../../libs/imageProcessing/imageProcessingPlanner';
 import { createImageProcessingService } from '../../libs/imageProcessing/imageProcessingService';
 
@@ -61,10 +71,59 @@ const normalizeListInput = (input: unknown) => {
   };
 };
 
+const LocalImageImportDialogFilters = [
+  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif', 'tif', 'tiff'] },
+];
+
+const LocalImageImportExtensions = new Set(LocalImageImportDialogFilters[0].extensions.map((item) => `.${item}`));
+const LocalImageImportIgnoredDirectories = new Set([
+  'node_modules',
+  'dist',
+  'dist-electron',
+  'release',
+]);
+
+const normalizeLocalImageImportInput = (input: unknown): CreatorLocalImageImportInput | null => {
+  const record = normalizeObject(input);
+  const projectId = toTrimmedString(record?.projectId);
+  if (!projectId) return null;
+  return {
+    projectId,
+    mode: isCreatorLocalImageImportMode(record?.mode) ? record.mode : CreatorLocalImageImportMode.Reference,
+    ...(toTrimmedString(record?.collectionId) ? { collectionId: toTrimmedString(record?.collectionId)! } : {}),
+  };
+};
+
+const getLocalImageManagedDirectory = (projectId: string): string => (
+  path.join(app.getPath('userData'), 'creator-assets', 'local-images', projectId)
+);
+
+const collectLocalImagePaths = async (directory: string): Promise<string[]> => {
+  const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+  const paths: string[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (LocalImageImportIgnoredDirectories.has(entry.name)) continue;
+      paths.push(...await collectLocalImagePaths(entryPath));
+      continue;
+    }
+    if (entry.isFile() && LocalImageImportExtensions.has(path.extname(entry.name).toLowerCase())) {
+      paths.push(entryPath);
+    }
+  }
+  return paths;
+};
+
 const normalizeStringArray = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) return undefined;
   return value.filter((item): item is string => typeof item === 'string');
 };
+
+const normalizeOptionalNumber = (value: unknown): number | null => (
+  typeof value === 'number' && Number.isFinite(value) ? value : null
+);
 
 const normalizeObject = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -164,6 +223,34 @@ const normalizeImagePlanCreateInput = (input: unknown): CreatorImagePlanCreateIn
   };
 };
 
+const normalizeImageQuickEditSaveInput = (input: unknown): CreatorImageQuickEditSaveInput | null => {
+  const record = normalizeObject(input);
+  const assetId = toTrimmedString(record?.assetId);
+  if (!assetId) return null;
+  return {
+    assetId,
+    saveMode: isCreatorImageQuickEditSaveMode(record?.saveMode)
+      ? record.saveMode
+      : CreatorImageQuickEditSaveMode.Copy,
+    ...(normalizeNumber(record?.rotate) !== null ? { rotate: normalizeNumber(record?.rotate) } : {}),
+    ...(toTrimmedString(record?.cropRatio) ? { cropRatio: toTrimmedString(record?.cropRatio) } : {}),
+    ...(normalizeNumber(record?.width) !== null ? { width: normalizeNumber(record?.width) } : {}),
+    ...(normalizeNumber(record?.height) !== null ? { height: normalizeNumber(record?.height) } : {}),
+    ...(normalizeNumber(record?.longestEdge) !== null ? { longestEdge: normalizeNumber(record?.longestEdge) } : {}),
+    ...(typeof record?.keepAspect === 'boolean' ? { keepAspect: record.keepAspect } : {}),
+    ...(isCreatorImageProcessingOutputFormat(record?.outputFormat) ? { outputFormat: record.outputFormat } : {}),
+    ...(normalizeNumber(record?.quality) !== null ? { quality: normalizeNumber(record?.quality) } : {}),
+    ...(toTrimmedString(record?.outputPath) ? { outputPath: toTrimmedString(record?.outputPath)! } : {}),
+    ...(toTrimmedString(record?.outputDirectory) ? { outputDirectory: toTrimmedString(record?.outputDirectory)! } : {}),
+  };
+};
+
+const normalizeImageQuickEditRevealInput = (input: unknown): CreatorImageQuickEditRevealInput | null => {
+  const record = normalizeObject(input);
+  const outputPath = toTrimmedString(record?.outputPath);
+  return outputPath ? { outputPath } : null;
+};
+
 const normalizeImageJobListInput = (input: unknown): CreatorImageJobListInput => {
   const record = normalizeObject(input) ?? {};
   return {
@@ -230,6 +317,72 @@ export const registerCreatorStudioIpcHandlers = (
     }
   });
 
+  ipcMain.handle(CreatorStudioIpcChannel.AssetImportLocalImages, async (event, input: unknown) => {
+    try {
+      const normalized = normalizeLocalImageImportInput(input);
+      if (!normalized) {
+        return { success: false, error: 'projectId is required' };
+      }
+      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      const dialogOptions = {
+        properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
+        filters: LocalImageImportDialogFilters,
+      };
+      const result = ownerWindow
+        ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions);
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: true, assets: [], total: 0, imported: 0, reused: 0, skipped: 0, failures: [] };
+      }
+      return {
+        success: true,
+        ...await getCreatorAssetStore().importLocalImages({
+          ...normalized,
+          filePaths: result.filePaths,
+          managedDirectory: getLocalImageManagedDirectory(normalized.projectId),
+        }),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to import local images',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.AssetImportLocalImageFolder, async (event, input: unknown) => {
+    try {
+      const normalized = normalizeLocalImageImportInput(input);
+      if (!normalized) {
+        return { success: false, error: 'projectId is required' };
+      }
+      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      const dialogOptions = {
+        properties: ['openDirectory'] as ('openDirectory')[],
+      };
+      const result = ownerWindow
+        ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions);
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: true, assets: [], total: 0, imported: 0, reused: 0, skipped: 0, failures: [] };
+      }
+      const filePaths = await collectLocalImagePaths(result.filePaths[0]);
+      return {
+        success: true,
+        ...await getCreatorAssetStore().importLocalImages({
+          ...normalized,
+          filePaths,
+          managedDirectory: getLocalImageManagedDirectory(normalized.projectId),
+        }),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to import local image folder',
+      };
+    }
+  });
+
   ipcMain.handle(CreatorStudioIpcChannel.AssetGetSource, async (_event, input: unknown) => {
     try {
       const assetId = toTrimmedString(input);
@@ -279,10 +432,7 @@ export const registerCreatorStudioIpcHandlers = (
       if (!asset || asset.kind !== CreatorProductionAssetKind.Image) {
         return { success: false, error: 'Image asset not found' };
       }
-      if (!asset.imageMetadata) {
-        const inspected = await store.inspectImageAsset({ assetId: asset.id });
-        asset = inspected?.asset ?? asset;
-      }
+      asset = await store.prepareImageProcessingAsset(asset);
       const plan = createCreatorAssetImageProcessingPlan({
         asset,
         presetId: normalized.presetId,
@@ -318,6 +468,73 @@ export const registerCreatorStudioIpcHandlers = (
       return { success: false, error: 'Image processing plan not found' };
     }
     return { success: true, plan };
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageQuickEditSave, async (event, input: unknown) => {
+    try {
+      const normalized = normalizeImageQuickEditSaveInput(input);
+      if (!normalized) {
+        return { success: false, error: 'assetId is required' };
+      }
+
+      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      if (normalized.saveMode === CreatorImageQuickEditSaveMode.SaveAs && !normalized.outputPath) {
+        const result = ownerWindow
+          ? await dialog.showSaveDialog(ownerWindow, {
+            title: t('creatorImageQuickEditSaveDialogTitle'),
+            defaultPath: 'image-edited',
+            filters: LocalImageImportDialogFilters,
+          })
+          : await dialog.showSaveDialog({
+            title: t('creatorImageQuickEditSaveDialogTitle'),
+            defaultPath: 'image-edited',
+            filters: LocalImageImportDialogFilters,
+          });
+        if (result.canceled || !result.filePath) {
+          return { success: true, outputPath: '', overwritten: false, warningCodes: [] };
+        }
+        normalized.outputPath = result.filePath;
+      }
+
+      if (normalized.saveMode === CreatorImageQuickEditSaveMode.Export && !normalized.outputDirectory) {
+        const result = ownerWindow
+          ? await dialog.showOpenDialog(ownerWindow, {
+            properties: ['openDirectory'],
+          })
+          : await dialog.showOpenDialog({
+            properties: ['openDirectory'],
+          });
+        if (result.canceled || result.filePaths.length === 0) {
+          return { success: true, outputPath: '', overwritten: false, warningCodes: [] };
+        }
+        normalized.outputDirectory = result.filePaths[0];
+      }
+
+      const result = await getCreatorAssetStore().saveImageQuickEdit(normalized);
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save quick image edit',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageQuickEditReveal, async (_event, input: unknown) => {
+    const normalized = normalizeImageQuickEditRevealInput(input);
+    if (!normalized) {
+      return { success: false, error: 'outputPath is required' };
+    }
+    const outputPath = path.resolve(normalized.outputPath);
+    if (!fs.existsSync(outputPath)) {
+      return { success: false, error: 'Output file not found' };
+    }
+    const asset = getCreatorAssetStore().getAssetByFilePath(outputPath);
+    if (!asset) {
+      return { success: false, error: 'Output file is not a registered creator asset' };
+    }
+    shell.showItemInFolder(asset.filePath);
+    return { success: true };
   });
 
   ipcMain.handle(CreatorStudioIpcChannel.ImageJobExecute, async (_event, input: unknown) => {
@@ -633,6 +850,45 @@ export const registerCreatorStudioIpcHandlers = (
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to save creator case asset',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.AssetCreateCaseImage, async (_event, input: unknown) => {
+    try {
+      const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+      const projectId = toTrimmedString(record.projectId);
+      const caseId = toTrimmedString(record.caseId);
+      const title = toTrimmedString(record.title);
+      const promptText = toTrimmedString(record.promptText);
+      const imageThumbnailUrl = toTrimmedString(record.imageThumbnailUrl);
+      if (!projectId || !caseId || !title || !promptText || !imageThumbnailUrl) {
+        return { success: false, error: 'projectId, caseId, title, promptText, and imageThumbnailUrl are required' };
+      }
+      const asset = getCreatorAssetStore().createCaseImageAsset({
+        projectId,
+        caseId,
+        title,
+        promptText,
+        imageThumbnailUrl,
+        ...(toTrimmedString(record.imageOriginalUrl) ? { imageOriginalUrl: toTrimmedString(record.imageOriginalUrl)! } : {}),
+        ...(toTrimmedString(record.mimeType) ? { mimeType: toTrimmedString(record.mimeType)! } : {}),
+        ...(normalizeOptionalNumber(record.width) !== null ? { width: normalizeOptionalNumber(record.width) } : {}),
+        ...(normalizeOptionalNumber(record.height) !== null ? { height: normalizeOptionalNumber(record.height) } : {}),
+        ...(normalizeOptionalNumber(record.byteSize) !== null ? { byteSize: normalizeOptionalNumber(record.byteSize) } : {}),
+        ...(toTrimmedString(record.sourceLabel) ? { sourceLabel: toTrimmedString(record.sourceLabel)! } : {}),
+        ...(toTrimmedString(record.sourceUrl) ? { sourceUrl: toTrimmedString(record.sourceUrl)! } : {}),
+        ...(toTrimmedString(record.githubUrl) ? { githubUrl: toTrimmedString(record.githubUrl)! } : {}),
+        ...(toTrimmedString(record.category) ? { category: toTrimmedString(record.category)! } : {}),
+        ...(normalizeStringArray(record.styles) ? { styles: normalizeStringArray(record.styles)! } : {}),
+        ...(normalizeStringArray(record.scenes) ? { scenes: normalizeStringArray(record.scenes)! } : {}),
+        ...(normalizeStringArray(record.tags) ? { tags: normalizeStringArray(record.tags)! } : {}),
+      } satisfies CreatorCaseImageAssetCreateInput);
+      return { success: true, asset };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save creator case image asset',
       };
     }
   });

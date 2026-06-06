@@ -1,4 +1,5 @@
 import type {
+  CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
   CreatorImageProcessingJobStatus,
@@ -10,7 +11,10 @@ import type {
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorImageQuickEditOperation,
+  CreatorImageQuickEditSaveMode,
 } from './constants';
+import type { CreatorProductionAssetRecord } from './types';
 
 export interface CreatorImageMetadata {
   sourcePath: string;
@@ -45,6 +49,15 @@ export interface CreatorImageProcessingInputItem {
   sourceAssetId: string | null;
   sourcePath: string;
   metadata: CreatorImageMetadata | null;
+  imageSource?: {
+    assetQuality: CreatorImageAssetQuality;
+    originalPath?: string | null;
+    thumbnailPath?: string | null;
+    originalUrl?: string | null;
+    thumbnailUrl?: string | null;
+    resolvedPath: string;
+    resolvedReason: string;
+  };
 }
 
 export interface CreatorImageProcessingOperationStep {
@@ -275,6 +288,49 @@ export interface CreatorImageOutputRevealInput {
   jobId?: string;
   taskId?: string;
   outputPath?: string;
+}
+
+export interface CreatorImageQuickEditParams {
+  rotate?: number | null;
+  cropRatio?: string | null;
+  width?: number | null;
+  height?: number | null;
+  longestEdge?: number | null;
+  keepAspect?: boolean;
+  outputFormat?: CreatorImageProcessingOutputFormat | null;
+  quality?: number | null;
+}
+
+export interface CreatorImageQuickEditSaveInput extends CreatorImageQuickEditParams {
+  assetId: string;
+  saveMode: CreatorImageQuickEditSaveMode;
+  outputPath?: string | null;
+  outputDirectory?: string | null;
+}
+
+export interface CreatorImageQuickEditRecord {
+  schemaVersion: 'creator.imageQuickEdit.v1';
+  sourceAssetId: string;
+  saveMode: CreatorImageQuickEditSaveMode;
+  operations: Array<{
+    operation: CreatorImageQuickEditOperation;
+    params: Record<string, unknown>;
+  }>;
+  outputPath: string;
+  overwritten: boolean;
+  createdAt: number;
+}
+
+export interface CreatorImageQuickEditSaveResult {
+  outputPath: string;
+  imageMetadata: CreatorImageMetadata;
+  asset?: CreatorProductionAssetRecord;
+  overwritten: boolean;
+  warningCodes: string[];
+}
+
+export interface CreatorImageQuickEditRevealInput {
+  outputPath: string;
 }
 
 export interface CreatorImageReportOpenInput {

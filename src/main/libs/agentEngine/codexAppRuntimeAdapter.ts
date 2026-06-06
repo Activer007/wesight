@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { CreatorImageAssetQuality } from '../../../shared/creatorStudio/constants';
  
 const iconv = require('iconv-lite') as typeof import('iconv-lite');
 
@@ -932,6 +933,8 @@ export class CodexAppRuntimeAdapter extends EventEmitter implements CoworkRuntim
             name: path.basename(savedPath),
             mimeType: 'image/png',
             source: 'codex_app',
+            assetQuality: CreatorImageAssetQuality.Original,
+            originalPath: savedPath,
           },
         ],
       },

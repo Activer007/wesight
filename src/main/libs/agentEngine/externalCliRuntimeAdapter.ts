@@ -16,6 +16,7 @@ import {
   QwenCodePermissionMode,
 } from '../../../shared/cowork/constants';
 import type { CoworkSessionRuntimeSnapshot } from '../../../shared/cowork/runtimeSnapshot';
+import { CreatorImageAssetQuality } from '../../../shared/creatorStudio/constants';
 import type {
   CoworkMessage,
   CoworkMessageMetadata,
@@ -1474,6 +1475,8 @@ export class ExternalCliRuntimeAdapter extends EventEmitter implements CoworkRun
             name: path.basename(imagePath),
             mimeType: 'image/png',
             source: 'codex',
+            assetQuality: CreatorImageAssetQuality.Original,
+            originalPath: imagePath,
           },
         ],
       },
