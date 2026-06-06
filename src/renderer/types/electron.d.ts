@@ -29,6 +29,9 @@ import type {
   CreatorImagePlanCreateResult,
   CreatorImagePlanGetInput,
   CreatorImagePlanGetResult,
+  CreatorImageQuickEditRevealInput,
+  CreatorImageQuickEditSaveInput,
+  CreatorImageQuickEditSaveResult,
   CreatorImageRecipeExecuteInput,
   CreatorImageRecipeExecuteResult,
   CreatorImageReportOpenInput,
@@ -913,6 +916,16 @@ interface IElectronAPI {
     }>;
     revealImageOutput: (input: CreatorImageOutputRevealInput) => Promise<{ success: boolean; error?: string }>;
     openImageReport: (input: CreatorImageReportOpenInput) => Promise<{ success: boolean; error?: string }>;
+    saveImageQuickEdit: (input: CreatorImageQuickEditSaveInput) => Promise<{
+      success: boolean;
+      outputPath?: CreatorImageQuickEditSaveResult['outputPath'];
+      imageMetadata?: CreatorImageQuickEditSaveResult['imageMetadata'];
+      asset?: CreatorImageQuickEditSaveResult['asset'];
+      overwritten?: boolean;
+      warningCodes?: CreatorImageQuickEditSaveResult['warningCodes'];
+      error?: string;
+    }>;
+    revealImageQuickEdit: (input: CreatorImageQuickEditRevealInput) => Promise<{ success: boolean; error?: string }>;
     setAssetFavorite: (input: { assetId: string; favorite: boolean }) => Promise<{
       success: boolean;
       asset?: CreatorProductionAssetRecord;

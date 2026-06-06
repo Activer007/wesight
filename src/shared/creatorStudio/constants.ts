@@ -50,6 +50,8 @@ export const CreatorStudioIpcChannel = {
   ImageTaskCancel: 'creatorStudio:imageTask:cancel',
   ImageOutputReveal: 'creatorStudio:imageOutput:reveal',
   ImageReportOpen: 'creatorStudio:imageReport:open',
+  ImageQuickEditSave: 'creatorStudio:imageQuickEdit:save',
+  ImageQuickEditReveal: 'creatorStudio:imageQuickEdit:reveal',
 } as const;
 
 export type CreatorStudioIpcChannel =
@@ -430,6 +432,42 @@ export const CreatorImageProcessingOperationValues = [
   CreatorImageProcessingOperation.Compress,
 ] as const;
 
+export const CreatorImageQuickEditOperation = {
+  Rotate: 'rotate',
+  CropRatio: 'crop_ratio',
+  Resize: 'resize',
+  Convert: 'convert',
+  Compress: 'compress',
+} as const;
+
+export type CreatorImageQuickEditOperation =
+  typeof CreatorImageQuickEditOperation[keyof typeof CreatorImageQuickEditOperation];
+
+export const CreatorImageQuickEditOperationValues = [
+  CreatorImageQuickEditOperation.Rotate,
+  CreatorImageQuickEditOperation.CropRatio,
+  CreatorImageQuickEditOperation.Resize,
+  CreatorImageQuickEditOperation.Convert,
+  CreatorImageQuickEditOperation.Compress,
+] as const;
+
+export const CreatorImageQuickEditSaveMode = {
+  Overwrite: 'overwrite',
+  Copy: 'copy',
+  SaveAs: 'save_as',
+  Export: 'export',
+} as const;
+
+export type CreatorImageQuickEditSaveMode =
+  typeof CreatorImageQuickEditSaveMode[keyof typeof CreatorImageQuickEditSaveMode];
+
+export const CreatorImageQuickEditSaveModeValues = [
+  CreatorImageQuickEditSaveMode.Overwrite,
+  CreatorImageQuickEditSaveMode.Copy,
+  CreatorImageQuickEditSaveMode.SaveAs,
+  CreatorImageQuickEditSaveMode.Export,
+] as const;
+
 export const CreatorImageProcessingOutputFormat = {
   Png: 'png',
   Jpeg: 'jpeg',
@@ -638,6 +676,20 @@ export const isCreatorImageProcessingOperation = (
 ): value is CreatorImageProcessingOperation => (
   typeof value === 'string'
   && CreatorImageProcessingOperationValues.includes(value as CreatorImageProcessingOperation)
+);
+
+export const isCreatorImageQuickEditOperation = (
+  value: unknown,
+): value is CreatorImageQuickEditOperation => (
+  typeof value === 'string'
+  && CreatorImageQuickEditOperationValues.includes(value as CreatorImageQuickEditOperation)
+);
+
+export const isCreatorImageQuickEditSaveMode = (
+  value: unknown,
+): value is CreatorImageQuickEditSaveMode => (
+  typeof value === 'string'
+  && CreatorImageQuickEditSaveModeValues.includes(value as CreatorImageQuickEditSaveMode)
 );
 
 export const isCreatorImageProcessingOutputFormat = (

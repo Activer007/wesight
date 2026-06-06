@@ -14,6 +14,7 @@ import {
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorImageQuickEditSaveMode,
   CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
@@ -34,6 +35,7 @@ const electronMocks = vi.hoisted(() => ({
   getPath: vi.fn(() => '/tmp/wesight-user-data'),
   fromWebContents: vi.fn(() => null),
   showOpenDialog: vi.fn(),
+  showSaveDialog: vi.fn(),
   showItemInFolder: vi.fn(),
 }));
 
@@ -46,6 +48,7 @@ vi.mock('electron', () => ({
   },
   dialog: {
     showOpenDialog: electronMocks.showOpenDialog,
+    showSaveDialog: electronMocks.showSaveDialog,
   },
   shell: {
     showItemInFolder: electronMocks.showItemInFolder,
@@ -96,6 +99,26 @@ const createStore = () => ({
     skipped: 0,
     failures: [],
   })),
+  saveImageQuickEdit: vi.fn(() => ({
+    outputPath: '/tmp/output.webp',
+    imageMetadata: {
+      sourcePath: '/tmp/output.webp',
+      width: 20,
+      height: 10,
+      fileSize: 128,
+      format: 'webp',
+      mimeType: 'image/webp',
+      hasAlpha: false,
+      exifOrientation: null,
+      colorSpace: 'srgb',
+      inspectedAt: 1,
+      status: CreatorImageMetadataStatus.Ready,
+      warningCodes: [],
+    },
+    asset: { id: 'asset-output' },
+    overwritten: false,
+    warningCodes: [],
+  })),
   getWorkspace: vi.fn(() => ({ currentProjectId: 'project-1', projects: [], collections: [] })),
   createProject: vi.fn(() => ({ currentProjectId: 'project-2', projects: [], collections: [] })),
   setCurrentProject: vi.fn(() => ({ currentProjectId: 'project-1', projects: [], collections: [] })),
@@ -136,6 +159,7 @@ beforeEach(() => {
   vi.mocked(app.getPath).mockReturnValue('/tmp/wesight-user-data');
   vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(null);
   vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: true, filePaths: [] });
+  vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: true, filePath: undefined });
 });
 
 test('registers creator studio asset IPC handlers with constant channels', () => {
@@ -180,6 +204,8 @@ test('registers creator studio asset IPC handlers with constant channels', () =>
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageJobGet, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageRecipeExecute, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageOutputReveal, expect.any(Function));
+  expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageQuickEditSave, expect.any(Function));
+  expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageQuickEditReveal, expect.any(Function));
 });
 
 test('clamps asset list parameters before reaching the store', async () => {
@@ -240,6 +266,43 @@ test('normalizes local image import mode before reaching the store', async () =>
     filePaths: ['/tmp/source.png'],
     managedDirectory: '/tmp/wesight-user-data/creator-assets/local-images/project-1',
   });
+});
+
+test('normalizes quick edit save mode before reaching the store', async () => {
+  const store = createStore();
+  registerCreatorStudioIpcHandlers(ipcMain, () => store);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.ImageQuickEditSave);
+  expect(handler).toBeDefined();
+  const result = await handler?.({ sender: {} }, {
+    assetId: ' asset-1 ',
+    saveMode: 'replace',
+    rotate: 90,
+    outputFormat: CreatorImageProcessingOutputFormat.Webp,
+  });
+
+  expect(result).toMatchObject({ success: true, outputPath: '/tmp/output.webp' });
+  expect(store.saveImageQuickEdit).toHaveBeenCalledWith({
+    assetId: 'asset-1',
+    saveMode: CreatorImageQuickEditSaveMode.Copy,
+    rotate: 90,
+    outputFormat: CreatorImageProcessingOutputFormat.Webp,
+  });
+});
+
+test('returns an empty quick edit result when save_as dialog is cancelled', async () => {
+  const store = createStore();
+  registerCreatorStudioIpcHandlers(ipcMain, () => store);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.ImageQuickEditSave);
+  expect(handler).toBeDefined();
+  const result = await handler?.({ sender: {} }, {
+    assetId: 'asset-1',
+    saveMode: CreatorImageQuickEditSaveMode.SaveAs,
+  });
+
+  expect(result).toEqual({ success: true, outputPath: '', overwritten: false, warningCodes: [] });
+  expect(store.saveImageQuickEdit).not.toHaveBeenCalled();
 });
 
 test('returns an empty local image folder import result when folder selection is cancelled', async () => {

@@ -23,6 +23,7 @@ import type {
   CreatorImageProcessingJob,
   CreatorImageProcessingPlan,
   CreatorImageProcessingTask,
+  CreatorImageQuickEditRecord,
 } from './imageProcessingTypes';
 
 export interface CreatorPromptSpecSnapshot {
@@ -278,6 +279,7 @@ export interface CreatorImageProcessingAssetMetadata {
     title: string;
   } | null;
   readmeSuggestions?: CreatorImageProcessingPlan['readmeSuggestions'];
+  quickEdit?: CreatorImageQuickEditRecord | null;
 }
 
 export interface CreatorImageInspectInput {

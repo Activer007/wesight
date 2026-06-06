@@ -15,6 +15,8 @@ import {
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorImageQuickEditOperation,
+  CreatorImageQuickEditSaveMode,
   CreatorLocalImageImportMode,
   CreatorProductionAssetSource,
   isCreatorBatchRunKind,
@@ -30,6 +32,8 @@ import {
   isCreatorImageProcessingRisk,
   isCreatorImageProcessingSourceKind,
   isCreatorImageProcessingTaskStatus,
+  isCreatorImageQuickEditOperation,
+  isCreatorImageQuickEditSaveMode,
   isCreatorLocalImageImportMode,
   isCreatorProductionAssetSource,
   resolveCreatorFeatureFlag,
@@ -51,6 +55,8 @@ test('accepts creator image processing constants through type guards', () => {
   expect(isCreatorImageProcessingJobStatus(CreatorImageProcessingJobStatus.Pending)).toBe(true);
   expect(isCreatorImageProcessingTaskStatus(CreatorImageProcessingTaskStatus.Pending)).toBe(true);
   expect(isCreatorImageProcessingOperation(CreatorImageProcessingOperation.Resize)).toBe(true);
+  expect(isCreatorImageQuickEditOperation(CreatorImageQuickEditOperation.CropRatio)).toBe(true);
+  expect(isCreatorImageQuickEditSaveMode(CreatorImageQuickEditSaveMode.Copy)).toBe(true);
   expect(isCreatorImageProcessingOutputFormat(CreatorImageProcessingOutputFormat.Webp)).toBe(true);
   expect(isCreatorImageProcessingPlanSchemaVersion(CreatorImageProcessingPlanSchemaVersion.V1)).toBe(true);
   expect(isCreatorImageProcessingRisk(CreatorImageProcessingRisk.Low)).toBe(true);
@@ -68,6 +74,8 @@ test('rejects non-string image processing constants', () => {
   expect(isCreatorImageProcessingJobStatus(false)).toBe(false);
   expect(isCreatorImageProcessingTaskStatus([])).toBe(false);
   expect(isCreatorImageProcessingOperation(null)).toBe(false);
+  expect(isCreatorImageQuickEditOperation('free_crop')).toBe(false);
+  expect(isCreatorImageQuickEditSaveMode('replace')).toBe(false);
   expect(isCreatorImageProcessingOutputFormat(undefined)).toBe(false);
   expect(isCreatorImageProcessingPlanSchemaVersion({})).toBe(false);
   expect(isCreatorImageProcessingRisk(1)).toBe(false);

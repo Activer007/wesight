@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  CreatorImageQuickEditSaveMode,
   CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorStudioAssetListDefaultLimit,
@@ -14,6 +15,7 @@ import {
   isCreatorBoardMoveDirection,
   isCreatorImageProcessingOutputFormat,
   isCreatorImageProcessingPresetId,
+  isCreatorImageQuickEditSaveMode,
   isCreatorLocalImageImportMode,
   isCreatorProductionAssetSource,
 } from '../../../shared/creatorStudio/constants';
@@ -21,6 +23,8 @@ import type {
   CreatorImageBatchCreateInput,
   CreatorImageJobListInput,
   CreatorImagePlanCreateInput,
+  CreatorImageQuickEditRevealInput,
+  CreatorImageQuickEditSaveInput,
   CreatorImageRecipeExecuteInput,
 } from '../../../shared/creatorStudio/imageProcessingTypes';
 import type {
@@ -216,6 +220,34 @@ const normalizeImagePlanCreateInput = (input: unknown): CreatorImagePlanCreateIn
     ...(normalizeNumber(record?.rotate) !== null ? { rotate: normalizeNumber(record?.rotate) } : {}),
     ...(toTrimmedString(record?.outputDirectory) ? { outputDirectory: toTrimmedString(record?.outputDirectory) } : {}),
   };
+};
+
+const normalizeImageQuickEditSaveInput = (input: unknown): CreatorImageQuickEditSaveInput | null => {
+  const record = normalizeObject(input);
+  const assetId = toTrimmedString(record?.assetId);
+  if (!assetId) return null;
+  return {
+    assetId,
+    saveMode: isCreatorImageQuickEditSaveMode(record?.saveMode)
+      ? record.saveMode
+      : CreatorImageQuickEditSaveMode.Copy,
+    ...(normalizeNumber(record?.rotate) !== null ? { rotate: normalizeNumber(record?.rotate) } : {}),
+    ...(toTrimmedString(record?.cropRatio) ? { cropRatio: toTrimmedString(record?.cropRatio) } : {}),
+    ...(normalizeNumber(record?.width) !== null ? { width: normalizeNumber(record?.width) } : {}),
+    ...(normalizeNumber(record?.height) !== null ? { height: normalizeNumber(record?.height) } : {}),
+    ...(normalizeNumber(record?.longestEdge) !== null ? { longestEdge: normalizeNumber(record?.longestEdge) } : {}),
+    ...(typeof record?.keepAspect === 'boolean' ? { keepAspect: record.keepAspect } : {}),
+    ...(isCreatorImageProcessingOutputFormat(record?.outputFormat) ? { outputFormat: record.outputFormat } : {}),
+    ...(normalizeNumber(record?.quality) !== null ? { quality: normalizeNumber(record?.quality) } : {}),
+    ...(toTrimmedString(record?.outputPath) ? { outputPath: toTrimmedString(record?.outputPath)! } : {}),
+    ...(toTrimmedString(record?.outputDirectory) ? { outputDirectory: toTrimmedString(record?.outputDirectory)! } : {}),
+  };
+};
+
+const normalizeImageQuickEditRevealInput = (input: unknown): CreatorImageQuickEditRevealInput | null => {
+  const record = normalizeObject(input);
+  const outputPath = toTrimmedString(record?.outputPath);
+  return outputPath ? { outputPath } : null;
 };
 
 const normalizeImageJobListInput = (input: unknown): CreatorImageJobListInput => {
@@ -435,6 +467,69 @@ export const registerCreatorStudioIpcHandlers = (
       return { success: false, error: 'Image processing plan not found' };
     }
     return { success: true, plan };
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageQuickEditSave, async (event, input: unknown) => {
+    try {
+      const normalized = normalizeImageQuickEditSaveInput(input);
+      if (!normalized) {
+        return { success: false, error: 'assetId is required' };
+      }
+
+      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      if (normalized.saveMode === CreatorImageQuickEditSaveMode.SaveAs && !normalized.outputPath) {
+        const result = ownerWindow
+          ? await dialog.showSaveDialog(ownerWindow, {
+            title: 'Save edited image',
+            defaultPath: 'image-edited',
+            filters: LocalImageImportDialogFilters,
+          })
+          : await dialog.showSaveDialog({
+            title: 'Save edited image',
+            defaultPath: 'image-edited',
+            filters: LocalImageImportDialogFilters,
+          });
+        if (result.canceled || !result.filePath) {
+          return { success: true, outputPath: '', overwritten: false, warningCodes: [] };
+        }
+        normalized.outputPath = result.filePath;
+      }
+
+      if (normalized.saveMode === CreatorImageQuickEditSaveMode.Export && !normalized.outputDirectory) {
+        const result = ownerWindow
+          ? await dialog.showOpenDialog(ownerWindow, {
+            properties: ['openDirectory'],
+          })
+          : await dialog.showOpenDialog({
+            properties: ['openDirectory'],
+          });
+        if (result.canceled || result.filePaths.length === 0) {
+          return { success: true, outputPath: '', overwritten: false, warningCodes: [] };
+        }
+        normalized.outputDirectory = result.filePaths[0];
+      }
+
+      const result = await getCreatorAssetStore().saveImageQuickEdit(normalized);
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save quick image edit',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageQuickEditReveal, async (_event, input: unknown) => {
+    const normalized = normalizeImageQuickEditRevealInput(input);
+    if (!normalized) {
+      return { success: false, error: 'outputPath is required' };
+    }
+    const outputPath = path.resolve(normalized.outputPath);
+    if (!fs.existsSync(outputPath)) {
+      return { success: false, error: 'Output file not found' };
+    }
+    shell.showItemInFolder(outputPath);
+    return { success: true };
   });
 
   ipcMain.handle(CreatorStudioIpcChannel.ImageJobExecute, async (_event, input: unknown) => {

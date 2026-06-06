@@ -17,6 +17,7 @@ import {
   CreatorImageProcessingPlanStatus,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorImageQuickEditSaveMode,
   CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
@@ -49,6 +50,8 @@ import type {
   CreatorImageProcessingReport,
   CreatorImageProcessingRuntimeMetrics,
   CreatorImageProcessingTask,
+  CreatorImageQuickEditSaveInput,
+  CreatorImageQuickEditSaveResult,
   CreatorImageTaskCancelResult,
   CreatorImageTaskRetryResult,
 } from '../shared/creatorStudio/imageProcessingTypes';
@@ -117,6 +120,7 @@ import { inspectImageMetadata } from './libs/imageProcessing/imageMetadataInspec
 import { createCreatorAssetsImageProcessingPlan } from './libs/imageProcessing/imageProcessingPlanner';
 import { createImageProcessingReport } from './libs/imageProcessing/imageProcessingReport';
 import { executeImageProcessingTask } from './libs/imageProcessing/imageProcessingService';
+import { executeImageQuickEdit } from './libs/imageProcessing/imageQuickEditService';
 import {
   buildCreatorImageSourceFile,
   parseCreatorImageSourceFile,
@@ -622,6 +626,9 @@ const parseImageProcessingMetadata = (metadata: Record<string, unknown>): Creato
   const readmeSuggestions = Array.isArray(record.readmeSuggestions)
     ? record.readmeSuggestions as CreatorImageProcessingAssetMetadata['readmeSuggestions']
     : undefined;
+  const quickEdit = record.quickEdit && typeof record.quickEdit === 'object' && !Array.isArray(record.quickEdit)
+    ? record.quickEdit as CreatorImageProcessingAssetMetadata['quickEdit']
+    : null;
   const planOperations = plan?.operations ?? [];
   const operations = Array.isArray(record.operations)
     ? record.operations as CreatorImageProcessingAssetMetadata['operations']
@@ -638,6 +645,7 @@ const parseImageProcessingMetadata = (metadata: Record<string, unknown>): Creato
     tasks,
     report,
     readmeSuggestions,
+    quickEdit,
   };
 };
 
@@ -2020,6 +2028,218 @@ export class CreatorAssetStore {
     );
 
     return this.getAsset(id)!;
+  }
+
+  private canOverwriteQuickEditAsset(
+    asset: CreatorProductionAssetRecord,
+    preparedAsset: CreatorProductionAssetRecord,
+  ): boolean {
+    if (asset.kind !== CreatorProductionAssetKind.Image) return false;
+    if (
+      asset.source !== CreatorProductionAssetSource.LocalImageImport
+      && asset.source !== CreatorProductionAssetSource.LocalImageProcessing
+    ) {
+      return false;
+    }
+    if (!asset.filePath || asset.filePath.startsWith('creator://')) return false;
+    const sourcePath = path.resolve(asset.filePath);
+    if (path.resolve(preparedAsset.filePath) !== sourcePath) return false;
+    try {
+      const stat = fs.statSync(sourcePath);
+      fs.accessSync(sourcePath, fs.constants.R_OK | fs.constants.W_OK);
+      return stat.isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  private updateQuickEditedAsset(
+    asset: CreatorProductionAssetRecord,
+    result: Awaited<ReturnType<typeof executeImageQuickEdit>>,
+  ): CreatorProductionAssetRecord {
+    const currentMetadata = parseJsonObject(this.getAssetMetadataJson(asset.id));
+    const imageSource = {
+      ...(asset.imageSource ?? buildCreatorImageSourceFile({
+        localPath: result.outputPath,
+        assetQuality: CreatorImageAssetQuality.Original,
+        provider: asset.source,
+      })),
+      assetQuality: CreatorImageAssetQuality.Original,
+      localPath: result.outputPath,
+      resolvedPath: result.outputPath,
+      resolvedReason: 'quick_edit_overwrite',
+    };
+    this.db.prepare(`
+      UPDATE production_assets
+      SET metadata = ?,
+        status = ?,
+        mime_type = COALESCE(?, mime_type),
+        file_name = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(
+      JSON.stringify({
+        ...currentMetadata,
+        imageSource,
+        imageMetadata: result.imageMetadata,
+        quickEdit: result.quickEdit,
+      }),
+      CreatorProductionAssetStatus.Ready,
+      result.mimeType,
+      result.fileName,
+      result.quickEdit.createdAt,
+      asset.id,
+    );
+    return this.getAsset(asset.id)!;
+  }
+
+  private createQuickEditImageAsset(
+    sourceAsset: CreatorProductionAssetRecord,
+    result: Awaited<ReturnType<typeof executeImageQuickEdit>>,
+  ): CreatorProductionAssetRecord {
+    if (path.resolve(sourceAsset.filePath) === path.resolve(result.outputPath)) {
+      throw new Error('Output file must not overwrite the source image');
+    }
+
+    const now = result.quickEdit.createdAt;
+    const id = uuidv4();
+    const processingMetadata: CreatorImageProcessingAssetMetadata = {
+      sourceAssetId: sourceAsset.id,
+      recipeId: sourceAsset.recipeId,
+      presetId: null,
+      operations: [],
+      plan: null,
+      job: null,
+      task: null,
+      quickEdit: result.quickEdit,
+    };
+    const metadata = {
+      imageMetadata: result.imageMetadata,
+      imageSource: buildCreatorImageSourceFile({
+        localPath: result.outputPath,
+        assetQuality: CreatorImageAssetQuality.Original,
+        provider: CreatorProductionAssetSource.LocalImageProcessing,
+        resolvedPath: result.outputPath,
+        resolvedReason: 'quick_edit_output',
+      }),
+      processing: processingMetadata,
+    };
+
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id,
+        project_id,
+        kind,
+        title,
+        status,
+        source,
+        run_id,
+        source_run_id,
+        variant_of_asset_id,
+        session_id,
+        source_session_id,
+        message_id,
+        source_message_id,
+        template_id,
+        case_ids,
+        case_ids_json,
+        prompt_spec,
+        prompt_spec_json,
+        prompt_text,
+        parent_prompt_asset_id,
+        prompt_version_id,
+        recipe_id,
+        selected_direction_id,
+        file_path,
+        file_name,
+        mime_type,
+        favorite,
+        adoption_status,
+        tags_json,
+        license_note,
+        usage_note,
+        metadata,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      sourceAsset.projectId,
+      CreatorProductionAssetKind.Image,
+      result.fileName,
+      CreatorProductionAssetStatus.Ready,
+      CreatorProductionAssetSource.LocalImageProcessing,
+      sourceAsset.runId,
+      sourceAsset.runId,
+      sourceAsset.id,
+      null,
+      sourceAsset.sessionId,
+      null,
+      sourceAsset.messageId,
+      sourceAsset.templateId,
+      JSON.stringify(sourceAsset.caseIds),
+      JSON.stringify(sourceAsset.caseIds),
+      sourceAsset.promptSpec ? JSON.stringify(sourceAsset.promptSpec) : null,
+      sourceAsset.promptSpec ? JSON.stringify(sourceAsset.promptSpec) : null,
+      sourceAsset.promptText,
+      sourceAsset.parentPromptAssetId,
+      sourceAsset.promptVersionId,
+      sourceAsset.recipeId,
+      sourceAsset.selectedDirectionId,
+      result.outputPath,
+      result.fileName,
+      result.mimeType,
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(sourceAsset.tags),
+      sourceAsset.licenseNote,
+      sourceAsset.usageNote,
+      JSON.stringify(metadata),
+      now,
+      now,
+    );
+
+    return this.getAsset(id)!;
+  }
+
+  async saveImageQuickEdit(input: CreatorImageQuickEditSaveInput): Promise<CreatorImageQuickEditSaveResult> {
+    const asset = this.getAsset(input.assetId.trim());
+    if (!asset || asset.kind !== CreatorProductionAssetKind.Image) {
+      throw new Error('Source image asset not found');
+    }
+    const preparedAsset = await this.prepareImageProcessingAsset(asset);
+    if (input.saveMode === CreatorImageQuickEditSaveMode.Overwrite && !this.canOverwriteQuickEditAsset(asset, preparedAsset)) {
+      throw new Error('Current image source cannot be overwritten');
+    }
+
+    const result = await executeImageQuickEdit({
+      sourceAssetId: asset.id,
+      sourcePath: preparedAsset.filePath,
+      saveMode: input.saveMode,
+      outputPath: input.outputPath,
+      outputDirectory: input.outputDirectory,
+      rotate: input.rotate,
+      cropRatio: input.cropRatio,
+      width: input.width,
+      height: input.height,
+      longestEdge: input.longestEdge,
+      keepAspect: input.keepAspect,
+      outputFormat: input.outputFormat,
+      quality: input.quality,
+    });
+
+    const outputAsset = result.overwritten
+      ? this.updateQuickEditedAsset(asset, result)
+      : this.createQuickEditImageAsset(asset, result);
+
+    return {
+      outputPath: result.outputPath,
+      imageMetadata: result.imageMetadata,
+      asset: outputAsset,
+      overwritten: result.overwritten,
+      warningCodes: result.imageMetadata.warningCodes,
+    };
   }
 
   async executeImageProcessingPlan(plan: CreatorImageProcessingPlan): Promise<CreatorImageBatchCreateResult> {

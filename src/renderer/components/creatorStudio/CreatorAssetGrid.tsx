@@ -46,7 +46,7 @@ import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
 import type { CreatorStudioCase } from '../../types/creatorStudio';
 import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
-import { ImagePostProcessingDrawer } from './ImagePostProcessingDrawer';
+import { ImageQuickEditDrawer } from './ImageQuickEditDrawer';
 
 interface CreatorAssetGridProps {
   recipes?: CreatorRecipeRecord[];
@@ -424,7 +424,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const [promptVersionDiff, setPromptVersionDiff] = useState('');
   const [isLoadingPromptVersions, setIsLoadingPromptVersions] = useState(false);
   const [inspectingImageAssetIds, setInspectingImageAssetIds] = useState<Set<string>>(() => new Set());
-  const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [quickEditAsset, setQuickEditAsset] = useState<CreatorProductionAssetRecord | null>(null);
   const [executingRecipeAssetId, setExecutingRecipeAssetId] = useState<string | null>(null);
   const [batchImageAssetIds, setBatchImageAssetIds] = useState<Set<string>>(() => new Set());
   const [isCreatingImageBatch, setIsCreatingImageBatch] = useState(false);
@@ -720,7 +720,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
         dispatchToast(i18nService.t('creatorImageProcessingSourceMapFailed'));
         return;
       }
-      setPostProcessingAsset(imageAsset);
+      setQuickEditAsset(imageAsset);
     } catch (error) {
       dispatchToast(isMissingCreatorCaseImageHandlerError(error)
         ? i18nService.t('creatorImageProcessingRestartRequired')
@@ -1334,7 +1334,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   </IconAction>
                   {imageProcessingEnabled && (
                     <IconAction
-                      label={i18nService.t('creatorImagePostProcessingAction')}
+                      label={i18nService.t('creatorImageQuickEditAction')}
                       onClick={() => void handleOpenImagePostProcessing(asset)}
                       disabled={!canPostProcessAsset(asset)}
                     >
@@ -1570,7 +1570,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <AdjustmentsHorizontalIcon className="h-4 w-4" />
-                    {i18nService.t('creatorImagePostProcessingAction')}
+                    {i18nService.t('creatorImageQuickEditAction')}
                   </button>
                 )}
                 {imageProcessingEnabled && selectedAsset.kind === CreatorProductionAssetKind.Image && readmeBannerRecipe && (
@@ -1607,9 +1607,9 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
           </div>
         )}
       </aside>
-      <ImagePostProcessingDrawer
-        asset={postProcessingAsset}
-        onClose={() => setPostProcessingAsset(null)}
+      <ImageQuickEditDrawer
+        asset={quickEditAsset}
+        onClose={() => setQuickEditAsset(null)}
         onCompleted={handleImageProcessingCompleted}
       />
     </section>

@@ -12,6 +12,9 @@ import type {
   CreatorImagePlanCreateResult,
   CreatorImagePlanGetInput,
   CreatorImagePlanGetResult,
+  CreatorImageQuickEditRevealInput,
+  CreatorImageQuickEditSaveInput,
+  CreatorImageQuickEditSaveResult,
   CreatorImageRecipeExecuteInput,
   CreatorImageRecipeExecuteResult,
   CreatorImageReportOpenInput,
@@ -215,6 +218,30 @@ class CreatorStudioAssetService {
     const result = await window.electron.creatorStudio.openImageReport(input);
     if (!result.success) {
       throw new Error(result.error || 'Failed to open image processing report');
+    }
+  }
+
+  async saveImageQuickEdit(input: CreatorImageQuickEditSaveInput): Promise<CreatorImageQuickEditSaveResult | null> {
+    const result = await window.electron.creatorStudio.saveImageQuickEdit(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to save quick image edit');
+    }
+    if (!result.outputPath || !result.imageMetadata) {
+      return null;
+    }
+    return {
+      outputPath: result.outputPath,
+      imageMetadata: result.imageMetadata,
+      ...(result.asset ? { asset: result.asset } : {}),
+      overwritten: result.overwritten === true,
+      warningCodes: result.warningCodes ?? [],
+    };
+  }
+
+  async revealImageQuickEdit(input: CreatorImageQuickEditRevealInput): Promise<void> {
+    const result = await window.electron.creatorStudio.revealImageQuickEdit(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to reveal quick image edit output');
     }
   }
 

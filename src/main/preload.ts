@@ -562,6 +562,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CreatorStudioIpcChannel.ImageOutputReveal, input),
     openImageReport: (input: Record<string, unknown>) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.ImageReportOpen, input),
+    saveImageQuickEdit: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageQuickEditSave, input),
+    revealImageQuickEdit: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageQuickEditReveal, input),
     setAssetFavorite: (input: { assetId: string; favorite: boolean }) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetSetFavorite, input),
     updateAsset: (input: Record<string, unknown>) =>

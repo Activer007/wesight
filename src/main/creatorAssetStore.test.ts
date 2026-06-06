@@ -23,6 +23,7 @@ import {
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorImageQuickEditSaveMode,
   CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
@@ -884,6 +885,89 @@ describe('CreatorAssetStore', () => {
     expect(result.failures).toEqual([expect.objectContaining({ path: corruptPath })]);
     expect(store.listAssets({ projectId }).total).toBe(1);
     expect(store.listAssets({ projectId }).assets[0].filePath).toBe(validPath);
+  });
+
+  test('creates a derived asset when saving a quick edit copy', async () => {
+    const workspace = store.createProject({ name: 'Quick Edit Copy Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'quick-copy.png');
+    await sharp({
+      create: {
+        width: 80,
+        height: 40,
+        channels: 3,
+        background: { r: 80, g: 120, b: 180 },
+      },
+    }).png().toFile(imagePath);
+    const imported = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+
+    const result = await store.saveImageQuickEdit({
+      assetId: imported.assets[0].id,
+      saveMode: CreatorImageQuickEditSaveMode.Copy,
+      outputFormat: CreatorImageProcessingOutputFormat.Webp,
+      width: 40,
+      keepAspect: true,
+    });
+
+    expect(result.overwritten).toBe(false);
+    expect(result.asset).toMatchObject({
+      kind: CreatorProductionAssetKind.Image,
+      source: CreatorProductionAssetSource.LocalImageProcessing,
+      variantOfAssetId: imported.assets[0].id,
+      filePath: path.join(tempDir, 'quick-copy-edited.webp'),
+    });
+    expect(result.asset?.imageProcessing).toMatchObject({
+      sourceAssetId: imported.assets[0].id,
+      quickEdit: {
+        saveMode: CreatorImageQuickEditSaveMode.Copy,
+        outputPath: path.join(tempDir, 'quick-copy-edited.webp'),
+      },
+    });
+    expect(result.imageMetadata).toMatchObject({
+      width: 40,
+      height: 20,
+      format: CreatorImageProcessingOutputFormat.Webp,
+    });
+  });
+
+  test('overwrites an imported local image without creating a derived asset', async () => {
+    const workspace = store.createProject({ name: 'Quick Edit Overwrite Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'quick-overwrite.png');
+    await sharp({
+      create: {
+        width: 30,
+        height: 60,
+        channels: 3,
+        background: { r: 180, g: 80, b: 120 },
+      },
+    }).png().toFile(imagePath);
+    const imported = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+
+    const result = await store.saveImageQuickEdit({
+      assetId: imported.assets[0].id,
+      saveMode: CreatorImageQuickEditSaveMode.Overwrite,
+      outputFormat: CreatorImageProcessingOutputFormat.Png,
+      rotate: 90,
+    });
+
+    expect(result.overwritten).toBe(true);
+    expect(result.asset?.id).toBe(imported.assets[0].id);
+    expect(store.listAssets({ projectId }).total).toBe(1);
+    const updated = store.getAsset(imported.assets[0].id);
+    expect(updated?.imageMetadata).toMatchObject({
+      width: 60,
+      height: 30,
+      format: CreatorImageProcessingOutputFormat.Png,
+    });
   });
 
   test('tracks prompt versions, recipes, diffs, and forks', () => {
