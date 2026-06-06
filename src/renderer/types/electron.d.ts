@@ -87,6 +87,20 @@ import type {
   CreatorWorkspaceSnapshot,
 } from '@shared/creatorStudio/types';
 import type { FeishuEngineKeyType, FeishuManagementModeType, FeishuRuntimeOwnershipType, WeixinOwnershipType } from '@shared/im/constants';
+import type {
+  NanoBananaPrompt,
+  NanoBananaPromptConvertResult,
+  NanoBananaPromptGetInput,
+  NanoBananaPromptIndexItem,
+  NanoBananaPromptSource,
+  NanoBananaSearchInput,
+  NanoBananaSearchResult,
+  NanoBananaSourceStatusSnapshot,
+  NanoBananaSyncInput,
+  NanoBananaSyncResult,
+  NanoBananaUsageEventRecord,
+  NanoBananaUsageRecordInput,
+} from '@shared/nanoBanana/types';
 import type { DesktopPetTaskSnapshot, PetConfig, PetPosition } from '@shared/pet/constants';
 import type { SkillMarketplaceSort, SkillMarketplaceSourceType } from '@shared/skills/constants';
 
@@ -1118,6 +1132,52 @@ interface IElectronAPI {
     failBatchTask: (input: CreatorBatchTaskFailInput) => Promise<{
       success: boolean;
       batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
+  };
+  nanoBanana: {
+    listSources: () => Promise<{
+      success: boolean;
+      sources?: NanoBananaPromptSource[];
+      error?: string;
+    }>;
+    getSourceStatus: (input?: { sourceId?: string }) => Promise<{
+      success: boolean;
+      status?: NanoBananaSourceStatusSnapshot | null;
+      error?: string;
+    }>;
+    sync: (input?: NanoBananaSyncInput) => Promise<{
+      success: boolean;
+      result?: NanoBananaSyncResult;
+      error?: string;
+    }>;
+    search: (input?: NanoBananaSearchInput) => Promise<{
+      success: boolean;
+      items?: NanoBananaSearchResult['items'];
+      totalItems?: number;
+      limit?: number;
+      offset?: number;
+      error?: string;
+    }>;
+    getPrompt: (input: NanoBananaPromptGetInput) => Promise<{
+      success: boolean;
+      prompt?: NanoBananaPrompt | null;
+      indexItem?: NanoBananaPromptIndexItem | null;
+      warnings?: string[];
+      error?: string;
+    }>;
+    convertPrompt: (input: NanoBananaPromptGetInput) => Promise<{
+      success: boolean;
+      sourceId?: NanoBananaPromptConvertResult['sourceId'];
+      promptId?: NanoBananaPromptConvertResult['promptId'];
+      sourcePromptId?: NanoBananaPromptConvertResult['sourcePromptId'];
+      promptSpec?: NanoBananaPromptConvertResult['promptSpec'];
+      warnings?: string[];
+      error?: string;
+    }>;
+    recordUsage: (input: NanoBananaUsageRecordInput) => Promise<{
+      success: boolean;
+      record?: NanoBananaUsageEventRecord;
       error?: string;
     }>;
   };

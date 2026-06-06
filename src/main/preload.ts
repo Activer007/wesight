@@ -6,6 +6,7 @@ import type { CoworkFileActivity } from '../shared/cowork/fileActivity';
 import { CreatorStudioIpcChannel } from '../shared/creatorStudio/constants';
 import { DialogIpcChannel } from '../shared/dialog/constants';
 import { type FeishuEngineKeyType, type FeishuManagementModeType, type FeishuRuntimeOwnershipType, ImIpcChannel } from '../shared/im/constants';
+import { NanoBananaIpcChannel } from '../shared/nanoBanana/constants';
 import { DesktopPetIpcChannel, type DesktopPetTaskSnapshot, type PetConfig, type PetPosition } from '../shared/pet/constants';
 import type { Platform } from '../shared/platform';
 import { SkillsIpcChannel } from '../shared/skills/constants';
@@ -640,6 +641,22 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CreatorStudioIpcChannel.BatchTaskSkip, taskId),
     failBatchTask: (input: Record<string, unknown>) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.BatchTaskFail, input),
+  },
+  nanoBanana: {
+    listSources: () =>
+      ipcRenderer.invoke(NanoBananaIpcChannel.SourceList),
+    getSourceStatus: (input?: Record<string, unknown>) =>
+      ipcRenderer.invoke(NanoBananaIpcChannel.SourceStatus, input),
+    sync: (input?: Record<string, unknown>) =>
+      ipcRenderer.invoke(NanoBananaIpcChannel.Sync, input),
+    search: (input?: Record<string, unknown>) =>
+      ipcRenderer.invoke(NanoBananaIpcChannel.Search, input),
+    getPrompt: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(NanoBananaIpcChannel.PromptGet, input),
+    convertPrompt: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(NanoBananaIpcChannel.PromptConvert, input),
+    recordUsage: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(NanoBananaIpcChannel.UsageRecord, input),
   },
   dialog: {
     selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),

@@ -72,6 +72,7 @@ import {
 } from './im/imPairingStore';
 import type { Platform } from './im/types';
 import { registerCreatorStudioIpcHandlers } from './ipcHandlers/creatorStudio';
+import { registerNanoBananaIpcHandlers } from './ipcHandlers/nanoBanana';
 import {
   getCronJobService,
   initCronJobServiceManager,
@@ -192,6 +193,9 @@ import {
 } from './libs/systemProxy';
 import { getLogFilePath, getRecentMainLogEntries,initLogger } from './logger';
 import { McpStore } from './mcpStore';
+import { NanoPromptSearch } from './nanoBanana/nanoPromptSearch';
+import { NanoPromptStore } from './nanoBanana/nanoPromptStore';
+import { NanoPromptSyncService } from './nanoBanana/nanoPromptSyncService';
 import { RuntimeTelemetryStore } from './runtimeTelemetryStore';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
@@ -735,6 +739,9 @@ process.on('exit', (code) => {
 let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
 let creatorAssetStore: CreatorAssetStore | null = null;
+let nanoPromptStore: NanoPromptStore | null = null;
+let nanoPromptSearch: NanoPromptSearch | null = null;
+let nanoPromptSyncService: NanoPromptSyncService | null = null;
 let runtimeTelemetryStore: RuntimeTelemetryStore | null = null;
 let runtimeTelemetryTracker: RuntimeTelemetryTracker | null = null;
 let coworkRunner: CoworkRunner | null = null;
@@ -1151,6 +1158,36 @@ const getCreatorAssetStore = () => {
     creatorAssetStore = new CreatorAssetStore(getStore().getDatabase());
   }
   return creatorAssetStore;
+};
+
+const getNanoPromptStore = () => {
+  if (!nanoPromptStore) {
+    nanoPromptStore = new NanoPromptStore(getStore().getDatabase());
+    nanoPromptStore.ensureDefaultSource();
+  }
+  return nanoPromptStore;
+};
+
+const getNanoPromptSearch = () => {
+  if (!nanoPromptSearch) {
+    nanoPromptSearch = new NanoPromptSearch(getNanoPromptStore());
+  }
+  return nanoPromptSearch;
+};
+
+const getNanoPromptSyncService = () => {
+  if (!nanoPromptSyncService) {
+    nanoPromptSyncService = new NanoPromptSyncService(getNanoPromptStore());
+  }
+  return nanoPromptSyncService;
+};
+
+const scheduleNanoPromptBackgroundCheck = (): void => {
+  setTimeout(() => {
+    void getNanoPromptSyncService().sync({ mode: 'cache_first' }).catch((error) => {
+      console.warn('[NanoPrompt] background sync failed:', error);
+    });
+  }, 3_000);
 };
 
 const getCoworkFileActivityTracker = (): CoworkFileActivityTracker => {
@@ -5998,6 +6035,11 @@ if (!gotTheLock) {
   // ==================== Creator Studio IPC Handlers ====================
 
   registerCreatorStudioIpcHandlers(ipcMain, getCreatorAssetStore, getCoworkStore);
+
+  // ==================== Nano Prompt IPC Handlers ====================
+
+  registerNanoBananaIpcHandlers(ipcMain, getNanoPromptSyncService, getNanoPromptSearch);
+  scheduleNanoPromptBackgroundCheck();
 
   // ==================== Permissions IPC Handlers ====================
 

@@ -3,6 +3,7 @@ import { expect, test } from 'vitest';
 import {
   isNanoBananaIpcChannel,
   isNanoBananaPromptImportType,
+  isNanoBananaSearchSort,
   isNanoBananaSourceStatus,
   isNanoBananaSourceType,
   isNanoBananaSyncStatus,
@@ -11,6 +12,8 @@ import {
   NanoBananaIpcChannelValues,
   NanoBananaPromptImportType,
   NanoBananaPromptImportTypeValues,
+  NanoBananaSearchSort,
+  NanoBananaSearchSortValues,
   NanoBananaSourceStatus,
   NanoBananaSourceStatusValues,
   NanoBananaSourceType,
@@ -28,6 +31,7 @@ test('exposes values and type guards for Nano Banana constants', () => {
   expect(NanoBananaPromptImportTypeValues).toContain(NanoBananaPromptImportType.Recipe);
   expect(NanoBananaUsageEventTypeValues).toContain(NanoBananaUsageEventType.Copy);
   expect(NanoBananaSyncStatusValues).toContain(NanoBananaSyncStatus.Completed);
+  expect(NanoBananaSearchSortValues).toContain(NanoBananaSearchSort.Relevance);
 
   expect(isNanoBananaSourceType(NanoBananaSourceType.StaticJson)).toBe(true);
   expect(isNanoBananaSourceStatus(NanoBananaSourceStatus.Ready)).toBe(true);
@@ -35,7 +39,9 @@ test('exposes values and type guards for Nano Banana constants', () => {
   expect(isNanoBananaPromptImportType(NanoBananaPromptImportType.BoardCard)).toBe(true);
   expect(isNanoBananaUsageEventType(NanoBananaUsageEventType.UseInBuilder)).toBe(true);
   expect(isNanoBananaSyncStatus(NanoBananaSyncStatus.Failed)).toBe(true);
+  expect(isNanoBananaSearchSort(NanoBananaSearchSort.PublishedDesc)).toBe(true);
 
   expect(isNanoBananaSourceType('static-json')).toBe(false);
   expect(isNanoBananaUsageEventType('open')).toBe(false);
+  expect(isNanoBananaSearchSort('newest')).toBe(false);
 });

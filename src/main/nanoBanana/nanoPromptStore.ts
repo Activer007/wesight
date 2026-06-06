@@ -425,6 +425,16 @@ export class NanoPromptStore {
     return row ? toIndexItem(row) : null;
   }
 
+  getIndexItemBySourcePromptId(
+    sourceId: string,
+    sourcePromptId: string | number,
+  ): NanoBananaPromptIndexItem | null {
+    const row = this.db
+      .prepare('SELECT * FROM nano_prompt_index_items WHERE source_id = ? AND source_prompt_id = ?')
+      .get(sourceId, normalizeSourcePromptId(sourcePromptId)) as IndexItemRow | undefined;
+    return row ? toIndexItem(row) : null;
+  }
+
   listIndexItems(sourceId = NanoBananaDefaultSourceId, limit = 100, offset = 0): NanoBananaPromptIndexItem[] {
     const rows = this.db
       .prepare(`
@@ -621,6 +631,10 @@ export class NanoPromptStore {
     sourcePromptId: string | number,
   ): NanoBananaPrompt | null {
     return this.getPrompt(createNanoPromptId(sourceId, sourcePromptId));
+  }
+
+  getDatabase(): Database.Database {
+    return this.db;
   }
 
   getStatus(sourceId = NanoBananaDefaultSourceId): NanoBananaSourceStatusSnapshot | null {

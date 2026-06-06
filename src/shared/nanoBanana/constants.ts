@@ -120,6 +120,23 @@ export const NanoBananaSyncStatusValues = [
   NanoBananaSyncStatus.Failed,
 ] as const;
 
+export const NanoBananaSearchSort = {
+  Relevance: 'relevance',
+  PublishedDesc: 'published_desc',
+  LikesDesc: 'likes_desc',
+  ResultsDesc: 'results_desc',
+} as const;
+
+export type NanoBananaSearchSort =
+  typeof NanoBananaSearchSort[keyof typeof NanoBananaSearchSort];
+
+export const NanoBananaSearchSortValues = [
+  NanoBananaSearchSort.Relevance,
+  NanoBananaSearchSort.PublishedDesc,
+  NanoBananaSearchSort.LikesDesc,
+  NanoBananaSearchSort.ResultsDesc,
+] as const;
+
 export const NanoBananaDefaultSourceId = 'nano-supai';
 
 export const DefaultNanoBananaPromptSource = {
@@ -167,4 +184,9 @@ export const isNanoBananaUsageEventType = (
 export const isNanoBananaSyncStatus = (value: unknown): value is NanoBananaSyncStatus => (
   typeof value === 'string'
   && NanoBananaSyncStatusValues.includes(value as NanoBananaSyncStatus)
+);
+
+export const isNanoBananaSearchSort = (value: unknown): value is NanoBananaSearchSort => (
+  typeof value === 'string'
+  && NanoBananaSearchSortValues.includes(value as NanoBananaSearchSort)
 );

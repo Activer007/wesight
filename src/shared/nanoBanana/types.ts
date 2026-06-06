@@ -1,5 +1,6 @@
 import type {
   NanoBananaPromptImportType,
+  NanoBananaSearchSort,
   NanoBananaSourceStatus,
   NanoBananaSourceType,
   NanoBananaSyncStatus,
@@ -126,6 +127,7 @@ export interface NanoBananaSearchInput {
   categories?: string[];
   tags?: string[];
   needReferenceImages?: boolean;
+  sort?: NanoBananaSearchSort;
   limit?: number;
   offset?: number;
 }
@@ -135,6 +137,10 @@ export interface NanoBananaSearchResult {
   totalItems: number;
   limit: number;
   offset: number;
+}
+
+export interface NanoBananaSourceListResult {
+  sources: NanoBananaPromptSource[];
 }
 
 export interface NanoBananaSyncResult {
@@ -156,6 +162,40 @@ export interface NanoBananaPromptConvertResult {
   promptSpec: unknown;
   warnings: string[];
 }
+
+export interface NanoBananaPromptGetInput {
+  sourceId?: string;
+  promptId?: string;
+  sourcePromptId?: string | number;
+}
+
+export interface NanoBananaPromptGetResult {
+  prompt: NanoBananaPrompt | null;
+  indexItem?: NanoBananaPromptIndexItem | null;
+  warnings: string[];
+}
+
+export interface NanoBananaSyncInput {
+  sourceId?: string;
+  force?: boolean;
+  mode?: 'cache_first' | 'manual' | 'force';
+}
+
+export interface NanoBananaUsageRecordInput {
+  sourceId: string;
+  promptId?: string | null;
+  sourcePromptId?: string | null;
+  eventType: NanoBananaUsageEventType;
+  importType?: NanoBananaPromptImportType | null;
+  projectId?: string | null;
+  targetId?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export type NanoBananaIpcResponse<T> = {
+  success: boolean;
+  error?: string;
+} & Partial<T>;
 
 export interface NanoBananaPromptImportRecord {
   id: string;
