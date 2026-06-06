@@ -52,6 +52,7 @@ const createAsset = (overrides: Partial<CreatorProductionAssetRecord> = {}): Cre
   createdAt: 1,
   updatedAt: 1,
   sourceSessionAvailable: true,
+  imageMetadata: null,
   ...overrides,
 });
 

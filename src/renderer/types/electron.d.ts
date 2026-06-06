@@ -36,6 +36,8 @@ import type {
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
   CreatorCreativeModelCapability,
+  CreatorImageInspectInput,
+  CreatorImageInspectResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -816,6 +818,12 @@ interface IElectronAPI {
     getAssetSource: (assetId: string) => Promise<{
       success: boolean;
       source?: CreatorProductionAssetSourceLookup;
+      error?: string;
+    }>;
+    inspectImage: (input: CreatorImageInspectInput) => Promise<{
+      success: boolean;
+      asset?: CreatorImageInspectResult['asset'];
+      imageMetadata?: CreatorImageInspectResult['imageMetadata'];
       error?: string;
     }>;
     setAssetFavorite: (input: { assetId: string; favorite: boolean }) => Promise<{

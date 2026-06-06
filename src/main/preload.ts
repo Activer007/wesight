@@ -538,6 +538,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetList, input),
     getAssetSource: (assetId: string) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetGetSource, assetId),
+    inspectImage: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageInspect, input),
     setAssetFavorite: (input: { assetId: string; favorite: boolean }) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetSetFavorite, input),
     updateAsset: (input: Record<string, unknown>) =>

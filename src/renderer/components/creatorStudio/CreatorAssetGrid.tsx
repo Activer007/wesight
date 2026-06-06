@@ -15,11 +15,13 @@ import {
 import {
   CreatorAssetAdoptionStatus,
   type CreatorAssetAdoptionStatus as CreatorAssetAdoptionStatusType,
+  CreatorImageMetadataStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
   CreatorStudioDefaultProjectId,
 } from '@shared/creatorStudio/constants';
+import type { CreatorImageMetadata } from '@shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorProductionAssetRecord,
   CreatorPromptVersionRecord,
@@ -41,6 +43,8 @@ interface CreatorAssetGridProps {
 const dispatchToast = (message: string) => {
   window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
 };
+
+const CreatorImageMetadataInspectConcurrency = 2;
 
 const copyText = async (text: string) => {
   await navigator.clipboard.writeText(text);
@@ -163,6 +167,50 @@ const isRenderableImage = (asset: CreatorProductionAssetRecord): boolean => (
   isFileBackedImage(asset) && asset.status === CreatorProductionAssetStatus.Ready
 );
 
+const formatFileSize = (bytes: number | null | undefined): string => {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
+    return i18nService.t('creatorImageUnknown');
+  }
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+};
+
+const getImageMetadataStatusLabel = (metadata: CreatorImageMetadata | null | undefined): string => {
+  if (!metadata) return i18nService.t('creatorImageMetadataNotLoaded');
+  switch (metadata.status) {
+    case CreatorImageMetadataStatus.Ready:
+      return i18nService.t('creatorImageMetadataReady');
+    case CreatorImageMetadataStatus.Missing:
+      return i18nService.t('creatorImageMetadataMissing');
+    case CreatorImageMetadataStatus.Corrupt:
+      return i18nService.t('creatorImageMetadataCorrupt');
+    case CreatorImageMetadataStatus.Unsupported:
+      return i18nService.t('creatorImageMetadataUnsupported');
+    default:
+      return i18nService.t('creatorImageUnknown');
+  }
+};
+
+const formatImageDimensions = (metadata: CreatorImageMetadata | null | undefined): string => (
+  metadata?.width && metadata.height
+    ? `${metadata.width} x ${metadata.height}`
+    : i18nService.t('creatorImageUnknown')
+);
+
+const formatImageType = (metadata: CreatorImageMetadata | null | undefined, fallbackMimeType?: string | null): string => {
+  const format = metadata?.format?.toUpperCase();
+  const mimeType = metadata?.mimeType || fallbackMimeType || null;
+  if (format && mimeType) return `${format} / ${mimeType}`;
+  return format || mimeType || i18nService.t('creatorImageUnknown');
+};
+
 const getCasePreview = (asset: CreatorProductionAssetRecord): CreatorStudioCase | null => {
   if (asset.kind !== CreatorProductionAssetKind.Case && asset.source !== CreatorProductionAssetSource.CreatorCase) {
     return null;
@@ -264,6 +312,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const [promptVersions, setPromptVersions] = useState<CreatorPromptVersionRecord[]>([]);
   const [promptVersionDiff, setPromptVersionDiff] = useState('');
   const [isLoadingPromptVersions, setIsLoadingPromptVersions] = useState(false);
+  const [inspectingImageAssetIds, setInspectingImageAssetIds] = useState<Set<string>>(() => new Set());
 
   const currentCollections = useMemo(
     () => workspace?.collections.filter((collection) => collection.projectId === currentProjectId) ?? [],
@@ -314,6 +363,49 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   useEffect(() => {
     void loadAssets();
   }, [loadAssets]);
+
+  useEffect(() => {
+    const pendingAssets = assets.filter((asset) => (
+      asset.kind === CreatorProductionAssetKind.Image
+      && !asset.imageMetadata
+      && !inspectingImageAssetIds.has(asset.id)
+    )).slice(0, CreatorImageMetadataInspectConcurrency);
+    if (pendingAssets.length === 0) return;
+
+    let cancelled = false;
+    setInspectingImageAssetIds((ids) => {
+      const next = new Set(ids);
+      for (const asset of pendingAssets) {
+        next.add(asset.id);
+      }
+      return next;
+    });
+
+    for (const asset of pendingAssets) {
+      void creatorStudioAssetService.inspectImage({ assetId: asset.id })
+        .then((result) => {
+          if (cancelled || !result) return;
+          setAssets((items) => items.map((item) => item.id === result.asset.id ? result.asset : item));
+          setSelectedAsset((selected) => selected?.id === result.asset.id ? result.asset : selected);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          dispatchToast(i18nService.t('creatorImageMetadataInspectFailed'));
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setInspectingImageAssetIds((ids) => {
+            const next = new Set(ids);
+            next.delete(asset.id);
+            return next;
+          });
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assets, inspectingImageAssetIds]);
 
   useEffect(() => {
     if (!selectedAsset) {
@@ -797,6 +889,16 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                       </span>
                     ))}
                   </div>
+                  {asset.kind === CreatorProductionAssetKind.Image && (
+                    <div className="rounded-lg bg-surface-raised px-2 py-1.5 text-[11px] leading-5 text-secondary">
+                      <div>{formatImageDimensions(asset.imageMetadata)}</div>
+                      <div className="truncate">{formatImageType(asset.imageMetadata, asset.mimeType)}</div>
+                      <div className="flex flex-wrap gap-x-2">
+                        <span>{formatFileSize(asset.imageMetadata?.fileSize)}</span>
+                        <span>{getImageMetadataStatusLabel(asset.imageMetadata)}</span>
+                      </div>
+                    </div>
+                  )}
                   <select
                     value={asset.adoptionStatus}
                     onChange={(event) => void handleChangeAdoptionStatus(asset, event.target.value as CreatorAssetAdoptionStatusType)}
@@ -852,6 +954,24 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
               <AssetPreviewImage asset={selectedAsset} className="aspect-[4/3] w-full rounded-lg bg-surface-raised object-contain" />
               <ProvenanceRow label={i18nService.t('creatorAssetFileName')} value={selectedAsset.fileName} />
+              {selectedAsset.kind === CreatorProductionAssetKind.Image && (
+                <section className="rounded-lg border border-border p-3">
+                  <h3 className="text-xs font-medium text-secondary">{i18nService.t('creatorImageMetadata')}</h3>
+                  <div className="mt-2 space-y-2">
+                    <ProvenanceRow label={i18nService.t('creatorImageDimensions')} value={formatImageDimensions(selectedAsset.imageMetadata)} />
+                    <ProvenanceRow label={i18nService.t('creatorImageFormat')} value={selectedAsset.imageMetadata?.format?.toUpperCase() || i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageMimeType')} value={selectedAsset.imageMetadata?.mimeType || selectedAsset.mimeType || i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageFileSize')} value={formatFileSize(selectedAsset.imageMetadata?.fileSize)} />
+                    <ProvenanceRow label={i18nService.t('creatorImageAlpha')} value={selectedAsset.imageMetadata?.hasAlpha === null || selectedAsset.imageMetadata?.hasAlpha === undefined ? i18nService.t('creatorImageUnknown') : selectedAsset.imageMetadata.hasAlpha ? i18nService.t('creatorImageAlphaPresent') : i18nService.t('creatorImageAlphaAbsent')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageOrientation')} value={selectedAsset.imageMetadata?.exifOrientation ? String(selectedAsset.imageMetadata.exifOrientation) : i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageColorSpace')} value={selectedAsset.imageMetadata?.colorSpace || i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageMetadataStatus')} value={getImageMetadataStatusLabel(selectedAsset.imageMetadata)} />
+                    {selectedAsset.imageMetadata?.warningCodes.length ? (
+                      <ProvenanceRow label={i18nService.t('creatorImageWarnings')} value={selectedAsset.imageMetadata.warningCodes.join(', ')} />
+                    ) : null}
+                  </div>
+                </section>
+              )}
               <ProvenanceRow label={i18nService.t('creatorAssetLocalPath')} value={selectedAsset.filePath} />
               <ProvenanceRow label={i18nService.t('creatorAssetSource')} value={getAssetSourceLabel(selectedAsset.source)} />
               <ProvenanceRow label="templateId" value={selectedAsset.templateId || 'none'} />

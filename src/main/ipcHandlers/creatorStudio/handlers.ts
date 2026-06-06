@@ -16,6 +16,7 @@ import type {
   CreatorBoardCardCreateInput,
   CreatorBoardCardUpdateInput,
   CreatorBrandKitUpdateInput,
+  CreatorImageInspectInput,
   CreatorPromptAssetCreateInput,
   CreatorRecipeCreateInput,
 } from '../../../shared/creatorStudio/types';
@@ -101,6 +102,30 @@ const normalizeRecord = (value: unknown): Record<string, unknown> => (
   normalizeObject(value) ?? {}
 );
 
+const normalizeImageInspectInput = (input: unknown): CreatorImageInspectInput | null => {
+  const record = normalizeObject(input);
+  const assetId = toTrimmedString(record?.assetId);
+  if (assetId) {
+    return { assetId };
+  }
+
+  const source = normalizeObject(record?.source);
+  const sessionId = toTrimmedString(source?.sessionId);
+  const messageId = toTrimmedString(source?.messageId);
+  const filePath = toTrimmedString(source?.filePath);
+  if (!sessionId || !messageId || !filePath) {
+    return null;
+  }
+
+  return {
+    source: {
+      sessionId,
+      messageId,
+      filePath,
+    },
+  };
+};
+
 export const registerCreatorStudioIpcHandlers = (
   ipcMain: IpcMain,
   getCreatorAssetStore: () => CreatorAssetStore
@@ -134,6 +159,25 @@ export const registerCreatorStudioIpcHandlers = (
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to get creator asset source',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageInspect, async (_event, input: unknown) => {
+    try {
+      const normalized = normalizeImageInspectInput(input);
+      if (!normalized) {
+        return { success: false, error: 'assetId or controlled source is required' };
+      }
+      const result = await getCreatorAssetStore().inspectImageAsset(normalized);
+      if (!result) {
+        return { success: false, error: 'Image asset not found' };
+      }
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to inspect image metadata',
       };
     }
   });

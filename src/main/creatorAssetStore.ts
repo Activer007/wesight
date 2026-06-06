@@ -10,6 +10,7 @@ import {
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
+  CreatorImageMetadataStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -17,7 +18,9 @@ import {
   CreatorProductionRunStatus,
   CreatorPromptSpecSchemaVersion,
   CreatorStudioDefaultProjectId,
+  isCreatorImageMetadataStatus,
 } from '../shared/creatorStudio/constants';
+import type { CreatorImageMetadata } from '../shared/creatorStudio/imageProcessingTypes';
 import { CREATOR_CREATIVE_MODEL_CAPABILITIES } from '../shared/creatorStudio/modelCapabilities';
 import type {
   CreatorAssetCollectionAddInput,
@@ -46,6 +49,8 @@ import type {
   CreatorBrandKitRecord,
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
+  CreatorImageInspectInput,
+  CreatorImageInspectResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -71,6 +76,7 @@ import type {
   CreatorWorkspaceSnapshot,
 } from '../shared/creatorStudio/types';
 import type { CoworkMessage, CoworkMessageMetadata } from './coworkStore';
+import { inspectImageMetadata } from './libs/imageProcessing/imageMetadataInspector';
 
 interface ProductionAssetRow {
   id: string;
@@ -104,6 +110,7 @@ interface ProductionAssetRow {
   tags_json: string | null;
   license_note: string | null;
   usage_note: string | null;
+  metadata: string | null;
   created_at: number;
   updated_at: number;
   source_session_available?: number | null;
@@ -280,6 +287,37 @@ const parseJsonObject = (value: string | null | undefined): Record<string, unkno
   } catch {
     return {};
   }
+};
+
+const parseImageMetadata = (metadata: Record<string, unknown>): CreatorImageMetadata | null => {
+  const value = metadata.imageMetadata;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const sourcePath = typeof record.sourcePath === 'string' ? record.sourcePath : null;
+  const fileSize = typeof record.fileSize === 'number' ? record.fileSize : null;
+  const inspectedAt = typeof record.inspectedAt === 'number' ? record.inspectedAt : null;
+  if (!sourcePath || fileSize === null || inspectedAt === null || !isCreatorImageMetadataStatus(record.status)) {
+    return null;
+  }
+
+  return {
+    sourcePath,
+    width: typeof record.width === 'number' ? record.width : null,
+    height: typeof record.height === 'number' ? record.height : null,
+    fileSize,
+    format: typeof record.format === 'string' ? record.format : null,
+    mimeType: typeof record.mimeType === 'string' ? record.mimeType : null,
+    hasAlpha: typeof record.hasAlpha === 'boolean' ? record.hasAlpha : null,
+    exifOrientation: typeof record.exifOrientation === 'number' ? record.exifOrientation : null,
+    colorSpace: typeof record.colorSpace === 'string' ? record.colorSpace : null,
+    inspectedAt,
+    status: record.status,
+    warningCodes: Array.isArray(record.warningCodes)
+      ? record.warningCodes.filter((item): item is string => typeof item === 'string')
+      : [],
+    ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
+    ...(typeof record.errorMessage === 'string' ? { errorMessage: record.errorMessage } : {}),
+  };
 };
 
 const normalizeTags = (values: unknown): string[] => {
@@ -1114,6 +1152,78 @@ export class CreatorAssetStore {
         }
         : null,
     };
+  }
+
+  async inspectImageAsset(input: CreatorImageInspectInput): Promise<CreatorImageInspectResult | null> {
+    const assetId = input.assetId?.trim();
+    const asset = assetId
+      ? this.getAsset(assetId)
+      : this.getControlledCoworkImageAsset(input.source);
+    if (!asset || asset.kind !== CreatorProductionAssetKind.Image) {
+      return null;
+    }
+
+    const imageMetadata = await inspectImageMetadata(asset.filePath);
+    const currentMetadata = parseJsonObject(this.getAssetMetadataJson(asset.id));
+    this.db.prepare(`
+      UPDATE production_assets
+      SET metadata = ?,
+        status = ?,
+        mime_type = COALESCE(?, mime_type),
+        updated_at = ?
+      WHERE id = ?
+    `).run(
+      JSON.stringify({
+        ...currentMetadata,
+        imageMetadata,
+      }),
+      imageMetadata.status === CreatorImageMetadataStatus.Missing
+        ? CreatorProductionAssetStatus.Missing
+        : asset.status,
+      imageMetadata.mimeType,
+      Date.now(),
+      asset.id
+    );
+
+    const updated = this.getAsset(asset.id);
+    return updated ? { asset: updated, imageMetadata } : null;
+  }
+
+  private getControlledCoworkImageAsset(source: CreatorImageInspectInput['source']): CreatorProductionAssetRecord | null {
+    const sessionId = source?.sessionId?.trim();
+    const messageId = source?.messageId?.trim();
+    const filePath = source?.filePath?.trim();
+    if (!sessionId || !messageId || !filePath) {
+      return null;
+    }
+
+    const row = this.db.prepare(`
+      SELECT
+        a.*,
+        CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS source_session_available
+      FROM production_assets a
+      LEFT JOIN cowork_sessions s ON s.id = COALESCE(a.source_session_id, a.session_id)
+      WHERE COALESCE(a.source_session_id, a.session_id) = ?
+        AND COALESCE(a.source_message_id, a.message_id) = ?
+        AND a.file_path = ?
+        AND a.kind = ?
+        AND a.source = ?
+      LIMIT 1
+    `).get(
+      sessionId,
+      messageId,
+      filePath,
+      CreatorProductionAssetKind.Image,
+      CreatorProductionAssetSource.CoworkGeneratedImage
+    ) as ProductionAssetRow | undefined;
+
+    return row ? this.mapAssetRow(row) : null;
+  }
+
+  private getAssetMetadataJson(assetId: string): string | null {
+    const row = this.db.prepare('SELECT metadata FROM production_assets WHERE id = ?')
+      .get(assetId) as { metadata: string | null } | undefined;
+    return row?.metadata ?? null;
   }
 
   setFavorite(id: string, favorite: boolean): CreatorProductionAssetRecord | null {
@@ -2395,6 +2505,7 @@ export class CreatorAssetStore {
 
   private mapAssetRow(row: ProductionAssetRow): CreatorProductionAssetRecord {
     const exists = fs.existsSync(row.file_path);
+    const metadata = parseJsonObject(row.metadata);
     const projectId = row.project_id || CreatorStudioDefaultProjectId;
     const adoptionStatus = isAdoptionStatus(row.adoption_status)
       ? row.adoption_status
@@ -2433,6 +2544,7 @@ export class CreatorAssetStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       sourceSessionAvailable: Boolean(row.source_session_available),
+      imageMetadata: parseImageMetadata(metadata),
     };
   }
 }

@@ -35,6 +35,7 @@ export const CreatorStudioIpcChannel = {
   BatchTaskRetry: 'creatorStudio:batchTask:retry',
   BatchTaskSkip: 'creatorStudio:batchTask:skip',
   BatchTaskFail: 'creatorStudio:batchTask:fail',
+  ImageInspect: 'creatorStudio:image:inspect',
 } as const;
 
 export type CreatorStudioIpcChannel =
@@ -46,6 +47,23 @@ export const CreatorPromptSpecSchemaVersion = {
 
 export type CreatorPromptSpecSchemaVersion =
   typeof CreatorPromptSpecSchemaVersion[keyof typeof CreatorPromptSpecSchemaVersion];
+
+export const CreatorFeatureFlag = {
+  ImageProcessingEnabled: 'creator.imageProcessing.enabled',
+} as const;
+
+export type CreatorFeatureFlag =
+  typeof CreatorFeatureFlag[keyof typeof CreatorFeatureFlag];
+
+export const CreatorFeatureFlagValues = [
+  CreatorFeatureFlag.ImageProcessingEnabled,
+] as const;
+
+export const CreatorFeatureFlagDefaults: Record<CreatorFeatureFlag, boolean> = {
+  [CreatorFeatureFlag.ImageProcessingEnabled]: false,
+};
+
+export type CreatorFeatureFlagConfig = Partial<Record<CreatorFeatureFlag, boolean>>;
 
 export const CreatorProductionAssetKind = {
   Image: 'image',
@@ -79,6 +97,8 @@ export const CreatorProductionAssetSource = {
   CoworkGeneratedImage: 'cowork_generated_image',
   CreatorPrompt: 'creator_prompt',
   CreatorCase: 'creator_case',
+  LocalImageProcessing: 'local_image_processing',
+  RecipePostProcessing: 'recipe_post_processing',
 } as const;
 
 export type CreatorProductionAssetSource =
@@ -88,6 +108,8 @@ export const CreatorProductionAssetSourceValues = [
   CreatorProductionAssetSource.CoworkGeneratedImage,
   CreatorProductionAssetSource.CreatorPrompt,
   CreatorProductionAssetSource.CreatorCase,
+  CreatorProductionAssetSource.LocalImageProcessing,
+  CreatorProductionAssetSource.RecipePostProcessing,
 ] as const;
 
 export const CreatorProductionRunStatus = {
@@ -193,6 +215,19 @@ export const CreatorCreativeModelOutputKindValues = [
   CreatorCreativeModelOutputKind.Text,
 ] as const;
 
+export const CreatorBatchRunKind = {
+  CreativeGeneration: 'creative_generation',
+  ImageProcessing: 'image_processing',
+} as const;
+
+export type CreatorBatchRunKind =
+  typeof CreatorBatchRunKind[keyof typeof CreatorBatchRunKind];
+
+export const CreatorBatchRunKindValues = [
+  CreatorBatchRunKind.CreativeGeneration,
+  CreatorBatchRunKind.ImageProcessing,
+] as const;
+
 export const CreatorBatchRunStatus = {
   Running: 'running',
   Completed: 'completed',
@@ -229,10 +264,203 @@ export const CreatorBatchTaskStatusValues = [
   CreatorBatchTaskStatus.Skipped,
 ] as const;
 
+export const CreatorImageMetadataStatus = {
+  Ready: 'ready',
+  Unsupported: 'unsupported',
+  Corrupt: 'corrupt',
+  Missing: 'missing',
+} as const;
+
+export type CreatorImageMetadataStatus =
+  typeof CreatorImageMetadataStatus[keyof typeof CreatorImageMetadataStatus];
+
+export const CreatorImageMetadataStatusValues = [
+  CreatorImageMetadataStatus.Ready,
+  CreatorImageMetadataStatus.Unsupported,
+  CreatorImageMetadataStatus.Corrupt,
+  CreatorImageMetadataStatus.Missing,
+] as const;
+
+export const CreatorImageProcessingSourceKind = {
+  CreatorAsset: 'creator_asset',
+  CoworkGeneratedImage: 'cowork_generated_image',
+  ActivityArtifact: 'activity_artifact',
+  LocalFile: 'local_file',
+} as const;
+
+export type CreatorImageProcessingSourceKind =
+  typeof CreatorImageProcessingSourceKind[keyof typeof CreatorImageProcessingSourceKind];
+
+export const CreatorImageProcessingSourceKindValues = [
+  CreatorImageProcessingSourceKind.CreatorAsset,
+  CreatorImageProcessingSourceKind.CoworkGeneratedImage,
+  CreatorImageProcessingSourceKind.ActivityArtifact,
+  CreatorImageProcessingSourceKind.LocalFile,
+] as const;
+
+export const CreatorImageProcessingPlanStatus = {
+  Draft: 'draft',
+  Ready: 'ready',
+  Executing: 'executing',
+  Completed: 'completed',
+  Failed: 'failed',
+  Canceled: 'canceled',
+} as const;
+
+export type CreatorImageProcessingPlanStatus =
+  typeof CreatorImageProcessingPlanStatus[keyof typeof CreatorImageProcessingPlanStatus];
+
+export const CreatorImageProcessingPlanStatusValues = [
+  CreatorImageProcessingPlanStatus.Draft,
+  CreatorImageProcessingPlanStatus.Ready,
+  CreatorImageProcessingPlanStatus.Executing,
+  CreatorImageProcessingPlanStatus.Completed,
+  CreatorImageProcessingPlanStatus.Failed,
+  CreatorImageProcessingPlanStatus.Canceled,
+] as const;
+
+export const CreatorImageProcessingJobStatus = {
+  Pending: 'pending',
+  Running: 'running',
+  Completed: 'completed',
+  PartialFailed: 'partial_failed',
+  Failed: 'failed',
+  Canceled: 'canceled',
+} as const;
+
+export type CreatorImageProcessingJobStatus =
+  typeof CreatorImageProcessingJobStatus[keyof typeof CreatorImageProcessingJobStatus];
+
+export const CreatorImageProcessingJobStatusValues = [
+  CreatorImageProcessingJobStatus.Pending,
+  CreatorImageProcessingJobStatus.Running,
+  CreatorImageProcessingJobStatus.Completed,
+  CreatorImageProcessingJobStatus.PartialFailed,
+  CreatorImageProcessingJobStatus.Failed,
+  CreatorImageProcessingJobStatus.Canceled,
+] as const;
+
+export const CreatorImageProcessingTaskStatus = {
+  Pending: 'pending',
+  Running: 'running',
+  Completed: 'completed',
+  Failed: 'failed',
+  Skipped: 'skipped',
+  Canceled: 'canceled',
+} as const;
+
+export type CreatorImageProcessingTaskStatus =
+  typeof CreatorImageProcessingTaskStatus[keyof typeof CreatorImageProcessingTaskStatus];
+
+export const CreatorImageProcessingTaskStatusValues = [
+  CreatorImageProcessingTaskStatus.Pending,
+  CreatorImageProcessingTaskStatus.Running,
+  CreatorImageProcessingTaskStatus.Completed,
+  CreatorImageProcessingTaskStatus.Failed,
+  CreatorImageProcessingTaskStatus.Skipped,
+  CreatorImageProcessingTaskStatus.Canceled,
+] as const;
+
+export const CreatorImageProcessingOperation = {
+  AutoOrient: 'auto_orient',
+  Resize: 'resize',
+  Crop: 'crop',
+  Rotate: 'rotate',
+  Convert: 'convert',
+  Compress: 'compress',
+} as const;
+
+export type CreatorImageProcessingOperation =
+  typeof CreatorImageProcessingOperation[keyof typeof CreatorImageProcessingOperation];
+
+export const CreatorImageProcessingOperationValues = [
+  CreatorImageProcessingOperation.AutoOrient,
+  CreatorImageProcessingOperation.Resize,
+  CreatorImageProcessingOperation.Crop,
+  CreatorImageProcessingOperation.Rotate,
+  CreatorImageProcessingOperation.Convert,
+  CreatorImageProcessingOperation.Compress,
+] as const;
+
+export const CreatorImageProcessingOutputFormat = {
+  Png: 'png',
+  Jpeg: 'jpeg',
+  Webp: 'webp',
+  Avif: 'avif',
+} as const;
+
+export type CreatorImageProcessingOutputFormat =
+  typeof CreatorImageProcessingOutputFormat[keyof typeof CreatorImageProcessingOutputFormat];
+
+export const CreatorImageProcessingOutputFormatValues = [
+  CreatorImageProcessingOutputFormat.Png,
+  CreatorImageProcessingOutputFormat.Jpeg,
+  CreatorImageProcessingOutputFormat.Webp,
+  CreatorImageProcessingOutputFormat.Avif,
+] as const;
+
+export const CreatorImageProcessingPlanSchemaVersion = {
+  V1: 'creator.imageProcessingPlan.v1',
+} as const;
+
+export type CreatorImageProcessingPlanSchemaVersion =
+  typeof CreatorImageProcessingPlanSchemaVersion[keyof typeof CreatorImageProcessingPlanSchemaVersion];
+
+export const CreatorImageProcessingPlanSchemaVersionValues = [
+  CreatorImageProcessingPlanSchemaVersion.V1,
+] as const;
+
+export const CreatorImageProcessingRisk = {
+  Low: 'low',
+  Medium: 'medium',
+  High: 'high',
+} as const;
+
+export type CreatorImageProcessingRisk =
+  typeof CreatorImageProcessingRisk[keyof typeof CreatorImageProcessingRisk];
+
+export const CreatorImageProcessingRiskValues = [
+  CreatorImageProcessingRisk.Low,
+  CreatorImageProcessingRisk.Medium,
+  CreatorImageProcessingRisk.High,
+] as const;
+
+export const CreatorImageProcessingCreatedBy = {
+  User: 'user',
+  Agent: 'agent',
+  Recipe: 'recipe',
+} as const;
+
+export type CreatorImageProcessingCreatedBy =
+  typeof CreatorImageProcessingCreatedBy[keyof typeof CreatorImageProcessingCreatedBy];
+
+export const CreatorImageProcessingCreatedByValues = [
+  CreatorImageProcessingCreatedBy.User,
+  CreatorImageProcessingCreatedBy.Agent,
+  CreatorImageProcessingCreatedBy.Recipe,
+] as const;
+
 export const CreatorStudioDefaultProjectId = 'creator-project-default';
 
 export const CreatorStudioAssetListDefaultLimit = 60;
 export const CreatorStudioAssetListMaxLimit = 200;
+
+export const isCreatorFeatureFlag = (value: unknown): value is CreatorFeatureFlag => (
+  typeof value === 'string'
+  && CreatorFeatureFlagValues.includes(value as CreatorFeatureFlag)
+);
+
+export const resolveCreatorFeatureFlag = (
+  flags: unknown,
+  flag: CreatorFeatureFlag,
+): boolean => {
+  if (!flags || typeof flags !== 'object' || Array.isArray(flags)) {
+    return CreatorFeatureFlagDefaults[flag];
+  }
+
+  const value = (flags as Partial<Record<CreatorFeatureFlag, unknown>>)[flag];
+  return typeof value === 'boolean' ? value : CreatorFeatureFlagDefaults[flag];
+};
 
 export const isCreatorProductionAssetKind = (value: unknown): value is CreatorProductionAssetKind => (
   typeof value === 'string'
@@ -257,6 +485,77 @@ export const isCreatorProductionRunStatus = (value: unknown): value is CreatorPr
 export const isCreatorProductionRunSource = (value: unknown): value is CreatorProductionRunSource => (
   typeof value === 'string'
   && CreatorProductionRunSourceValues.includes(value as CreatorProductionRunSource)
+);
+
+export const isCreatorBatchRunKind = (value: unknown): value is CreatorBatchRunKind => (
+  typeof value === 'string'
+  && CreatorBatchRunKindValues.includes(value as CreatorBatchRunKind)
+);
+
+export const isCreatorImageMetadataStatus = (value: unknown): value is CreatorImageMetadataStatus => (
+  typeof value === 'string'
+  && CreatorImageMetadataStatusValues.includes(value as CreatorImageMetadataStatus)
+);
+
+export const isCreatorImageProcessingSourceKind = (
+  value: unknown,
+): value is CreatorImageProcessingSourceKind => (
+  typeof value === 'string'
+  && CreatorImageProcessingSourceKindValues.includes(value as CreatorImageProcessingSourceKind)
+);
+
+export const isCreatorImageProcessingPlanStatus = (
+  value: unknown,
+): value is CreatorImageProcessingPlanStatus => (
+  typeof value === 'string'
+  && CreatorImageProcessingPlanStatusValues.includes(value as CreatorImageProcessingPlanStatus)
+);
+
+export const isCreatorImageProcessingJobStatus = (
+  value: unknown,
+): value is CreatorImageProcessingJobStatus => (
+  typeof value === 'string'
+  && CreatorImageProcessingJobStatusValues.includes(value as CreatorImageProcessingJobStatus)
+);
+
+export const isCreatorImageProcessingTaskStatus = (
+  value: unknown,
+): value is CreatorImageProcessingTaskStatus => (
+  typeof value === 'string'
+  && CreatorImageProcessingTaskStatusValues.includes(value as CreatorImageProcessingTaskStatus)
+);
+
+export const isCreatorImageProcessingOperation = (
+  value: unknown,
+): value is CreatorImageProcessingOperation => (
+  typeof value === 'string'
+  && CreatorImageProcessingOperationValues.includes(value as CreatorImageProcessingOperation)
+);
+
+export const isCreatorImageProcessingOutputFormat = (
+  value: unknown,
+): value is CreatorImageProcessingOutputFormat => (
+  typeof value === 'string'
+  && CreatorImageProcessingOutputFormatValues.includes(value as CreatorImageProcessingOutputFormat)
+);
+
+export const isCreatorImageProcessingPlanSchemaVersion = (
+  value: unknown,
+): value is CreatorImageProcessingPlanSchemaVersion => (
+  typeof value === 'string'
+  && CreatorImageProcessingPlanSchemaVersionValues.includes(value as CreatorImageProcessingPlanSchemaVersion)
+);
+
+export const isCreatorImageProcessingRisk = (value: unknown): value is CreatorImageProcessingRisk => (
+  typeof value === 'string'
+  && CreatorImageProcessingRiskValues.includes(value as CreatorImageProcessingRisk)
+);
+
+export const isCreatorImageProcessingCreatedBy = (
+  value: unknown,
+): value is CreatorImageProcessingCreatedBy => (
+  typeof value === 'string'
+  && CreatorImageProcessingCreatedByValues.includes(value as CreatorImageProcessingCreatedBy)
 );
 
 export const isCreatorAssetAdoptionStatus = (value: unknown): value is CreatorAssetAdoptionStatus => (

@@ -1,7 +1,11 @@
 import type { IpcMain } from 'electron';
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import { CreatorStudioAssetListMaxLimit, CreatorStudioIpcChannel } from '../../../shared/creatorStudio/constants';
+import {
+  CreatorImageMetadataStatus,
+  CreatorStudioAssetListMaxLimit,
+  CreatorStudioIpcChannel,
+} from '../../../shared/creatorStudio/constants';
 import type { CreatorAssetStore } from '../../creatorAssetStore';
 import { registerCreatorStudioIpcHandlers } from './handlers';
 
@@ -25,6 +29,23 @@ const createStore = () => ({
   listAssets: vi.fn(() => ({ assets: [], total: 0, limit: 0, offset: 0 })),
   getAsset: vi.fn(),
   getAssetSource: vi.fn(),
+  inspectImageAsset: vi.fn(() => ({
+    asset: { id: 'asset-1' },
+    imageMetadata: {
+      sourcePath: '/tmp/image.png',
+      width: 20,
+      height: 10,
+      fileSize: 128,
+      format: 'png',
+      mimeType: 'image/png',
+      hasAlpha: true,
+      exifOrientation: null,
+      colorSpace: 'srgb',
+      inspectedAt: 1,
+      status: CreatorImageMetadataStatus.Ready,
+      warningCodes: [],
+    },
+  })),
   setFavorite: vi.fn(),
   updateAsset: vi.fn(),
   createPromptAsset: vi.fn(),
@@ -63,6 +84,7 @@ test('registers creator studio asset IPC handlers with constant channels', () =>
 
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetList, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetGetSource, expect.any(Function));
+  expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ImageInspect, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetSetFavorite, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetUpdate, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetCreatePrompt, expect.any(Function));
@@ -114,6 +136,28 @@ test('rejects asset reveal requests without an asset id', async () => {
   const result = await handler?.(null, { filePath: '/tmp/generated.png' });
 
   expect(result).toEqual({ success: false, error: 'assetId is required' });
+});
+
+test('normalizes creator image inspect requests by asset id', async () => {
+  const store = createStore();
+  registerCreatorStudioIpcHandlers(ipcMain, () => store);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.ImageInspect);
+  expect(handler).toBeDefined();
+  const result = await handler?.(null, { assetId: ' asset-1 ', filePath: '/tmp/ignored.png' });
+
+  expect(result).toMatchObject({ success: true });
+  expect(store.inspectImageAsset).toHaveBeenCalledWith({ assetId: 'asset-1' });
+});
+
+test('rejects uncontrolled creator image inspect file paths', async () => {
+  registerCreatorStudioIpcHandlers(ipcMain, createStore);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.ImageInspect);
+  expect(handler).toBeDefined();
+  const result = await handler?.(null, { filePath: '/tmp/generated.png' });
+
+  expect(result).toEqual({ success: false, error: 'assetId or controlled source is required' });
 });
 
 test('normalizes creator batch run creation before reaching the store', async () => {

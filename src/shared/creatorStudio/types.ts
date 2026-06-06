@@ -11,6 +11,7 @@ import type {
   CreatorProductionRunSource,
   CreatorProductionRunStatus,
 } from './constants';
+import type { CreatorImageMetadata } from './imageProcessingTypes';
 
 export interface CreatorPromptSpecSnapshot {
   schemaVersion?: 'creator.prompt.v1';
@@ -232,6 +233,21 @@ export interface CreatorProductionAssetRecord {
   createdAt: number;
   updatedAt: number;
   sourceSessionAvailable: boolean;
+  imageMetadata: CreatorImageMetadata | null;
+}
+
+export interface CreatorImageInspectInput {
+  assetId?: string;
+  source?: {
+    sessionId?: string;
+    messageId?: string;
+    filePath?: string;
+  };
+}
+
+export interface CreatorImageInspectResult {
+  asset: CreatorProductionAssetRecord;
+  imageMetadata: CreatorImageMetadata;
 }
 
 export interface CreatorProductionAssetSourceLookup {

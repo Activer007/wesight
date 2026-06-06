@@ -1236,6 +1236,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       skillIds?: string[];
       confirmationMode?: 'modal' | 'text';
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      messageMetadata?: Record<string, unknown>;
       agentId?: string;
       runtimeSnapshot?: CoworkStartOptions['runtimeSnapshot'];
     },

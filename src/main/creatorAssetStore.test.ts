@@ -7,6 +7,7 @@ import {
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
+  CreatorImageMetadataStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -190,6 +191,54 @@ describe('CreatorAssetStore', () => {
     };
     expect(run.status).toBe(CreatorProductionRunStatus.Completed);
     expect(run.variant_of_asset_id).toBe('asset-parent');
+  });
+
+  test('projects image metadata from production asset metadata json', () => {
+    db.prepare('INSERT INTO cowork_sessions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('session-1', 'Creative Producer', 'running', 1, 1);
+    store.handleCoworkMessageInserted({
+      sessionId: 'session-1',
+      message: {
+        id: 'message-assistant',
+        type: 'assistant',
+        content: 'Generated image',
+        timestamp: 20,
+        sequence: 2,
+        metadata: {
+          generatedImages: [{
+            path: '/tmp/generated-metadata.png',
+            name: 'generated-metadata.png',
+            mimeType: 'image/png',
+          }],
+        },
+      },
+    });
+    const asset = store.listAssets().assets[0];
+    db.prepare('UPDATE production_assets SET metadata = ? WHERE id = ?').run(JSON.stringify({
+      imageMetadata: {
+        sourcePath: '/tmp/generated-metadata.png',
+        width: 320,
+        height: 180,
+        fileSize: 2048,
+        format: 'png',
+        mimeType: 'image/png',
+        hasAlpha: true,
+        exifOrientation: null,
+        colorSpace: 'srgb',
+        inspectedAt: 123,
+        status: CreatorImageMetadataStatus.Ready,
+        warningCodes: ['large_pixel_count'],
+      },
+    }), asset.id);
+
+    const updated = store.getAsset(asset.id);
+    expect(updated?.imageMetadata).toMatchObject({
+      width: 320,
+      height: 180,
+      fileSize: 2048,
+      status: CreatorImageMetadataStatus.Ready,
+      warningCodes: ['large_pixel_count'],
+    });
   });
 
   test('creates a separate run for each creator draft in one session', () => {

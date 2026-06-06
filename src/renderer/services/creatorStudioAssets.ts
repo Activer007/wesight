@@ -19,6 +19,8 @@ import type {
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
   CreatorCreativeModelCapability,
+  CreatorImageInspectInput,
+  CreatorImageInspectResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -58,6 +60,20 @@ class CreatorStudioAssetService {
       throw new Error(result.error || 'Failed to get creator asset source');
     }
     return result.source ?? null;
+  }
+
+  async inspectImage(input: CreatorImageInspectInput): Promise<CreatorImageInspectResult | null> {
+    const result = await window.electron.creatorStudio.inspectImage(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to inspect image metadata');
+    }
+    if (!result.asset || !result.imageMetadata) {
+      return null;
+    }
+    return {
+      asset: result.asset,
+      imageMetadata: result.imageMetadata,
+    };
   }
 
   async setFavorite(assetId: string, favorite: boolean): Promise<CreatorProductionAssetRecord | null> {

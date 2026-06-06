@@ -11,12 +11,14 @@ import {
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { CoworkAgentEngine } from '@shared/cowork/constants';
 import { CoworkFileActivityStatus } from '@shared/cowork/fileActivity';
+import type { CreatorImageMetadata } from '@shared/creatorStudio/imageProcessingTypes';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
 import { coworkService } from '../../services/cowork';
+import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
 import { setActiveSkillIds } from '../../store/slices/skillSlice';
@@ -460,6 +462,29 @@ const getGeneratedImageName = (image: GeneratedImage): string => {
   if (image.name?.trim()) return image.name.trim();
   const segments = image.path.replace(/\\/g, '/').split('/');
   return segments[segments.length - 1] || 'generated-image.png';
+};
+
+const formatImageFileSize = (bytes: number | null | undefined): string => {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
+    return i18nService.t('creatorImageUnknown');
+  }
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+};
+
+const formatImageMetadataSummary = (metadata: CreatorImageMetadata): string => {
+  const dimensions = metadata.width && metadata.height
+    ? `${metadata.width} x ${metadata.height}`
+    : i18nService.t('creatorImageUnknown');
+  const format = metadata.format?.toUpperCase() || metadata.mimeType || i18nService.t('creatorImageUnknown');
+  return `${dimensions} · ${format} · ${formatImageFileSize(metadata.fileSize)}`;
 };
 
 const getToolResultDisplay = (message: CoworkMessage): string => {
@@ -1239,17 +1264,22 @@ export const UserMessageItem: React.FC<{
 
 const AssistantMessageItem: React.FC<{
   message: CoworkMessage;
+  sessionId?: string;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
   showCopyButton?: boolean;
 }> = ({
   message,
+  sessionId,
   resolveLocalFilePath,
   mapDisplayText,
   showCopyButton = false,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedGeneratedImage | null>(null);
+  const [expandedImageMetadata, setExpandedImageMetadata] = useState<CreatorImageMetadata | null>(null);
+  const [isInspectingExpandedImage, setIsInspectingExpandedImage] = useState(false);
+  const [expandedImageMetadataError, setExpandedImageMetadataError] = useState<string | null>(null);
   const [isDownloadingImage, setIsDownloadingImage] = useState(false);
   const [imageDownloadStatus, setImageDownloadStatus] = useState<ImageDownloadStatus | null>(null);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
@@ -1263,8 +1293,50 @@ const AssistantMessageItem: React.FC<{
   const closeGeneratedImage = useCallback(() => {
     if (isDownloadingImage) return;
     setExpandedImage(null);
+    setExpandedImageMetadata(null);
+    setExpandedImageMetadataError(null);
     setImageDownloadStatus(null);
   }, [isDownloadingImage]);
+
+  useEffect(() => {
+    if (!expandedImage || !sessionId) {
+      setExpandedImageMetadata(null);
+      setExpandedImageMetadataError(null);
+      setIsInspectingExpandedImage(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsInspectingExpandedImage(true);
+    setExpandedImageMetadata(null);
+    setExpandedImageMetadataError(null);
+    void creatorStudioAssetService.inspectImage({
+      source: {
+        sessionId,
+        messageId: message.id,
+        filePath: expandedImage.image.path,
+      },
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setExpandedImageMetadata(result?.imageMetadata ?? null);
+        if (!result?.imageMetadata) {
+          setExpandedImageMetadataError(i18nService.t('creatorImageMetadataUnavailable'));
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setExpandedImageMetadataError(error instanceof Error ? error.message : i18nService.t('creatorImageMetadataInspectFailed'));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setIsInspectingExpandedImage(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedImage, message.id, sessionId]);
 
   const handleDownloadGeneratedImage = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -1354,6 +1426,13 @@ const AssistantMessageItem: React.FC<{
               alt={expandedImage.name}
               className="max-h-[82vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
             />
+            <div className="rounded-full bg-black/60 px-3 py-1 text-xs text-white shadow">
+              {isInspectingExpandedImage
+                ? i18nService.t('creatorImageMetadataLoading')
+                : expandedImageMetadata
+                  ? formatImageMetadataSummary(expandedImageMetadata)
+                  : expandedImageMetadataError || i18nService.t('creatorImageMetadataUnavailable')}
+            </div>
             <div className="flex flex-col items-center gap-2">
               <button
                 type="button"
@@ -1594,6 +1673,7 @@ const TeamTurnCard: React.FC<{
 
 export const AssistantTurnBlock: React.FC<{
   turn: ConversationTurn;
+  sessionId?: string;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
   showTypingIndicator?: boolean;
@@ -1601,6 +1681,7 @@ export const AssistantTurnBlock: React.FC<{
   onOpenFileChange?: (fileChangeId: string) => void;
 }> = ({
   turn,
+  sessionId,
   resolveLocalFilePath,
   mapDisplayText,
   showTypingIndicator = false,
@@ -1730,6 +1811,7 @@ export const AssistantTurnBlock: React.FC<{
                   <AssistantMessageItem
                     key={item.message.id}
                     message={item.message}
+                    sessionId={sessionId}
                     resolveLocalFilePath={resolveLocalFilePath}
                     mapDisplayText={mapDisplayText}
                     showCopyButton={showCopyButtons && !hasToolGroupAfter}
@@ -2929,6 +3011,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               userMessage: null,
               assistantItems: [],
             }}
+            sessionId={currentSession.id}
             resolveLocalFilePath={resolveLocalFilePath}
             showTypingIndicator
             showCopyButtons={!isStreaming}
@@ -2966,6 +3049,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             <div data-export-role="assistant-block" {...(asstRailIdx >= 0 ? { 'data-rail-index': asstRailIdx } : undefined)}>
               <AssistantTurnBlock
                 turn={turn}
+                sessionId={currentSession.id}
                 resolveLocalFilePath={resolveLocalFilePath}
                 mapDisplayText={mapDisplayText}
                 showTypingIndicator={showTypingIndicator}
