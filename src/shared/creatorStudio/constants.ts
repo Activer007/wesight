@@ -45,6 +45,7 @@ export const CreatorStudioIpcChannel = {
   ImageTaskRetry: 'creatorStudio:imageTask:retry',
   ImageTaskCancel: 'creatorStudio:imageTask:cancel',
   ImageOutputReveal: 'creatorStudio:imageOutput:reveal',
+  ImageReportOpen: 'creatorStudio:imageReport:open',
 } as const;
 
 export type CreatorStudioIpcChannel =
@@ -78,6 +79,7 @@ export const CreatorProductionAssetKind = {
   Image: 'image',
   Prompt: 'prompt',
   Case: 'case',
+  Report: 'report',
 } as const;
 
 export type CreatorProductionAssetKind =
@@ -87,6 +89,7 @@ export const CreatorProductionAssetKindValues = [
   CreatorProductionAssetKind.Image,
   CreatorProductionAssetKind.Prompt,
   CreatorProductionAssetKind.Case,
+  CreatorProductionAssetKind.Report,
 ] as const;
 
 export const CreatorProductionAssetStatus = {
@@ -107,6 +110,7 @@ export const CreatorProductionAssetSource = {
   CreatorPrompt: 'creator_prompt',
   CreatorCase: 'creator_case',
   LocalImageProcessing: 'local_image_processing',
+  ImageProcessingReport: 'image_processing_report',
   RecipePostProcessing: 'recipe_post_processing',
 } as const;
 
@@ -118,6 +122,7 @@ export const CreatorProductionAssetSourceValues = [
   CreatorProductionAssetSource.CreatorPrompt,
   CreatorProductionAssetSource.CreatorCase,
   CreatorProductionAssetSource.LocalImageProcessing,
+  CreatorProductionAssetSource.ImageProcessingReport,
   CreatorProductionAssetSource.RecipePostProcessing,
 ] as const;
 

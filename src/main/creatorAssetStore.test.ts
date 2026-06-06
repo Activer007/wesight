@@ -1154,7 +1154,10 @@ describe('CreatorAssetStore', () => {
       inputTotalSize: 10,
       outputTotalSize: 6,
       savedSize: 4,
+      savedPercentage: 40,
+      runtimeMetrics: null,
       reportAssetId: null,
+      reportPath: null,
       createdAt: 2,
       startedAt: 2,
       completedAt: 3,
@@ -1293,6 +1296,10 @@ describe('CreatorAssetStore', () => {
     expect(result.job.status).toBe(CreatorImageProcessingJobStatus.PartialFailed);
     expect(result.job.successCount).toBe(2);
     expect(result.job.failedCount).toBe(1);
+    expect(result.job.runtimeMetrics?.backend).toBe('sharp');
+    expect(result.job.runtimeMetrics?.imageCount).toBe(3);
+    expect(result.job.savedPercentage).toBeGreaterThanOrEqual(0);
+    expect(result.job.reportAssetId).toBeTruthy();
     expect(result.tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Completed)).toHaveLength(2);
     expect(result.tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Failed)).toHaveLength(1);
     expect(result.outputAssetIds).toHaveLength(2);
@@ -1306,6 +1313,19 @@ describe('CreatorAssetStore', () => {
     });
     expect(derivedAssets.total).toBe(2);
     expect(derivedAssets.assets[0].variantOfAssetId).toBeTruthy();
+    const reportAsset = store.getAsset(result.job.reportAssetId!);
+    expect(reportAsset?.kind).toBe(CreatorProductionAssetKind.Report);
+    expect(reportAsset?.source).toBe(CreatorProductionAssetSource.ImageProcessingReport);
+    expect(reportAsset?.variantOfAssetId).toBeTruthy();
+    expect(fs.existsSync(reportAsset!.filePath)).toBe(true);
+    const reportMarkdown = fs.readFileSync(reportAsset!.filePath, 'utf8');
+    expect(reportMarkdown).toContain('Success / failed: 2 / 1');
+    expect(reportMarkdown).toContain('Output directory:');
+    expect(reportMarkdown).not.toMatch(/base64,/i);
+    const reportRow = db.prepare('SELECT metadata FROM production_assets WHERE id = ?').get(reportAsset!.id) as { metadata: string };
+    const reportMetadata = JSON.parse(reportRow.metadata) as { imageProcessingReport?: { metrics?: { backend?: string }; failureReasons?: unknown[] } };
+    expect(reportMetadata.imageProcessingReport?.metrics?.backend).toBe('sharp');
+    expect(reportMetadata.imageProcessingReport?.failureReasons).toHaveLength(1);
 
     const failedTask = result.tasks.find((task) => task.status === CreatorImageProcessingTaskStatus.Failed);
     expect(failedTask).toBeTruthy();
@@ -1340,8 +1360,8 @@ describe('CreatorAssetStore', () => {
     db.prepare(`
       INSERT INTO creator_image_processing_jobs (
         id, project_id, plan_id, status, total_count, success_count, failed_count,
-        input_total_size, output_total_size, saved_size, report_asset_id, created_at, started_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        input_total_size, output_total_size, saved_size, report_asset_id, metadata_json, created_at, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       'job-cancel',
       workspace.currentProjectId,
@@ -1354,6 +1374,7 @@ describe('CreatorAssetStore', () => {
       0,
       0,
       null,
+      JSON.stringify({}),
       now,
       now,
       null,
@@ -1387,6 +1408,6 @@ describe('CreatorAssetStore', () => {
     const result = store.cancelImageProcessingTask('task-cancel');
 
     expect(result?.tasks[0].status).toBe(CreatorImageProcessingTaskStatus.Canceled);
-    expect(result?.job.status).toBe(CreatorImageProcessingJobStatus.Completed);
+    expect(result?.job.status).toBe(CreatorImageProcessingJobStatus.Canceled);
   });
 });

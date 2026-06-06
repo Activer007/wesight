@@ -13,6 +13,7 @@ import {
   CreatorImageMetadataStatus,
   CreatorImageProcessingJobStatus,
   CreatorImageProcessingPlanStatus,
+  CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
@@ -34,6 +35,8 @@ import type {
   CreatorImageMetadata,
   CreatorImageProcessingJob,
   CreatorImageProcessingPlan,
+  CreatorImageProcessingReport,
+  CreatorImageProcessingRuntimeMetrics,
   CreatorImageProcessingTask,
   CreatorImageTaskCancelResult,
   CreatorImageTaskRetryResult,
@@ -97,6 +100,7 @@ import type {
 import type { CoworkMessage, CoworkMessageMetadata } from './coworkStore';
 import { inspectImageMetadata } from './libs/imageProcessing/imageMetadataInspector';
 import { createCreatorAssetsImageProcessingPlan } from './libs/imageProcessing/imageProcessingPlanner';
+import { createImageProcessingReport } from './libs/imageProcessing/imageProcessingReport';
 import { executeImageProcessingTask } from './libs/imageProcessing/imageProcessingService';
 
 interface ProductionAssetRow {
@@ -181,6 +185,7 @@ interface ImageProcessingJobRow {
   output_total_size: number;
   saved_size: number;
   report_asset_id: string | null;
+  metadata_json: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
@@ -442,6 +447,27 @@ const parseImageProcessingMetadata = (metadata: Record<string, unknown>): Creato
     plan,
     job,
     task,
+  };
+};
+
+const parseImageProcessingRuntimeMetrics = (
+  value: unknown,
+): CreatorImageProcessingRuntimeMetrics | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Partial<CreatorImageProcessingRuntimeMetrics>;
+  if (record.backend !== 'sharp') return null;
+  return {
+    backend: 'sharp',
+    source: typeof record.source === 'string' ? record.source as CreatorImageProcessingRuntimeMetrics['source'] : CreatorImageProcessingSourceKind.CreatorAsset,
+    preset: typeof record.preset === 'string' ? record.preset as CreatorImageProcessingRuntimeMetrics['preset'] : null,
+    durationMs: typeof record.durationMs === 'number' ? record.durationMs : 0,
+    imageCount: typeof record.imageCount === 'number' ? record.imageCount : 0,
+    successCount: typeof record.successCount === 'number' ? record.successCount : 0,
+    failedCount: typeof record.failedCount === 'number' ? record.failedCount : 0,
+    inputSize: typeof record.inputSize === 'number' ? record.inputSize : 0,
+    outputSize: typeof record.outputSize === 'number' ? record.outputSize : 0,
+    savedSize: typeof record.savedSize === 'number' ? record.savedSize : 0,
+    savedPercentage: typeof record.savedPercentage === 'number' ? record.savedPercentage : 0,
   };
 };
 
@@ -1424,6 +1450,28 @@ export class CreatorAssetStore {
     return this.getAsset(id)!;
   }
 
+  async executeImageProcessingPlan(plan: CreatorImageProcessingPlan): Promise<CreatorImageBatchCreateResult> {
+    if (plan.inputItems.length === 0) {
+      throw new Error('At least one image input is required');
+    }
+    const job = this.createImageProcessingJobShell(plan);
+    const tasks = plan.inputItems.map((_item, index) => this.createImageProcessingTaskShell(job, plan, index));
+    this.insertImageProcessingPlan(plan);
+    this.insertImageProcessingJob(job);
+    for (const task of tasks) {
+      this.insertImageProcessingTask(task);
+    }
+    const executed = await this.executeImageProcessingJobQueue(plan, job, tasks, 1);
+    return {
+      plan,
+      job: executed.job,
+      tasks: executed.tasks,
+      outputAssetIds: executed.tasks
+        .map((task) => task.outputAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId)),
+    };
+  }
+
   async createImageProcessingBatchJob(input: CreatorImageBatchCreateInput): Promise<CreatorImageBatchCreateResult> {
     const projectId = input.projectId.trim() || CreatorStudioDefaultProjectId;
     const assetIds = [...new Set(input.assetIds.map((assetId) => assetId.trim()).filter(Boolean))];
@@ -1599,7 +1647,10 @@ export class CreatorAssetStore {
       inputTotalSize: plan.inputItems.reduce((total, item) => total + (item.metadata?.fileSize ?? 0), 0),
       outputTotalSize: 0,
       savedSize: 0,
+      savedPercentage: 0,
+      runtimeMetrics: null,
       reportAssetId: null,
+      reportPath: null,
       createdAt: now,
       startedAt: null,
       completedAt: null,
@@ -1661,8 +1712,8 @@ export class CreatorAssetStore {
       INSERT OR REPLACE INTO creator_image_processing_jobs (
         id, project_id, plan_id, status, total_count, success_count, failed_count,
         input_total_size, output_total_size, saved_size, report_asset_id,
-        created_at, started_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        metadata_json, created_at, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       job.id,
       job.projectId,
@@ -1675,6 +1726,7 @@ export class CreatorAssetStore {
       job.outputTotalSize,
       job.savedSize,
       job.reportAssetId,
+      JSON.stringify(this.createImageProcessingJobMetadata(job)),
       job.createdAt,
       job.startedAt,
       job.completedAt,
@@ -1734,7 +1786,7 @@ export class CreatorAssetStore {
     this.db.prepare(`
       UPDATE creator_image_processing_jobs
       SET status = ?, success_count = ?, failed_count = ?, output_total_size = ?,
-        saved_size = ?, started_at = ?, completed_at = ?
+        saved_size = ?, report_asset_id = ?, metadata_json = ?, started_at = ?, completed_at = ?
       WHERE id = ?
     `).run(
       job.status,
@@ -1742,10 +1794,186 @@ export class CreatorAssetStore {
       job.failedCount,
       job.outputTotalSize,
       job.savedSize,
+      job.reportAssetId,
+      JSON.stringify(this.createImageProcessingJobMetadata(job)),
       job.startedAt,
       job.completedAt,
       job.id,
     );
+  }
+
+  private createImageProcessingJobMetadata(job: CreatorImageProcessingJob): Record<string, unknown> {
+    return {
+      savedPercentage: job.savedPercentage,
+      runtimeMetrics: job.runtimeMetrics,
+      reportPath: job.reportPath,
+    };
+  }
+
+  private writeImageProcessingReportForJob(
+    job: CreatorImageProcessingJob,
+    tasks: CreatorImageProcessingTask[],
+  ): void {
+    const plan = this.getImageProcessingPlan(job.planId);
+    if (!plan) return;
+    if (!plan.output || !Array.isArray(plan.outputItems)) return;
+    const reportDirectory = this.resolveImageProcessingReportDirectory(plan, tasks);
+    fs.mkdirSync(reportDirectory, { recursive: true });
+    const reportPath = path.join(reportDirectory, `${job.id}-report.md`);
+    const report = createImageProcessingReport({
+      plan,
+      job,
+      tasks,
+      reportPath,
+    });
+    if (/base64,/i.test(report.markdown)) {
+      console.warn('[CreatorImageProcessing] skipped report because sanitized content still contains base64');
+      return;
+    }
+    fs.writeFileSync(reportPath, report.markdown, 'utf8');
+    job.runtimeMetrics = report.metrics;
+    job.savedPercentage = report.metrics.savedPercentage;
+    job.reportPath = reportPath;
+    const reportAsset = this.createImageProcessingReportAsset(report, plan, job, tasks);
+    job.reportAssetId = reportAsset.id;
+  }
+
+  private resolveImageProcessingReportDirectory(
+    plan: CreatorImageProcessingPlan,
+    tasks: CreatorImageProcessingTask[],
+  ): string {
+    const outputDirectory = plan.outputItems.find((item) => item.outputDirectory)?.outputDirectory;
+    if (outputDirectory) return outputDirectory;
+    const outputPath = tasks.find((task) => task.outputPath)?.outputPath;
+    if (outputPath) return path.dirname(outputPath);
+    return path.resolve(process.cwd(), '.wesight/creator-outputs/image-processing', plan.id);
+  }
+
+  private createImageProcessingReportAsset(
+    report: CreatorImageProcessingReport,
+    plan: CreatorImageProcessingPlan,
+    job: CreatorImageProcessingJob,
+    tasks: CreatorImageProcessingTask[],
+  ): CreatorProductionAssetRecord {
+    if (job.reportAssetId) {
+      const existing = this.getAsset(job.reportAssetId);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    const firstSourceAsset = plan.inputItems
+      .map((item) => item.sourceAssetId ? this.getAsset(item.sourceAssetId) : null)
+      .find((asset): asset is CreatorProductionAssetRecord => Boolean(asset));
+    const now = Date.now();
+    const id = uuidv4();
+    const outputAssetIds = tasks
+      .map((task) => task.outputAssetId)
+      .filter((assetId): assetId is string => Boolean(assetId));
+    const sourceAssetIds = plan.inputItems
+      .map((item) => item.sourceAssetId)
+      .filter((assetId): assetId is string => Boolean(assetId));
+    const metadata = {
+      imageProcessingReport: {
+        schemaVersion: 'creator.imageProcessingReport.v1',
+        jobId: job.id,
+        planId: plan.id,
+        presetId: plan.presetId,
+        metrics: report.metrics,
+        failureReasons: report.failureReasons,
+        sourceAssetIds,
+        outputAssetIds,
+      },
+      processing: {
+        sourceAssetId: firstSourceAsset?.id ?? sourceAssetIds[0] ?? '',
+        presetId: plan.presetId,
+        operations: plan.operations,
+        plan,
+        job,
+        tasks,
+        report: {
+          path: report.reportPath,
+          title: report.title,
+        },
+      },
+    };
+
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id,
+        project_id,
+        kind,
+        title,
+        status,
+        source,
+        run_id,
+        source_run_id,
+        variant_of_asset_id,
+        session_id,
+        source_session_id,
+        message_id,
+        source_message_id,
+        template_id,
+        case_ids,
+        case_ids_json,
+        prompt_spec,
+        prompt_spec_json,
+        prompt_text,
+        parent_prompt_asset_id,
+        prompt_version_id,
+        recipe_id,
+        selected_direction_id,
+        file_path,
+        file_name,
+        mime_type,
+        favorite,
+        adoption_status,
+        tags_json,
+        license_note,
+        usage_note,
+        metadata,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      job.projectId,
+      CreatorProductionAssetKind.Report,
+      report.title,
+      CreatorProductionAssetStatus.Ready,
+      CreatorProductionAssetSource.ImageProcessingReport,
+      firstSourceAsset?.runId ?? null,
+      firstSourceAsset?.runId ?? null,
+      firstSourceAsset?.id ?? null,
+      null,
+      firstSourceAsset?.sessionId ?? null,
+      null,
+      firstSourceAsset?.messageId ?? null,
+      firstSourceAsset?.templateId ?? null,
+      JSON.stringify(firstSourceAsset?.caseIds ?? []),
+      JSON.stringify(firstSourceAsset?.caseIds ?? []),
+      firstSourceAsset?.promptSpec ? JSON.stringify(firstSourceAsset.promptSpec) : null,
+      firstSourceAsset?.promptSpec ? JSON.stringify(firstSourceAsset.promptSpec) : null,
+      firstSourceAsset?.promptText ?? '',
+      firstSourceAsset?.parentPromptAssetId ?? null,
+      firstSourceAsset?.promptVersionId ?? null,
+      firstSourceAsset?.recipeId ?? null,
+      firstSourceAsset?.selectedDirectionId ?? null,
+      report.reportPath,
+      path.basename(report.reportPath),
+      'text/markdown',
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(['image-processing-report']),
+      firstSourceAsset?.licenseNote ?? null,
+      firstSourceAsset?.usageNote ?? null,
+      JSON.stringify(metadata),
+      now,
+      now,
+    );
+
+    return this.getAsset(id)!;
   }
 
   private async executeImageProcessingJobQueue(
@@ -1812,8 +2040,12 @@ export class CreatorAssetStore {
     job.failedCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Failed).length;
     job.outputTotalSize = tasks.reduce((total, task) => total + (task.outputSize ?? 0), 0);
     job.savedSize = job.inputTotalSize - job.outputTotalSize;
+    job.savedPercentage = job.inputTotalSize > 0
+      ? Math.round((job.savedSize / job.inputTotalSize) * 10000) / 100
+      : 0;
     const pendingCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Pending).length;
     const runningCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Running).length;
+    const canceledCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Canceled).length;
     const terminalCount = tasks.filter((task) => (
       task.status === CreatorImageProcessingTaskStatus.Completed
       || task.status === CreatorImageProcessingTaskStatus.Failed
@@ -1825,11 +2057,14 @@ export class CreatorAssetStore {
       job.completedAt = null;
     } else if (terminalCount === tasks.length) {
       job.completedAt = Date.now();
-      job.status = job.failedCount > 0
+      job.status = canceledCount === tasks.length
+        ? CreatorImageProcessingJobStatus.Canceled
+        : job.failedCount > 0
         ? job.successCount > 0
           ? CreatorImageProcessingJobStatus.PartialFailed
           : CreatorImageProcessingJobStatus.Failed
         : CreatorImageProcessingJobStatus.Completed;
+      this.writeImageProcessingReportForJob(job, tasks);
     }
     this.updateImageProcessingJob(job);
     return job;
@@ -3378,6 +3613,7 @@ export class CreatorAssetStore {
   }
 
   private mapImageProcessingJobRow(row: ImageProcessingJobRow): CreatorImageProcessingJob {
+    const metadata = parseJsonObject(row.metadata_json);
     return {
       id: row.id,
       projectId: row.project_id,
@@ -3389,7 +3625,14 @@ export class CreatorAssetStore {
       inputTotalSize: row.input_total_size,
       outputTotalSize: row.output_total_size,
       savedSize: row.saved_size,
+      savedPercentage: typeof metadata.savedPercentage === 'number'
+        ? metadata.savedPercentage
+        : row.input_total_size > 0
+          ? Math.round((row.saved_size / row.input_total_size) * 10000) / 100
+          : 0,
+      runtimeMetrics: parseImageProcessingRuntimeMetrics(metadata.runtimeMetrics),
       reportAssetId: row.report_asset_id,
+      reportPath: typeof metadata.reportPath === 'string' ? metadata.reportPath : null,
       createdAt: row.created_at,
       startedAt: row.started_at,
       completedAt: row.completed_at,

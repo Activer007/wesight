@@ -1114,6 +1114,14 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     }
   };
 
+  const openImageProcessingReport = async (jobId: string) => {
+    try {
+      await creatorStudioAssetService.openImageReport({ jobId });
+    } catch (error) {
+      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingReportOpenFailed'));
+    }
+  };
+
   const skipBatchTask = async (taskId: string) => {
     try {
       const batchRun = await creatorStudioAssetService.skipBatchTask(taskId);
@@ -1496,6 +1504,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                 onRevealOutput={(input) => void creatorStudioAssetService.revealImageOutput(input).catch((error) => {
                   dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingRevealFailed'));
                 })}
+                onOpenReport={(jobId) => void openImageProcessingReport(jobId)}
                 onRetryTask={(taskId) => void retryImageProcessingTask(taskId)}
                 onCancelTask={(taskId) => void cancelImageProcessingTask(taskId)}
               />

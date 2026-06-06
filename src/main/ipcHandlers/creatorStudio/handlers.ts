@@ -25,6 +25,7 @@ import type {
   CreatorBoardCardUpdateInput,
   CreatorBrandKitUpdateInput,
   CreatorImageInspectInput,
+  CreatorProductionAssetRecord,
   CreatorPromptAssetCreateInput,
   CreatorRecipeCreateInput,
 } from '../../../shared/creatorStudio/types';
@@ -314,24 +315,15 @@ export const registerCreatorStudioIpcHandlers = (
       if (!sourceAssetId) {
         return { success: false, error: 'source asset is required' };
       }
-      const result = await imageProcessingService.executePlan(plan, {
-        createAsset: (assetInput) => getCreatorAssetStore().createImageProcessingAsset({
-          sourceAssetId,
-          outputPath: assetInput.outputPath,
-          fileName: assetInput.fileName,
-          mimeType: assetInput.mimeType,
-          imageMetadata: assetInput.imageMetadata,
-          plan: assetInput.plan,
-          job: assetInput.job,
-          task: assetInput.task,
-        }),
-      });
+      const result = await getCreatorAssetStore().executeImageProcessingPlan(plan);
       return {
         success: true,
         job: result.job,
         tasks: result.tasks,
-        outputAssetIds: result.outputAssets.map((asset) => asset.id),
-        outputAssets: result.outputAssets,
+        outputAssetIds: result.outputAssetIds,
+        outputAssets: result.outputAssetIds
+          .map((assetId) => getCreatorAssetStore().getAsset(assetId))
+          .filter((asset): asset is CreatorProductionAssetRecord => Boolean(asset)),
       };
     } catch (error) {
       return {
@@ -436,6 +428,26 @@ export const registerCreatorStudioIpcHandlers = (
       return { success: false, error: 'Output file not found' };
     }
     shell.showItemInFolder(storedTarget);
+    return { success: true };
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageReportOpen, async (_event, input: unknown) => {
+    const jobId = toTrimmedString(normalizeObject(input)?.jobId) ?? toTrimmedString(input);
+    if (!jobId) {
+      return { success: false, error: 'jobId is required' };
+    }
+    const record = getCreatorAssetStore().getImageProcessingJob(jobId);
+    if (!record?.job.reportAssetId) {
+      return { success: false, error: 'Image processing report not found' };
+    }
+    const asset = getCreatorAssetStore().getAsset(record.job.reportAssetId);
+    if (!asset || asset.kind !== CreatorProductionAssetKind.Report || !fs.existsSync(asset.filePath)) {
+      return { success: false, error: 'Image processing report file not found' };
+    }
+    const errorMessage = await shell.openPath(asset.filePath);
+    if (errorMessage) {
+      return { success: false, error: errorMessage };
+    }
     return { success: true };
   });
 

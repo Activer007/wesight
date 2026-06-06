@@ -1,5 +1,6 @@
 import {
   ArrowPathIcon,
+  DocumentTextIcon,
   FolderOpenIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -52,12 +53,14 @@ export const CreatorImageProcessingBatchPanel: React.FC<{
   jobs: CreatorImageJobListResult['jobs'];
   onRefresh: () => void;
   onRevealOutput: (input: CreatorImageOutputRevealInput) => void;
+  onOpenReport: (jobId: string) => void;
   onRetryTask: (taskId: string) => void;
   onCancelTask: (taskId: string) => void;
 }> = ({
   jobs,
   onRefresh,
   onRevealOutput,
+  onOpenReport,
   onRetryTask,
   onCancelTask,
 }) => (
@@ -89,21 +92,41 @@ export const CreatorImageProcessingBatchPanel: React.FC<{
               <h3 className="text-sm font-semibold">{job.id}</h3>
               <p className="mt-1 text-xs text-muted">{getImageProcessingJobSummary(job)}</p>
             </div>
-            <button
-              type="button"
-              onClick={() => onRevealOutput({ jobId: job.id })}
-              className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-            >
-              <FolderOpenIcon className="h-4 w-4" />
-              {i18nService.t('creatorImageProcessingOpenOutputDirectory')}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {job.reportAssetId && (
+                <button
+                  type="button"
+                  onClick={() => onOpenReport(job.id)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                >
+                  <DocumentTextIcon className="h-4 w-4" />
+                  {i18nService.t('creatorImageProcessingViewReport')}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onRevealOutput({ jobId: job.id })}
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+              >
+                <FolderOpenIcon className="h-4 w-4" />
+                {i18nService.t('creatorImageProcessingOpenOutputDirectory')}
+              </button>
+            </div>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-4">
             <SummaryCell label={i18nService.t('creatorImageBatchTotal')} value={String(job.totalCount)} />
             <SummaryCell label={i18nService.t('creatorImageBatchSuccessFailed')} value={`${job.successCount}/${job.failedCount}`} />
             <SummaryCell label={i18nService.t('creatorImageProcessingInputSize')} value={formatImageProcessingBytes(job.inputTotalSize)} />
-            <SummaryCell label={i18nService.t('creatorImageProcessingSavedSize')} value={formatImageProcessingBytes(job.savedSize)} />
+            <SummaryCell
+              label={i18nService.t('creatorImageProcessingSavedSize')}
+              value={`${formatImageProcessingBytes(job.savedSize)} · ${job.savedPercentage.toFixed(2)}%`}
+            />
           </div>
+          {getFailureSummary(tasks) && (
+            <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-500">
+              {getFailureSummary(tasks)}
+            </p>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] border-collapse text-left text-xs">
@@ -169,6 +192,15 @@ const TaskRow: React.FC<{
     </Td>
   </tr>
 );
+
+const getFailureSummary = (tasks: CreatorImageProcessingTask[]): string | null => {
+  const failedTasks = tasks.filter((task) => task.errorCode || task.errorMessage);
+  if (failedTasks.length === 0) return null;
+  const first = failedTasks[0];
+  return i18nService.t('creatorImageProcessingFailureSummary')
+    .replace('{count}', String(failedTasks.length))
+    .replace('{reason}', first.errorMessage || first.errorCode || 'unknown');
+};
 
 const SummaryCell: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   <div className="rounded-lg border border-border bg-background p-3">

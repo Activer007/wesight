@@ -107,10 +107,43 @@ export interface CreatorImageProcessingJob {
   inputTotalSize: number;
   outputTotalSize: number;
   savedSize: number;
+  savedPercentage: number;
+  runtimeMetrics: CreatorImageProcessingRuntimeMetrics | null;
   reportAssetId: string | null;
+  reportPath: string | null;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
+}
+
+export interface CreatorImageProcessingRuntimeMetrics {
+  backend: 'sharp';
+  source: CreatorImageProcessingSource['sourceKind'];
+  preset: CreatorImageProcessingPresetId | null;
+  durationMs: number;
+  imageCount: number;
+  successCount: number;
+  failedCount: number;
+  inputSize: number;
+  outputSize: number;
+  savedSize: number;
+  savedPercentage: number;
+}
+
+export interface CreatorImageProcessingReport {
+  jobId: string;
+  planId: string;
+  projectId: string;
+  title: string;
+  markdown: string;
+  reportPath: string;
+  metrics: CreatorImageProcessingRuntimeMetrics;
+  failureReasons: Array<{
+    code: string;
+    message: string;
+    count: number;
+  }>;
+  createdAt: number;
 }
 
 export interface CreatorImagePlanCreateInput {
@@ -218,6 +251,10 @@ export interface CreatorImageOutputRevealInput {
   jobId?: string;
   taskId?: string;
   outputPath?: string;
+}
+
+export interface CreatorImageReportOpenInput {
+  jobId: string;
 }
 
 export interface CreatorImageProcessingTask {

@@ -128,7 +128,10 @@ export const executeImageProcessingTask = async (
           inputTotalSize: 0,
           outputTotalSize: 0,
           savedSize: 0,
+          savedPercentage: 0,
+          runtimeMetrics: null,
           reportAssetId: null,
+          reportPath: null,
           createdAt: task.createdAt,
           startedAt: taskStartedAt,
           completedAt: null,
@@ -318,7 +321,10 @@ export const createImageProcessingService = (): ImageProcessingService => {
       ),
       outputTotalSize: 0,
       savedSize: 0,
+      savedPercentage: 0,
+      runtimeMetrics: null,
       reportAssetId: null,
+      reportPath: null,
       createdAt: Date.now(),
       startedAt: null,
       completedAt: null,
@@ -403,6 +409,9 @@ export const createImageProcessingService = (): ImageProcessingService => {
 
       job.completedAt = Date.now();
       job.savedSize = job.inputTotalSize - job.outputTotalSize;
+      job.savedPercentage = job.inputTotalSize > 0
+        ? Math.round((job.savedSize / job.inputTotalSize) * 10000) / 100
+        : 0;
       job.status = job.failedCount > 0
         ? job.successCount > 0
           ? CreatorImageProcessingJobStatus.PartialFailed

@@ -29,6 +29,7 @@ import type {
   CreatorImagePlanCreateResult,
   CreatorImagePlanGetInput,
   CreatorImagePlanGetResult,
+  CreatorImageReportOpenInput,
   CreatorImageTaskCancelInput,
   CreatorImageTaskCancelResult,
   CreatorImageTaskRetryInput,
@@ -897,6 +898,7 @@ interface IElectronAPI {
       error?: string;
     }>;
     revealImageOutput: (input: CreatorImageOutputRevealInput) => Promise<{ success: boolean; error?: string }>;
+    openImageReport: (input: CreatorImageReportOpenInput) => Promise<{ success: boolean; error?: string }>;
     setAssetFavorite: (input: { assetId: string; favorite: boolean }) => Promise<{
       success: boolean;
       asset?: CreatorProductionAssetRecord;

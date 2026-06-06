@@ -12,6 +12,7 @@ import type {
   CreatorImagePlanCreateResult,
   CreatorImagePlanGetInput,
   CreatorImagePlanGetResult,
+  CreatorImageReportOpenInput,
   CreatorImageTaskCancelInput,
   CreatorImageTaskCancelResult,
   CreatorImageTaskRetryInput,
@@ -186,6 +187,13 @@ class CreatorStudioAssetService {
     const result = await window.electron.creatorStudio.revealImageOutput(input);
     if (!result.success) {
       throw new Error(result.error || 'Failed to reveal image output');
+    }
+  }
+
+  async openImageReport(input: CreatorImageReportOpenInput): Promise<void> {
+    const result = await window.electron.creatorStudio.openImageReport(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to open image processing report');
     }
   }
 

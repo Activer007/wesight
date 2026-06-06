@@ -1,5 +1,16 @@
 import type Database from 'better-sqlite3';
 
+const addColumnIfMissing = (
+  db: Database.Database,
+  tableName: string,
+  columnName: string,
+  definition: string,
+): void => {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+};
+
 export const ensureCreatorImageProcessingSchema = (db: Database.Database): void => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS creator_image_processing_plans (
@@ -33,6 +44,7 @@ export const ensureCreatorImageProcessingSchema = (db: Database.Database): void 
       output_total_size INTEGER NOT NULL DEFAULT 0,
       saved_size INTEGER NOT NULL DEFAULT 0,
       report_asset_id TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
       created_at INTEGER NOT NULL,
       started_at INTEGER,
       completed_at INTEGER,
@@ -87,4 +99,11 @@ export const ensureCreatorImageProcessingSchema = (db: Database.Database): void 
     CREATE INDEX IF NOT EXISTS idx_creator_image_processing_tasks_source_asset
     ON creator_image_processing_tasks(source_asset_id);
   `);
+
+  addColumnIfMissing(
+    db,
+    'creator_image_processing_jobs',
+    'metadata_json',
+    "TEXT NOT NULL DEFAULT '{}'",
+  );
 };
