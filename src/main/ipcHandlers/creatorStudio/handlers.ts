@@ -25,6 +25,7 @@ import type {
   CreatorBoardCardCreateInput,
   CreatorBoardCardUpdateInput,
   CreatorBrandKitUpdateInput,
+  CreatorCaseImageAssetCreateInput,
   CreatorImageInspectInput,
   CreatorProductionAssetRecord,
   CreatorPromptAssetCreateInput,
@@ -65,6 +66,10 @@ const normalizeStringArray = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) return undefined;
   return value.filter((item): item is string => typeof item === 'string');
 };
+
+const normalizeOptionalNumber = (value: unknown): number | null => (
+  typeof value === 'number' && Number.isFinite(value) ? value : null
+);
 
 const normalizeObject = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -630,6 +635,45 @@ export const registerCreatorStudioIpcHandlers = (
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to save creator case asset',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.AssetCreateCaseImage, async (_event, input: unknown) => {
+    try {
+      const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+      const projectId = toTrimmedString(record.projectId);
+      const caseId = toTrimmedString(record.caseId);
+      const title = toTrimmedString(record.title);
+      const promptText = toTrimmedString(record.promptText);
+      const imageThumbnailUrl = toTrimmedString(record.imageThumbnailUrl);
+      if (!projectId || !caseId || !title || !promptText || !imageThumbnailUrl) {
+        return { success: false, error: 'projectId, caseId, title, promptText, and imageThumbnailUrl are required' };
+      }
+      const asset = getCreatorAssetStore().createCaseImageAsset({
+        projectId,
+        caseId,
+        title,
+        promptText,
+        imageThumbnailUrl,
+        ...(toTrimmedString(record.imageOriginalUrl) ? { imageOriginalUrl: toTrimmedString(record.imageOriginalUrl)! } : {}),
+        ...(toTrimmedString(record.mimeType) ? { mimeType: toTrimmedString(record.mimeType)! } : {}),
+        ...(normalizeOptionalNumber(record.width) !== null ? { width: normalizeOptionalNumber(record.width) } : {}),
+        ...(normalizeOptionalNumber(record.height) !== null ? { height: normalizeOptionalNumber(record.height) } : {}),
+        ...(normalizeOptionalNumber(record.byteSize) !== null ? { byteSize: normalizeOptionalNumber(record.byteSize) } : {}),
+        ...(toTrimmedString(record.sourceLabel) ? { sourceLabel: toTrimmedString(record.sourceLabel)! } : {}),
+        ...(toTrimmedString(record.sourceUrl) ? { sourceUrl: toTrimmedString(record.sourceUrl)! } : {}),
+        ...(toTrimmedString(record.githubUrl) ? { githubUrl: toTrimmedString(record.githubUrl)! } : {}),
+        ...(toTrimmedString(record.category) ? { category: toTrimmedString(record.category)! } : {}),
+        ...(normalizeStringArray(record.styles) ? { styles: normalizeStringArray(record.styles)! } : {}),
+        ...(normalizeStringArray(record.scenes) ? { scenes: normalizeStringArray(record.scenes)! } : {}),
+        ...(normalizeStringArray(record.tags) ? { tags: normalizeStringArray(record.tags)! } : {}),
+      } satisfies CreatorCaseImageAssetCreateInput);
+      return { success: true, asset };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save creator case image asset',
       };
     }
   });

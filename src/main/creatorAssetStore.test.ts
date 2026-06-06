@@ -618,6 +618,57 @@ describe('CreatorAssetStore', () => {
     expect(store.listAssets({ projectId, tag: 'typography' }).total).toBe(1);
   });
 
+  test('creates reusable creator case image assets for processing', () => {
+    const workspace = store.createProject({ name: 'Case Image Project' });
+    const projectId = workspace.currentProjectId;
+
+    const imageAsset = store.createCaseImageAsset({
+      projectId,
+      caseId: 'case-77',
+      title: 'Fish Market Cat',
+      promptText: 'Generate a CCD street photo.',
+      imageThumbnailUrl: './creator-studio/images/case77.jpg',
+      imageOriginalUrl: 'https://raw.githubusercontent.com/example/repo/main/data/images/case77.jpg',
+      mimeType: 'image/jpeg',
+      width: 1024,
+      height: 768,
+      byteSize: 12345,
+      sourceLabel: 'awesome-gpt-image-2',
+      sourceUrl: 'https://example.com/case-77',
+      githubUrl: 'https://github.com/example/repo',
+      category: 'street',
+      styles: ['ccd'],
+      scenes: ['market'],
+    });
+    const reused = store.createCaseImageAsset({
+      projectId,
+      caseId: 'case-77',
+      title: 'Fish Market Cat',
+      promptText: 'Generate a CCD street photo.',
+      imageThumbnailUrl: './creator-studio/images/case77.jpg',
+      imageOriginalUrl: 'https://raw.githubusercontent.com/example/repo/main/data/images/case77.jpg',
+    });
+
+    expect(reused.id).toBe(imageAsset.id);
+    expect(imageAsset.kind).toBe(CreatorProductionAssetKind.Image);
+    expect(imageAsset.source).toBe(CreatorProductionAssetSource.CreatorCase);
+    expect(imageAsset.status).toBe(CreatorProductionAssetStatus.Ready);
+    expect(imageAsset.filePath).toBe('creator://case-image/case-77');
+    expect(imageAsset.caseIds).toEqual(['case-77']);
+    expect(imageAsset.imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Thumbnail,
+      originalUrl: 'https://raw.githubusercontent.com/example/repo/main/data/images/case77.jpg',
+      thumbnailUrl: './creator-studio/images/case77.jpg',
+    });
+    expect(imageAsset.imageMetadata).toMatchObject({
+      width: 1024,
+      height: 768,
+      fileSize: 12345,
+      status: CreatorImageMetadataStatus.Ready,
+    });
+    expect(store.listAssets({ projectId }).total).toBe(1);
+  });
+
   test('tracks prompt versions, recipes, diffs, and forks', () => {
     const workspace = store.createProject({ name: 'Recipe Project' });
     const projectId = workspace.currentProjectId;

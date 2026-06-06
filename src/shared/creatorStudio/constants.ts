@@ -5,6 +5,7 @@ export const CreatorStudioIpcChannel = {
   AssetUpdate: 'creatorStudio:asset:update',
   AssetCreatePrompt: 'creatorStudio:asset:createPrompt',
   AssetCreateCase: 'creatorStudio:asset:createCase',
+  AssetCreateCaseImage: 'creatorStudio:asset:createCaseImage',
   AssetRevealInFolder: 'creatorStudio:asset:revealInFolder',
   RecipeCreate: 'creatorStudio:recipe:create',
   RecipeList: 'creatorStudio:recipe:list',

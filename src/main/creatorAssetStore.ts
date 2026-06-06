@@ -79,6 +79,7 @@ import type {
   CreatorBrandKitRecord,
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
+  CreatorCaseImageAssetCreateInput,
   CreatorImageInspectInput,
   CreatorImageInspectResult,
   CreatorImageProcessingAssetCreateInput,
@@ -1161,6 +1162,118 @@ export class CreatorAssetStore {
       }),
       now,
       now
+    );
+    return this.getAsset(id)!;
+  }
+
+  createCaseImageAsset(input: CreatorCaseImageAssetCreateInput): CreatorProductionAssetRecord {
+    const projectId = input.projectId.trim() || this.getCurrentProjectId();
+    const project = this.db.prepare('SELECT id FROM creator_projects WHERE id = ?').get(projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+    const caseId = input.caseId.trim();
+    const thumbnailUrl = input.imageThumbnailUrl.trim();
+    if (!caseId || !thumbnailUrl) {
+      throw new Error('Case id and thumbnail image are required');
+    }
+    const virtualPath = `creator://case-image/${caseId}`;
+    const existing = this.db.prepare(`
+      SELECT id FROM production_assets
+      WHERE project_id = ?
+        AND kind = ?
+        AND file_path = ?
+      LIMIT 1
+    `).get(projectId, CreatorProductionAssetKind.Image, virtualPath) as { id: string } | undefined;
+    if (existing) {
+      return this.getAsset(existing.id)!;
+    }
+
+    const now = Date.now();
+    const id = uuidv4();
+    const title = input.title.trim().slice(0, 120) || 'Creator Case Image';
+    const promptText = input.promptText.trim();
+    const caseIds = [caseId];
+    const tags = normalizeTags([
+      input.category ?? '',
+      ...(input.styles ?? []),
+      ...(input.scenes ?? []),
+      ...(input.tags ?? []),
+    ]);
+    const mimeType = normalizeOptionalText(input.mimeType) ?? 'image/jpeg';
+    const format = mimeType.includes('/')
+      ? mimeType.split('/').pop()?.replace('jpeg', 'jpg') ?? null
+      : null;
+    const promptSpec = {
+      sourceType: 'case_image',
+      sourceId: caseId,
+      sourceTitle: title,
+      category: input.category ?? undefined,
+      caseIds,
+      styles: normalizeTags(input.styles ?? []),
+      scenes: normalizeTags(input.scenes ?? []),
+      referencePrompt: promptText,
+    };
+    const imageSource = buildCreatorImageSourceFile({
+      localPath: virtualPath,
+      assetQuality: CreatorImageAssetQuality.Thumbnail,
+      originalUrl: input.imageOriginalUrl ?? null,
+      thumbnailUrl,
+      provider: CreatorProductionAssetSource.CreatorCase,
+    });
+    const imageMetadata: CreatorImageMetadata = {
+      sourcePath: virtualPath,
+      width: typeof input.width === 'number' && Number.isFinite(input.width) ? input.width : null,
+      height: typeof input.height === 'number' && Number.isFinite(input.height) ? input.height : null,
+      fileSize: typeof input.byteSize === 'number' && Number.isFinite(input.byteSize) ? input.byteSize : 0,
+      format,
+      mimeType,
+      hasAlpha: null,
+      exifOrientation: null,
+      colorSpace: null,
+      inspectedAt: now,
+      status: CreatorImageMetadataStatus.Ready,
+      warningCodes: [],
+    };
+    const metadata = {
+      sourceLabel: input.sourceLabel ?? null,
+      sourceUrl: input.sourceUrl ?? null,
+      githubUrl: input.githubUrl ?? null,
+      imageSource,
+      imageMetadata,
+    };
+    const caseIdsJson = JSON.stringify(caseIds);
+    const promptSpecJson = JSON.stringify(promptSpec);
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id, session_id,
+        source_session_id, message_id, source_message_id, template_id,
+        case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text,
+        parent_prompt_asset_id, prompt_version_id, recipe_id, selected_direction_id,
+        file_path, file_name, mime_type,
+        favorite, adoption_status, tags_json, license_note, usage_note, metadata, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, 0, ?, ?, NULL, NULL, ?, ?, ?)
+    `).run(
+      id,
+      projectId,
+      CreatorProductionAssetKind.Image,
+      title,
+      CreatorProductionAssetStatus.Ready,
+      CreatorProductionAssetSource.CreatorCase,
+      caseIdsJson,
+      caseIdsJson,
+      promptSpecJson,
+      promptSpecJson,
+      promptText,
+      virtualPath,
+      `${title}.case-image`,
+      mimeType,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(tags),
+      JSON.stringify(metadata),
+      now,
+      now,
     );
     return this.getAsset(id)!;
   }

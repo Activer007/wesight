@@ -40,6 +40,7 @@ import type {
   CreatorBoardWorkspaceSnapshot,
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
+  CreatorCaseImageAssetCreateInput,
   CreatorCreativeModelCapability,
   CreatorImageInspectInput,
   CreatorImageInspectResult,
@@ -243,6 +244,14 @@ class CreatorStudioAssetService {
     const result = await window.electron.creatorStudio.createCaseAsset(input);
     if (!result.success) {
       throw new Error(result.error || 'Failed to save creator case asset');
+    }
+    return result.asset ?? null;
+  }
+
+  async createCaseImageAsset(input: CreatorCaseImageAssetCreateInput): Promise<CreatorProductionAssetRecord | null> {
+    const result = await window.electron.creatorStudio.createCaseImageAsset(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to save creator case image asset');
     }
     return result.asset ?? null;
   }

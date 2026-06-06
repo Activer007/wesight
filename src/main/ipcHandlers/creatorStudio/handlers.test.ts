@@ -69,6 +69,7 @@ const createStore = () => ({
   updateAsset: vi.fn(),
   createPromptAsset: vi.fn(),
   createCaseAsset: vi.fn(),
+  createCaseImageAsset: vi.fn(),
   getWorkspace: vi.fn(() => ({ currentProjectId: 'project-1', projects: [], collections: [] })),
   createProject: vi.fn(() => ({ currentProjectId: 'project-2', projects: [], collections: [] })),
   setCurrentProject: vi.fn(() => ({ currentProjectId: 'project-1', projects: [], collections: [] })),
@@ -118,6 +119,7 @@ test('registers creator studio asset IPC handlers with constant channels', () =>
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetUpdate, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetCreatePrompt, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetCreateCase, expect.any(Function));
+  expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetCreateCaseImage, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetRevealInFolder, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.WorkspaceGet, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ProjectCreate, expect.any(Function));

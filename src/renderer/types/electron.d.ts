@@ -57,6 +57,7 @@ import type {
   CreatorBoardWorkspaceSnapshot,
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
+  CreatorCaseImageAssetCreateInput,
   CreatorCreativeModelCapability,
   CreatorImageInspectInput,
   CreatorImageInspectResult,
@@ -926,6 +927,11 @@ interface IElectronAPI {
       error?: string;
     }>;
     createCaseAsset: (input: CreatorCaseAssetCreateInput) => Promise<{
+      success: boolean;
+      asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    createCaseImageAsset: (input: CreatorCaseImageAssetCreateInput) => Promise<{
       success: boolean;
       asset?: CreatorProductionAssetRecord;
       error?: string;

@@ -552,6 +552,26 @@ export interface CreatorCaseAssetCreateInput {
   tags?: string[];
 }
 
+export interface CreatorCaseImageAssetCreateInput {
+  projectId: string;
+  caseId: string;
+  title: string;
+  promptText: string;
+  imageThumbnailUrl: string;
+  imageOriginalUrl?: string | null;
+  mimeType?: string | null;
+  width?: number | null;
+  height?: number | null;
+  byteSize?: number | null;
+  sourceLabel?: string | null;
+  sourceUrl?: string | null;
+  githubUrl?: string | null;
+  category?: string | null;
+  styles?: string[];
+  scenes?: string[];
+  tags?: string[];
+}
+
 export interface CreatorBoardRecord {
   id: string;
   projectId: string;

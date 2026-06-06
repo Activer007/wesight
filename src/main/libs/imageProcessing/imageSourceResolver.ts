@@ -29,7 +29,11 @@ const toOptionalNumber = (value: unknown): number | null => (
 );
 
 const normalizeLocalPath = (value: string | null): string | null => (
-  value ? path.resolve(value) : null
+  value
+    ? value.startsWith('creator://')
+      ? value
+      : path.resolve(value)
+    : null
 );
 
 export const parseCreatorImageSourceFile = (
