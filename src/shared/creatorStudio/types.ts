@@ -1,5 +1,10 @@
 import type {
   CreatorAssetAdoptionStatus,
+  CreatorBatchRunStatus,
+  CreatorBatchTaskStatus,
+  CreatorBoardCardKind,
+  CreatorBoardMoveDirection,
+  CreatorCreativeModelOutputKind,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -64,6 +69,8 @@ export interface CreatorStudioSourceContext {
   promptText: string;
   sourceTitle: string | null;
   variantOfAssetId: string | null;
+  batchRunId: string | null;
+  batchTaskId: string | null;
 }
 
 export interface CreatorProductionRunRecord {
@@ -211,4 +218,218 @@ export interface CreatorCaseAssetCreateInput {
   styles?: string[];
   scenes?: string[];
   tags?: string[];
+}
+
+export interface CreatorBoardRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreatorBoardDirectionSnapshot {
+  id: string;
+  title: string;
+  template: string;
+  style: string;
+  reason: string;
+  promptFocus: string;
+}
+
+export interface CreatorBoardCardRecord {
+  id: string;
+  boardId: string;
+  projectId: string;
+  kind: CreatorBoardCardKind;
+  title: string;
+  assetId: string | null;
+  caseId: string | null;
+  promptText: string;
+  promptSpec: CreatorPromptSpecSnapshot | null;
+  direction: CreatorBoardDirectionSnapshot | null;
+  groupName: string | null;
+  notes: string | null;
+  position: number;
+  selected: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreatorBrandKitRecord {
+  projectId: string;
+  colors: string[];
+  logoAssetId: string | null;
+  logoPath: string | null;
+  bannedWords: string[];
+  tone: string;
+  visualPreferences: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreatorBoardWorkspaceSnapshot {
+  projectId: string;
+  currentBoardId: string;
+  boards: CreatorBoardRecord[];
+  cards: CreatorBoardCardRecord[];
+  selectedCardIds: string[];
+  brandKit: CreatorBrandKitRecord;
+}
+
+export interface CreatorBoardCreateInput {
+  projectId: string;
+  name: string;
+  description?: string;
+}
+
+export interface CreatorBoardCardCreateInput {
+  boardId: string;
+  kind: CreatorBoardCardKind;
+  title: string;
+  assetId?: string | null;
+  caseId?: string | null;
+  promptText?: string;
+  promptSpec?: CreatorPromptSpecSnapshot | null;
+  direction?: CreatorBoardDirectionSnapshot | null;
+  groupName?: string | null;
+  notes?: string | null;
+}
+
+export interface CreatorBoardCardUpdateInput {
+  cardId: string;
+  title?: string;
+  groupName?: string | null;
+  notes?: string | null;
+  direction?: CreatorBoardDirectionSnapshot | null;
+}
+
+export interface CreatorBoardCardMoveInput {
+  cardId: string;
+  direction: CreatorBoardMoveDirection;
+}
+
+export interface CreatorBoardCardSelectInput {
+  cardId: string;
+  selected: boolean;
+}
+
+export interface CreatorBoardContextPackInput {
+  boardId: string;
+  cardIds?: string[];
+}
+
+export interface CreatorBoardContextPackResult {
+  boardId: string;
+  cardIds: string[];
+  contextPack: string;
+}
+
+export interface CreatorBrandKitUpdateInput {
+  projectId: string;
+  colors?: string[];
+  logoAssetId?: string | null;
+  logoPath?: string | null;
+  bannedWords?: string[];
+  tone?: string;
+  visualPreferences?: string;
+}
+
+export interface CreatorCreativeModelCapability {
+  id: string;
+  providerId: string;
+  displayName: string;
+  outputKinds: CreatorCreativeModelOutputKind[];
+  supportsVision: boolean;
+  supportsReferenceImages: boolean;
+  supportsBatch: boolean;
+  recommendedFor: string[];
+  sizes: string[];
+  maxBatchTasks: number;
+  costUnitLabel: string;
+  costUnitEstimate: number;
+}
+
+export interface CreatorBatchDirectionInput {
+  id: string;
+  title: string;
+  template: string;
+  style: string;
+  reason: string;
+  promptFocus: string;
+  promptText: string;
+  promptSpec: CreatorPromptSpecSnapshot;
+}
+
+export interface CreatorBatchRunSummary {
+  taskCount: number;
+  modelIds: string[];
+  modelNames: string[];
+  templateIds: string[];
+  sizes: string[];
+  estimatedCostUnits: number;
+  costUnitLabel: string;
+}
+
+export interface CreatorBatchRunCreateInput {
+  projectId: string;
+  briefTitle: string;
+  promptSpec: CreatorPromptSpecSnapshot;
+  promptText: string;
+  directions: CreatorBatchDirectionInput[];
+  modelIds: string[];
+  templateIds: string[];
+  sizes: string[];
+}
+
+export interface CreatorBatchTaskFailInput {
+  taskId: string;
+  error: string;
+}
+
+export interface CreatorBatchRunListInput {
+  projectId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CreatorBatchTaskRecord {
+  id: string;
+  batchRunId: string;
+  projectId: string;
+  status: CreatorBatchTaskStatus;
+  directionId: string;
+  directionTitle: string;
+  modelId: string;
+  modelName: string;
+  templateId: string;
+  size: string;
+  promptSpec: CreatorPromptSpecSnapshot;
+  promptText: string;
+  assetIds: string[];
+  error: string | null;
+  costEstimateText: string;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+}
+
+export interface CreatorBatchRunRecord {
+  id: string;
+  projectId: string;
+  status: CreatorBatchRunStatus;
+  briefTitle: string;
+  promptSpec: CreatorPromptSpecSnapshot;
+  promptText: string;
+  summary: CreatorBatchRunSummary;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+  tasks: CreatorBatchTaskRecord[];
+}
+
+export interface CreatorBatchRunListResult {
+  runs: CreatorBatchRunRecord[];
+  total: number;
 }

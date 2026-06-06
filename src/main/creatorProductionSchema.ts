@@ -82,6 +82,126 @@ export const ensureCreatorProductionSchema = (db: Database.Database): void => {
   `);
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS creator_boards (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_creator_boards_project_id
+    ON creator_boards(project_id);
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS creator_board_cards (
+      id TEXT PRIMARY KEY,
+      board_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      asset_id TEXT,
+      case_id TEXT,
+      prompt_text TEXT NOT NULL DEFAULT '',
+      prompt_spec_json TEXT,
+      direction_json TEXT,
+      group_name TEXT,
+      notes TEXT,
+      position INTEGER NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_creator_board_cards_board_id
+    ON creator_board_cards(board_id, position);
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS creator_board_selections (
+      board_id TEXT NOT NULL,
+      card_id TEXT NOT NULL,
+      selected INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(board_id, card_id)
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS creator_brand_kits (
+      project_id TEXT PRIMARY KEY,
+      colors_json TEXT NOT NULL DEFAULT '[]',
+      logo_asset_id TEXT,
+      logo_path TEXT,
+      banned_words_json TEXT NOT NULL DEFAULT '[]',
+      tone TEXT NOT NULL DEFAULT '',
+      visual_preferences TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS creator_batch_runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      brief_title TEXT NOT NULL,
+      prompt_spec_json TEXT NOT NULL,
+      prompt_text TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      completed_at INTEGER
+    );
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_creator_batch_runs_project_created
+    ON creator_batch_runs(project_id, created_at DESC);
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS creator_batch_tasks (
+      id TEXT PRIMARY KEY,
+      batch_run_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      direction_id TEXT NOT NULL,
+      direction_title TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      model_name TEXT NOT NULL,
+      template_id TEXT NOT NULL,
+      size TEXT NOT NULL,
+      prompt_spec_json TEXT NOT NULL,
+      prompt_text TEXT NOT NULL,
+      asset_ids_json TEXT NOT NULL DEFAULT '[]',
+      error TEXT,
+      cost_estimate_text TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      completed_at INTEGER
+    );
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_creator_batch_tasks_run_position
+    ON creator_batch_tasks(batch_run_id, direction_id, model_id, template_id, size);
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_creator_batch_tasks_status
+    ON creator_batch_tasks(status);
+  `);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS production_runs (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL,

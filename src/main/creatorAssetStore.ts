@@ -6,6 +6,10 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   CreatorAssetAdoptionStatus,
   CreatorAssetSelectionStatus,
+  CreatorBatchRunStatus,
+  CreatorBatchTaskStatus,
+  CreatorBoardCardKind,
+  CreatorBoardMoveDirection,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -13,11 +17,33 @@ import {
   CreatorProductionRunStatus,
   CreatorStudioDefaultProjectId,
 } from '../shared/creatorStudio/constants';
+import { CREATOR_CREATIVE_MODEL_CAPABILITIES } from '../shared/creatorStudio/modelCapabilities';
 import type {
   CreatorAssetCollectionAddInput,
   CreatorAssetCollectionCreateInput,
   CreatorAssetCollectionRecord,
   CreatorAssetUpdateInput,
+  CreatorBatchDirectionInput,
+  CreatorBatchRunCreateInput,
+  CreatorBatchRunListInput,
+  CreatorBatchRunListResult,
+  CreatorBatchRunRecord,
+  CreatorBatchRunSummary,
+  CreatorBatchTaskFailInput,
+  CreatorBatchTaskRecord,
+  CreatorBoardCardCreateInput,
+  CreatorBoardCardMoveInput,
+  CreatorBoardCardRecord,
+  CreatorBoardCardSelectInput,
+  CreatorBoardCardUpdateInput,
+  CreatorBoardContextPackInput,
+  CreatorBoardContextPackResult,
+  CreatorBoardCreateInput,
+  CreatorBoardDirectionSnapshot,
+  CreatorBoardRecord,
+  CreatorBoardWorkspaceSnapshot,
+  CreatorBrandKitRecord,
+  CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
@@ -107,9 +133,84 @@ interface CollectionRow {
   asset_count: number;
 }
 
+interface BoardRow {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface BoardCardRow {
+  id: string;
+  board_id: string;
+  project_id: string;
+  kind: string;
+  title: string;
+  asset_id: string | null;
+  case_id: string | null;
+  prompt_text: string;
+  prompt_spec_json: string | null;
+  direction_json: string | null;
+  group_name: string | null;
+  notes: string | null;
+  position: number;
+  created_at: number;
+  updated_at: number;
+  selected?: number | null;
+}
+
+interface BrandKitRow {
+  project_id: string;
+  colors_json: string | null;
+  logo_asset_id: string | null;
+  logo_path: string | null;
+  banned_words_json: string | null;
+  tone: string | null;
+  visual_preferences: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface BatchRunRow {
+  id: string;
+  project_id: string;
+  status: string;
+  brief_title: string;
+  prompt_spec_json: string;
+  prompt_text: string;
+  summary_json: string;
+  created_at: number;
+  updated_at: number;
+  completed_at: number | null;
+}
+
+interface BatchTaskRow {
+  id: string;
+  batch_run_id: string;
+  project_id: string;
+  status: string;
+  direction_id: string;
+  direction_title: string;
+  model_id: string;
+  model_name: string;
+  template_id: string;
+  size: string;
+  prompt_spec_json: string;
+  prompt_text: string;
+  asset_ids_json: string | null;
+  error: string | null;
+  cost_estimate_text: string;
+  created_at: number;
+  updated_at: number;
+  completed_at: number | null;
+}
+
 const CREATOR_STUDIO_MARKER = '[Creator Studio]';
 const CreatorWorkspaceStateKey = {
   CurrentProjectId: 'current_project_id',
+  CurrentBoardIdPrefix: 'current_board_id',
 } as const;
 
 const parseJsonArray = (value: string | null | undefined): string[] => {
@@ -157,6 +258,60 @@ const parsePromptSpec = (value: string | null | undefined): CreatorPromptSpecSna
   }
 };
 
+const parseBatchSummary = (value: string | null | undefined): CreatorBatchRunSummary => {
+  if (!value) {
+    return {
+      taskCount: 0,
+      modelIds: [],
+      modelNames: [],
+      templateIds: [],
+      sizes: [],
+      estimatedCostUnits: 0,
+      costUnitLabel: 'task',
+    };
+  }
+  try {
+    const parsed = JSON.parse(value) as Partial<CreatorBatchRunSummary> | null;
+    return {
+      taskCount: typeof parsed?.taskCount === 'number' ? parsed.taskCount : 0,
+      modelIds: Array.isArray(parsed?.modelIds) ? parsed.modelIds.filter((item): item is string => typeof item === 'string') : [],
+      modelNames: Array.isArray(parsed?.modelNames) ? parsed.modelNames.filter((item): item is string => typeof item === 'string') : [],
+      templateIds: Array.isArray(parsed?.templateIds) ? parsed.templateIds.filter((item): item is string => typeof item === 'string') : [],
+      sizes: Array.isArray(parsed?.sizes) ? parsed.sizes.filter((item): item is string => typeof item === 'string') : [],
+      estimatedCostUnits: typeof parsed?.estimatedCostUnits === 'number' ? parsed.estimatedCostUnits : 0,
+      costUnitLabel: typeof parsed?.costUnitLabel === 'string' ? parsed.costUnitLabel : 'task',
+    };
+  } catch {
+    return {
+      taskCount: 0,
+      modelIds: [],
+      modelNames: [],
+      templateIds: [],
+      sizes: [],
+      estimatedCostUnits: 0,
+      costUnitLabel: 'task',
+    };
+  }
+};
+
+const parseDirection = (value: string | null | undefined): CreatorBoardDirectionSnapshot | null => {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<CreatorBoardDirectionSnapshot> | null;
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.title !== 'string') return null;
+    return {
+      id: typeof parsed.id === 'string' && parsed.id.trim() ? parsed.id : parsed.title,
+      title: parsed.title,
+      template: typeof parsed.template === 'string' ? parsed.template : '',
+      style: typeof parsed.style === 'string' ? parsed.style : '',
+      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      promptFocus: typeof parsed.promptFocus === 'string' ? parsed.promptFocus : '',
+    };
+  } catch {
+    return null;
+  }
+};
+
 const firstNonEmptyString = (...values: unknown[]): string | null => {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) {
@@ -164,6 +319,13 @@ const firstNonEmptyString = (...values: unknown[]): string | null => {
     }
   }
   return null;
+};
+
+const getPromptSpecBatchString = (promptSpec: CreatorPromptSpecSnapshot | null, key: string): string | null => {
+  const batch = promptSpec?.batch;
+  if (!batch || typeof batch !== 'object' || Array.isArray(batch)) return null;
+  const value = (batch as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 };
 
 const parseLineList = (text: string, key: string): string[] => {
@@ -198,6 +360,14 @@ export const parseCreatorStudioSourceContext = (text: string): CreatorStudioSour
     promptText: promptTextMatch?.[1]?.trim() || '',
     sourceTitle: firstNonEmptyString(promptSpec?.sourceTitle),
     variantOfAssetId: firstNonEmptyString(promptSpec?.variantOfAssetId),
+    batchRunId: firstNonEmptyString(
+      getPromptSpecBatchString(promptSpec, 'batchRunId'),
+      text.match(/batchRunId\s*[:：]\s*([^\n]+)/i)?.[1]
+    ),
+    batchTaskId: firstNonEmptyString(
+      getPromptSpecBatchString(promptSpec, 'batchTaskId'),
+      text.match(/batchTaskId\s*[:：]\s*([^\n]+)/i)?.[1]
+    ),
   };
 };
 
@@ -605,6 +775,443 @@ export class CreatorAssetStore {
     return this.getAsset(asset.id);
   }
 
+  getBoardWorkspace(projectIdInput?: string): CreatorBoardWorkspaceSnapshot {
+    const projectId = projectIdInput?.trim() || this.getCurrentProjectId();
+    this.ensureProjectExists(projectId);
+    const currentBoardId = this.ensureCurrentBoard(projectId);
+    return {
+      projectId,
+      currentBoardId,
+      boards: this.listBoards(projectId),
+      cards: this.listBoardCards(currentBoardId),
+      selectedCardIds: this.listSelectedBoardCardIds(currentBoardId),
+      brandKit: this.getBrandKit(projectId),
+    };
+  }
+
+  createBoard(input: CreatorBoardCreateInput): CreatorBoardWorkspaceSnapshot {
+    const projectId = input.projectId.trim();
+    this.ensureProjectExists(projectId);
+    const name = input.name.trim().slice(0, 80);
+    if (!name) {
+      throw new Error('Board name is required');
+    }
+    const now = Date.now();
+    const id = uuidv4();
+    this.db.prepare(`
+      INSERT INTO creator_boards (id, project_id, name, description, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, projectId, name, normalizeOptionalText(input.description), now, now);
+    this.setCurrentBoardId(projectId, id);
+    return this.getBoardWorkspace(projectId);
+  }
+
+  setCurrentBoard(projectId: string, boardId: string): CreatorBoardWorkspaceSnapshot {
+    const board = this.db.prepare(`
+      SELECT id
+      FROM creator_boards
+      WHERE id = ? AND project_id = ?
+    `).get(boardId, projectId) as { id: string } | undefined;
+    if (!board) {
+      throw new Error('Board not found');
+    }
+    this.setCurrentBoardId(projectId, boardId);
+    return this.getBoardWorkspace(projectId);
+  }
+
+  addBoardCard(input: CreatorBoardCardCreateInput): CreatorBoardCardRecord {
+    const board = this.getBoardRow(input.boardId);
+    if (!board) {
+      throw new Error('Board not found');
+    }
+    if (!Object.values(CreatorBoardCardKind).includes(input.kind)) {
+      throw new Error('Board card kind is invalid');
+    }
+    const now = Date.now();
+    const positionRow = this.db.prepare(`
+      SELECT COALESCE(MAX(position), -1) + 1 AS position
+      FROM creator_board_cards
+      WHERE board_id = ?
+    `).get(board.id) as { position: number };
+    const asset = input.assetId ? this.getAsset(input.assetId) : null;
+    const title = (input.title.trim() || asset?.fileName || 'Board Card').slice(0, 120);
+    const promptSpecJson = input.promptSpec ? JSON.stringify(input.promptSpec) : asset?.promptSpec ? JSON.stringify(asset.promptSpec) : null;
+    const directionJson = input.direction ? JSON.stringify(input.direction) : null;
+    const promptText = (input.promptText ?? asset?.promptText ?? '').trim();
+    const id = uuidv4();
+    this.db.prepare(`
+      INSERT INTO creator_board_cards (
+        id, board_id, project_id, kind, title, asset_id, case_id, prompt_text,
+        prompt_spec_json, direction_json, group_name, notes, position, metadata_json, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      board.id,
+      board.project_id,
+      input.kind,
+      title,
+      input.assetId ?? null,
+      input.caseId ?? null,
+      promptText,
+      promptSpecJson,
+      directionJson,
+      normalizeOptionalText(input.groupName),
+      normalizeOptionalText(input.notes),
+      positionRow.position,
+      '{}',
+      now,
+      now
+    );
+    return this.getBoardCard(id)!;
+  }
+
+  updateBoardCard(input: CreatorBoardCardUpdateInput): CreatorBoardCardRecord | null {
+    const card = this.getBoardCard(input.cardId);
+    if (!card) return null;
+    const now = Date.now();
+    const nextTitle = input.title === undefined ? card.title : input.title.trim().slice(0, 120) || card.title;
+    const nextDirection = input.direction === undefined
+      ? card.direction
+        ? {
+          ...card.direction,
+          title: input.title === undefined ? card.direction.title : nextTitle,
+        }
+        : null
+      : input.direction;
+    this.db.prepare(`
+      UPDATE creator_board_cards
+      SET title = ?,
+        group_name = ?,
+        notes = ?,
+        direction_json = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(
+      nextTitle,
+      input.groupName === undefined ? card.groupName : normalizeOptionalText(input.groupName),
+      input.notes === undefined ? card.notes : normalizeOptionalText(input.notes),
+      nextDirection ? JSON.stringify(nextDirection) : null,
+      now,
+      card.id
+    );
+    return this.getBoardCard(card.id);
+  }
+
+  removeBoardCard(cardId: string): CreatorBoardCardRecord | null {
+    const card = this.getBoardCard(cardId);
+    if (!card) return null;
+    this.db.prepare('DELETE FROM creator_board_selections WHERE card_id = ?').run(card.id);
+    this.db.prepare('DELETE FROM creator_board_cards WHERE id = ?').run(card.id);
+    this.reindexBoardCards(card.boardId);
+    return card;
+  }
+
+  moveBoardCard(input: CreatorBoardCardMoveInput): CreatorBoardCardRecord | null {
+    const card = this.getBoardCard(input.cardId);
+    if (!card) return null;
+    const comparator = input.direction === CreatorBoardMoveDirection.Up ? '<' : '>';
+    const order = input.direction === CreatorBoardMoveDirection.Up ? 'DESC' : 'ASC';
+    const target = this.db.prepare(`
+      SELECT id, position
+      FROM creator_board_cards
+      WHERE board_id = ? AND position ${comparator} ?
+      ORDER BY position ${order}
+      LIMIT 1
+    `).get(card.boardId, card.position) as { id: string; position: number } | undefined;
+    if (!target) return card;
+    const now = Date.now();
+    this.db.transaction(() => {
+      this.db.prepare('UPDATE creator_board_cards SET position = ?, updated_at = ? WHERE id = ?')
+        .run(target.position, now, card.id);
+      this.db.prepare('UPDATE creator_board_cards SET position = ?, updated_at = ? WHERE id = ?')
+        .run(card.position, now, target.id);
+    })();
+    return this.getBoardCard(card.id);
+  }
+
+  selectBoardCard(input: CreatorBoardCardSelectInput): CreatorBoardCardRecord | null {
+    const card = this.getBoardCard(input.cardId);
+    if (!card) return null;
+    const now = Date.now();
+    this.db.prepare(`
+      INSERT INTO creator_board_selections (board_id, card_id, selected, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(board_id, card_id) DO UPDATE SET selected = excluded.selected, updated_at = excluded.updated_at
+    `).run(card.boardId, card.id, input.selected ? 1 : 0, now, now);
+    return this.getBoardCard(card.id);
+  }
+
+  buildBoardContextPack(input: CreatorBoardContextPackInput): CreatorBoardContextPackResult {
+    const board = this.getBoardRow(input.boardId);
+    if (!board) {
+      throw new Error('Board not found');
+    }
+    const requested = Array.isArray(input.cardIds) ? new Set(input.cardIds.filter((id) => id.trim())) : null;
+    const cards = this.listBoardCards(board.id)
+      .filter((card) => requested ? requested.has(card.id) : card.selected);
+    if (cards.length === 0) {
+      throw new Error('Board selection is empty');
+    }
+    const brandKit = this.getBrandKit(board.project_id);
+    const contextPack = this.renderBoardContextPack(board, cards, brandKit);
+    return {
+      boardId: board.id,
+      cardIds: cards.map((card) => card.id),
+      contextPack,
+    };
+  }
+
+  updateBrandKit(input: CreatorBrandKitUpdateInput): CreatorBoardWorkspaceSnapshot {
+    const projectId = input.projectId.trim();
+    this.ensureProjectExists(projectId);
+    const current = this.getBrandKit(projectId);
+    const now = Date.now();
+    this.db.prepare(`
+      INSERT INTO creator_brand_kits (
+        project_id, colors_json, logo_asset_id, logo_path, banned_words_json,
+        tone, visual_preferences, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET
+        colors_json = excluded.colors_json,
+        logo_asset_id = excluded.logo_asset_id,
+        logo_path = excluded.logo_path,
+        banned_words_json = excluded.banned_words_json,
+        tone = excluded.tone,
+        visual_preferences = excluded.visual_preferences,
+        updated_at = excluded.updated_at
+    `).run(
+      projectId,
+      JSON.stringify(Array.isArray(input.colors) ? normalizeTags(input.colors) : current.colors),
+      input.logoAssetId === undefined ? current.logoAssetId : normalizeOptionalText(input.logoAssetId),
+      input.logoPath === undefined ? current.logoPath : normalizeOptionalText(input.logoPath),
+      JSON.stringify(Array.isArray(input.bannedWords) ? normalizeTags(input.bannedWords) : current.bannedWords),
+      input.tone === undefined ? current.tone : input.tone.trim().slice(0, 240),
+      input.visualPreferences === undefined ? current.visualPreferences : input.visualPreferences.trim().slice(0, 1000),
+      current.createdAt || now,
+      now
+    );
+    return this.getBoardWorkspace(projectId);
+  }
+
+  listCreativeModelCapabilities() {
+    return CREATOR_CREATIVE_MODEL_CAPABILITIES;
+  }
+
+  createBatchRun(input: CreatorBatchRunCreateInput): CreatorBatchRunRecord {
+    const projectId = input.projectId.trim() || this.getCurrentProjectId();
+    this.ensureProjectExists(projectId);
+    const directions = this.normalizeBatchDirections(input.directions);
+    if (directions.length === 0) {
+      throw new Error('At least one direction is required');
+    }
+    const capabilityById = new Map(CREATOR_CREATIVE_MODEL_CAPABILITIES.map((model) => [model.id, model]));
+    const models = normalizeTags(input.modelIds)
+      .map((modelId) => capabilityById.get(modelId))
+      .filter((model): model is typeof CREATOR_CREATIVE_MODEL_CAPABILITIES[number] => Boolean(model));
+    if (models.length === 0) {
+      throw new Error('At least one creative model is required');
+    }
+    const unsupportedModel = models.find((model) => !model.supportsBatch);
+    if (unsupportedModel) {
+      throw new Error(`Model does not support batch: ${unsupportedModel.id}`);
+    }
+    const templateIds = normalizeTags(input.templateIds).length > 0
+      ? normalizeTags(input.templateIds)
+      : normalizeTags([input.promptSpec.templateId ?? 'default-template']);
+    const sizes = normalizeTags(input.sizes).length > 0
+      ? normalizeTags(input.sizes)
+      : normalizeTags([String(input.promptSpec.constraints?.aspectRatio ?? '1:1')]);
+    const now = Date.now();
+    const id = uuidv4();
+    const briefTitle = input.briefTitle.trim().slice(0, 120) || 'Creator Batch Run';
+    const taskCount = directions.length * models.length * templateIds.length * sizes.length;
+    for (const model of models) {
+      const modelTaskCount = directions.length * templateIds.length * sizes.length;
+      if (modelTaskCount > model.maxBatchTasks) {
+        throw new Error(`Batch task count exceeds model limit: ${model.displayName}`);
+      }
+    }
+    const estimatedCostUnits = directions.reduce((total) => total + models.reduce((modelTotal, model) => (
+      modelTotal + (model.costUnitEstimate * templateIds.length * sizes.length)
+    ), 0), 0);
+    const summary: CreatorBatchRunSummary = {
+      taskCount,
+      modelIds: models.map((model) => model.id),
+      modelNames: models.map((model) => model.displayName),
+      templateIds,
+      sizes,
+      estimatedCostUnits,
+      costUnitLabel: 'estimated units',
+    };
+    const insertTask = this.db.prepare(`
+      INSERT INTO creator_batch_tasks (
+        id, batch_run_id, project_id, status, direction_id, direction_title,
+        model_id, model_name, template_id, size, prompt_spec_json, prompt_text,
+        asset_ids_json, error, cost_estimate_text, created_at, updated_at, completed_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL)
+    `);
+    this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO creator_batch_runs (
+          id, project_id, status, brief_title, prompt_spec_json, prompt_text,
+          summary_json, created_at, updated_at, completed_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      `).run(
+        id,
+        projectId,
+        CreatorBatchRunStatus.Running,
+        briefTitle,
+        JSON.stringify(input.promptSpec),
+        input.promptText.trim(),
+        JSON.stringify(summary),
+        now,
+        now
+      );
+      for (const direction of directions) {
+        for (const model of models) {
+          for (const templateId of templateIds) {
+            for (const size of sizes) {
+              const taskId = uuidv4();
+              const promptSpec = {
+                ...direction.promptSpec,
+                selectedCreativeDirectionId: direction.id,
+                selectedCreativeDirection: {
+                  id: direction.id,
+                  title: direction.title,
+                  template: direction.template,
+                  style: direction.style,
+                  reason: direction.reason,
+                  promptFocus: direction.promptFocus,
+                },
+                templateId,
+                constraints: {
+                  ...(direction.promptSpec.constraints ?? {}),
+                  aspectRatio: size,
+                },
+                batch: {
+                  batchRunId: id,
+                  batchTaskId: taskId,
+                  modelId: model.id,
+                  modelName: model.displayName,
+                  outputKinds: model.outputKinds,
+                },
+              };
+              insertTask.run(
+                taskId,
+                id,
+                projectId,
+                CreatorBatchTaskStatus.Pending,
+                direction.id,
+                direction.title,
+                model.id,
+                model.displayName,
+                templateId,
+                size,
+                JSON.stringify(promptSpec),
+                this.renderBatchTaskPrompt(direction.promptText, model.displayName, templateId, size),
+                '[]',
+                `${model.costUnitEstimate} ${model.costUnitLabel}`,
+                now,
+                now
+              );
+            }
+          }
+        }
+      }
+    })();
+    return this.getBatchRun(id)!;
+  }
+
+  listBatchRuns(input: CreatorBatchRunListInput = {}): CreatorBatchRunListResult {
+    const projectId = input.projectId?.trim() || this.getCurrentProjectId();
+    const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 20), 100));
+    const offset = Math.max(0, Math.floor(input.offset ?? 0));
+    const rows = this.db.prepare(`
+      SELECT id, project_id, status, brief_title, prompt_spec_json, prompt_text,
+        summary_json, created_at, updated_at, completed_at
+      FROM creator_batch_runs
+      WHERE project_id = ?
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(projectId, limit, offset) as BatchRunRow[];
+    const totalRow = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM creator_batch_runs
+      WHERE project_id = ?
+    `).get(projectId) as { count: number };
+    return {
+      runs: rows.map((row) => this.mapBatchRunRow(row)),
+      total: totalRow.count,
+    };
+  }
+
+  getBatchRun(id: string): CreatorBatchRunRecord | null {
+    const row = this.db.prepare(`
+      SELECT id, project_id, status, brief_title, prompt_spec_json, prompt_text,
+        summary_json, created_at, updated_at, completed_at
+      FROM creator_batch_runs
+      WHERE id = ?
+    `).get(id) as BatchRunRow | undefined;
+    return row ? this.mapBatchRunRow(row) : null;
+  }
+
+  retryBatchTask(taskId: string): CreatorBatchRunRecord | null {
+    const task = this.getBatchTaskRow(taskId);
+    if (!task) return null;
+    const now = Date.now();
+    this.db.prepare(`
+      UPDATE creator_batch_tasks
+      SET status = ?,
+        error = NULL,
+        updated_at = ?,
+        completed_at = NULL
+      WHERE id = ?
+    `).run(CreatorBatchTaskStatus.Pending, now, task.id);
+    this.updateBatchRunStatus(task.batch_run_id);
+    return this.getBatchRun(task.batch_run_id);
+  }
+
+  skipBatchTask(taskId: string): CreatorBatchRunRecord | null {
+    const task = this.getBatchTaskRow(taskId);
+    if (!task) return null;
+    const now = Date.now();
+    this.db.prepare(`
+      UPDATE creator_batch_tasks
+      SET status = ?,
+        updated_at = ?,
+        completed_at = COALESCE(completed_at, ?)
+      WHERE id = ?
+    `).run(CreatorBatchTaskStatus.Skipped, now, now, task.id);
+    this.updateBatchRunStatus(task.batch_run_id);
+    return this.getBatchRun(task.batch_run_id);
+  }
+
+  failBatchTask(input: CreatorBatchTaskFailInput): CreatorBatchRunRecord | null {
+    const task = this.getBatchTaskRow(input.taskId);
+    if (!task) return null;
+    const now = Date.now();
+    this.db.prepare(`
+      UPDATE creator_batch_tasks
+      SET status = ?,
+        error = ?,
+        updated_at = ?,
+        completed_at = COALESCE(completed_at, ?)
+      WHERE id = ?
+    `).run(
+      CreatorBatchTaskStatus.Failed,
+      input.error.trim().slice(0, 1000) || 'Task failed',
+      now,
+      now,
+      task.id
+    );
+    this.updateBatchRunStatus(task.batch_run_id);
+    return this.getBatchRun(task.batch_run_id);
+  }
+
   private ingestGeneratedImages(sessionId: string, message: CoworkMessage): void {
     const images = getGeneratedImages(message.metadata);
     if (images.length === 0) return;
@@ -712,8 +1319,39 @@ export class CreatorAssetStore {
             completed_at = COALESCE(completed_at, ?)
           WHERE id = ?
         `).run(CreatorProductionRunStatus.Completed, JSON.stringify(outputAssetIds), now, now, run.id);
+        this.completeBatchTaskForRun(run, outputAssetIds, now);
       }
     })();
+  }
+
+  private completeBatchTaskForRun(
+    run: CreatorProductionRunRecord,
+    outputAssetIds: string[],
+    completedAt: number
+  ): void {
+    const batchRunId = getPromptSpecBatchString(run.promptSpec, 'batchRunId');
+    const batchTaskId = getPromptSpecBatchString(run.promptSpec, 'batchTaskId');
+    if (!batchRunId || !batchTaskId || outputAssetIds.length === 0) return;
+    const task = this.getBatchTaskRow(batchTaskId);
+    if (!task || task.batch_run_id !== batchRunId) return;
+    const existingAssetIds = parseJsonArray(task.asset_ids_json);
+    const nextAssetIds = [...new Set([...existingAssetIds, ...outputAssetIds])];
+    this.db.prepare(`
+      UPDATE creator_batch_tasks
+      SET status = ?,
+        asset_ids_json = ?,
+        error = NULL,
+        updated_at = ?,
+        completed_at = COALESCE(completed_at, ?)
+      WHERE id = ?
+    `).run(
+      CreatorBatchTaskStatus.Completed,
+      JSON.stringify(nextAssetIds),
+      completedAt,
+      completedAt,
+      batchTaskId
+    );
+    this.updateBatchRunStatus(batchRunId);
   }
 
   private createRunFromLatestPrompt(sessionId: string, createdAt: number): CreatorProductionRunRecord | null {
@@ -760,7 +1398,11 @@ export class CreatorAssetStore {
       caseIdsJson,
       promptSpecJson,
       context.promptText,
-      JSON.stringify({ sourceTitle: context.sourceTitle }),
+      JSON.stringify({
+        sourceTitle: context.sourceTitle,
+        batchRunId: context.batchRunId,
+        batchTaskId: context.batchTaskId,
+      }),
       createdAt,
       createdAt,
     );
@@ -856,6 +1498,208 @@ export class CreatorAssetStore {
     }));
   }
 
+  private ensureProjectExists(projectId: string): void {
+    this.ensureDefaultProject();
+    const project = this.db.prepare('SELECT id FROM creator_projects WHERE id = ?').get(projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+  }
+
+  private getCurrentBoardStateKey(projectId: string): string {
+    return `${CreatorWorkspaceStateKey.CurrentBoardIdPrefix}:${projectId}`;
+  }
+
+  private setCurrentBoardId(projectId: string, boardId: string): void {
+    this.db.prepare(`
+      INSERT INTO creator_workspace_state (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `).run(this.getCurrentBoardStateKey(projectId), boardId, Date.now());
+  }
+
+  private ensureCurrentBoard(projectId: string): string {
+    const currentRow = this.db.prepare(`
+      SELECT value
+      FROM creator_workspace_state
+      WHERE key = ?
+    `).get(this.getCurrentBoardStateKey(projectId)) as { value: string } | undefined;
+    if (currentRow?.value) {
+      const board = this.db.prepare(`
+        SELECT id
+        FROM creator_boards
+        WHERE id = ? AND project_id = ?
+      `).get(currentRow.value, projectId) as { id: string } | undefined;
+      if (board) return board.id;
+    }
+
+    const existing = this.db.prepare(`
+      SELECT id
+      FROM creator_boards
+      WHERE project_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1
+    `).get(projectId) as { id: string } | undefined;
+    if (existing) {
+      this.setCurrentBoardId(projectId, existing.id);
+      return existing.id;
+    }
+
+    const now = Date.now();
+    const id = uuidv4();
+    this.db.prepare(`
+      INSERT INTO creator_boards (id, project_id, name, description, created_at, updated_at)
+      VALUES (?, ?, ?, NULL, ?, ?)
+    `).run(id, projectId, 'Creative Board', now, now);
+    this.setCurrentBoardId(projectId, id);
+    return id;
+  }
+
+  private getBoardRow(boardId: string): BoardRow | null {
+    const row = this.db.prepare(`
+      SELECT id, project_id, name, description, created_at, updated_at
+      FROM creator_boards
+      WHERE id = ?
+    `).get(boardId) as BoardRow | undefined;
+    return row ?? null;
+  }
+
+  private listBoards(projectId: string): CreatorBoardRecord[] {
+    const rows = this.db.prepare(`
+      SELECT id, project_id, name, description, created_at, updated_at
+      FROM creator_boards
+      WHERE project_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+    `).all(projectId) as BoardRow[];
+    return rows.map((row) => this.mapBoardRow(row));
+  }
+
+  private getBoardCard(cardId: string): CreatorBoardCardRecord | null {
+    const row = this.db.prepare(`
+      SELECT
+        c.*,
+        COALESCE(s.selected, 0) AS selected
+      FROM creator_board_cards c
+      LEFT JOIN creator_board_selections s ON s.board_id = c.board_id AND s.card_id = c.id
+      WHERE c.id = ?
+    `).get(cardId) as BoardCardRow | undefined;
+    return row ? this.mapBoardCardRow(row) : null;
+  }
+
+  private listBoardCards(boardId: string): CreatorBoardCardRecord[] {
+    const rows = this.db.prepare(`
+      SELECT
+        c.*,
+        COALESCE(s.selected, 0) AS selected
+      FROM creator_board_cards c
+      LEFT JOIN creator_board_selections s ON s.board_id = c.board_id AND s.card_id = c.id
+      WHERE c.board_id = ?
+      ORDER BY c.position ASC, c.created_at ASC
+    `).all(boardId) as BoardCardRow[];
+    return rows.map((row) => this.mapBoardCardRow(row));
+  }
+
+  private listSelectedBoardCardIds(boardId: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT card_id
+      FROM creator_board_selections
+      WHERE board_id = ? AND selected = 1
+      ORDER BY updated_at DESC
+    `).all(boardId) as Array<{ card_id: string }>;
+    return rows.map((row) => row.card_id);
+  }
+
+  private reindexBoardCards(boardId: string): void {
+    const rows = this.db.prepare(`
+      SELECT id
+      FROM creator_board_cards
+      WHERE board_id = ?
+      ORDER BY position ASC, created_at ASC
+    `).all(boardId) as Array<{ id: string }>;
+    const now = Date.now();
+    const update = this.db.prepare('UPDATE creator_board_cards SET position = ?, updated_at = ? WHERE id = ?');
+    this.db.transaction(() => {
+      rows.forEach((row, index) => update.run(index, now, row.id));
+    })();
+  }
+
+  private getBrandKit(projectId: string): CreatorBrandKitRecord {
+    const now = Date.now();
+    const row = this.db.prepare(`
+      SELECT project_id, colors_json, logo_asset_id, logo_path, banned_words_json,
+        tone, visual_preferences, created_at, updated_at
+      FROM creator_brand_kits
+      WHERE project_id = ?
+    `).get(projectId) as BrandKitRow | undefined;
+    if (!row) {
+      return {
+        projectId,
+        colors: [],
+        logoAssetId: null,
+        logoPath: null,
+        bannedWords: [],
+        tone: '',
+        visualPreferences: '',
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+    return {
+      projectId: row.project_id,
+      colors: parseJsonArray(row.colors_json),
+      logoAssetId: row.logo_asset_id,
+      logoPath: row.logo_path,
+      bannedWords: parseJsonArray(row.banned_words_json),
+      tone: row.tone ?? '',
+      visualPreferences: row.visual_preferences ?? '',
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private renderBoardContextPack(
+    board: BoardRow,
+    cards: CreatorBoardCardRecord[],
+    brandKit: CreatorBrandKitRecord
+  ): string {
+    const lines = [
+      `Board: ${board.name}`,
+      `projectId: ${board.project_id}`,
+      '',
+      'Brand Kit:',
+      `colors: ${brandKit.colors.length > 0 ? brandKit.colors.join(', ') : 'none'}`,
+      `logo: ${brandKit.logoPath || brandKit.logoAssetId || 'none'}`,
+      `tone: ${brandKit.tone || 'none'}`,
+      `visualPreferences: ${brandKit.visualPreferences || 'none'}`,
+      `bannedWords: ${brandKit.bannedWords.length > 0 ? brandKit.bannedWords.join(', ') : 'none'}`,
+      '',
+      'Selected Board Cards:',
+    ];
+    cards.forEach((card, index) => {
+      lines.push(`${index + 1}. kind=${card.kind}; title=${card.title}; group=${card.groupName || 'none'}`);
+      if (card.assetId) {
+        lines.push(`   assetId=${card.assetId}`);
+        const asset = this.getAsset(card.assetId);
+        if (asset) {
+          lines.push(`   assetKind=${asset.kind}; assetSource=${asset.source}; fileName=${asset.fileName}`);
+          lines.push(`   filePath=${asset.filePath}`);
+          lines.push(`   assetRole=${card.groupName || asset.kind}`);
+          if (asset.templateId) lines.push(`   templateId=${asset.templateId}`);
+          if (asset.caseIds.length > 0) lines.push(`   caseIds=${asset.caseIds.join(', ')}`);
+          if (asset.tags.length > 0) lines.push(`   tags=${asset.tags.join(', ')}`);
+          if (asset.promptText) lines.push(`   assetPrompt=${asset.promptText.slice(0, 1200)}`);
+        }
+      }
+      if (card.caseId) lines.push(`   caseId=${card.caseId}`);
+      if (card.notes) lines.push(`   notes=${card.notes}`);
+      if (card.direction) {
+        lines.push(`   direction=${card.direction.title}; template=${card.direction.template}; style=${card.direction.style}; reason=${card.direction.reason}; focus=${card.direction.promptFocus}`);
+      }
+      if (card.promptText) lines.push(`   prompt=${card.promptText.slice(0, 1200)}`);
+    });
+    return lines.join('\n');
+  }
+
   private getAssetCollectionIds(assetId: string): string[] {
     const rows = this.db.prepare(`
       SELECT collection_id
@@ -875,6 +1719,133 @@ export class CreatorAssetStore {
     return row?.status === CreatorAssetSelectionStatus.Selected;
   }
 
+  private normalizeBatchDirections(directions: CreatorBatchDirectionInput[]): CreatorBatchDirectionInput[] {
+    if (!Array.isArray(directions)) return [];
+    const normalized: CreatorBatchDirectionInput[] = [];
+    for (const direction of directions) {
+      const id = direction.id?.trim();
+      const title = direction.title?.trim();
+      const promptText = direction.promptText?.trim();
+      if (!id || !title || !promptText || !direction.promptSpec) continue;
+      normalized.push({
+        id: id.slice(0, 80),
+        title: title.slice(0, 120),
+        template: (direction.template ?? '').trim().slice(0, 240),
+        style: (direction.style ?? '').trim().slice(0, 240),
+        reason: (direction.reason ?? '').trim().slice(0, 500),
+        promptFocus: (direction.promptFocus ?? '').trim().slice(0, 500),
+        promptText,
+        promptSpec: direction.promptSpec,
+      });
+    }
+    return normalized.slice(0, 6);
+  }
+
+  private renderBatchTaskPrompt(
+    promptText: string,
+    modelName: string,
+    templateId: string,
+    size: string
+  ): string {
+    return [
+      promptText.trim(),
+      '',
+      'Batch execution constraints:',
+      `model=${modelName}`,
+      `templateId=${templateId}`,
+      `size=${size}`,
+    ].join('\n');
+  }
+
+  private getBatchTaskRow(taskId: string): BatchTaskRow | null {
+    const row = this.db.prepare(`
+      SELECT id, batch_run_id, project_id, status, direction_id, direction_title,
+        model_id, model_name, template_id, size, prompt_spec_json, prompt_text,
+        asset_ids_json, error, cost_estimate_text, created_at, updated_at, completed_at
+      FROM creator_batch_tasks
+      WHERE id = ?
+    `).get(taskId) as BatchTaskRow | undefined;
+    return row ?? null;
+  }
+
+  private listBatchTasks(batchRunId: string): CreatorBatchTaskRecord[] {
+    const rows = this.db.prepare(`
+      SELECT id, batch_run_id, project_id, status, direction_id, direction_title,
+        model_id, model_name, template_id, size, prompt_spec_json, prompt_text,
+        asset_ids_json, error, cost_estimate_text, created_at, updated_at, completed_at
+      FROM creator_batch_tasks
+      WHERE batch_run_id = ?
+      ORDER BY direction_id ASC, model_name ASC, template_id ASC, size ASC, created_at ASC
+    `).all(batchRunId) as BatchTaskRow[];
+    return rows.map((row) => this.mapBatchTaskRow(row));
+  }
+
+  private updateBatchRunStatus(batchRunId: string): void {
+    const tasks = this.listBatchTasks(batchRunId);
+    if (tasks.length === 0) return;
+    const hasActive = tasks.some((task) => (
+      task.status === CreatorBatchTaskStatus.Pending
+      || task.status === CreatorBatchTaskStatus.Running
+    ));
+    const hasFailed = tasks.some((task) => task.status === CreatorBatchTaskStatus.Failed);
+    const hasSkipped = tasks.some((task) => task.status === CreatorBatchTaskStatus.Skipped);
+    const hasCompleted = tasks.some((task) => task.status === CreatorBatchTaskStatus.Completed);
+    const nextStatus = hasActive
+      ? CreatorBatchRunStatus.Running
+      : hasFailed || hasSkipped
+        ? hasCompleted
+          ? CreatorBatchRunStatus.PartialFailed
+          : CreatorBatchRunStatus.Failed
+        : CreatorBatchRunStatus.Completed;
+    const now = Date.now();
+    this.db.prepare(`
+      UPDATE creator_batch_runs
+      SET status = ?,
+        updated_at = ?,
+        completed_at = CASE WHEN ? = 1 THEN COALESCE(completed_at, ?) ELSE NULL END
+      WHERE id = ?
+    `).run(nextStatus, now, hasActive ? 0 : 1, now, batchRunId);
+  }
+
+  private mapBatchRunRow(row: BatchRunRow): CreatorBatchRunRecord {
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      status: row.status as CreatorBatchRunStatus,
+      briefTitle: row.brief_title,
+      promptSpec: parsePromptSpec(row.prompt_spec_json) ?? {},
+      promptText: row.prompt_text,
+      summary: parseBatchSummary(row.summary_json),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+      tasks: this.listBatchTasks(row.id),
+    };
+  }
+
+  private mapBatchTaskRow(row: BatchTaskRow): CreatorBatchTaskRecord {
+    return {
+      id: row.id,
+      batchRunId: row.batch_run_id,
+      projectId: row.project_id,
+      status: row.status as CreatorBatchTaskStatus,
+      directionId: row.direction_id,
+      directionTitle: row.direction_title,
+      modelId: row.model_id,
+      modelName: row.model_name,
+      templateId: row.template_id,
+      size: row.size,
+      promptSpec: parsePromptSpec(row.prompt_spec_json) ?? {},
+      promptText: row.prompt_text,
+      assetIds: parseJsonArray(row.asset_ids_json),
+      error: row.error,
+      costEstimateText: row.cost_estimate_text,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+    };
+  }
+
   private mapRunRow(row: ProductionRunRow): CreatorProductionRunRecord {
     return {
       id: row.id,
@@ -889,6 +1860,38 @@ export class CreatorAssetStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       completedAt: row.completed_at,
+    };
+  }
+
+  private mapBoardRow(row: BoardRow): CreatorBoardRecord {
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      name: row.name,
+      description: row.description,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapBoardCardRow(row: BoardCardRow): CreatorBoardCardRecord {
+    return {
+      id: row.id,
+      boardId: row.board_id,
+      projectId: row.project_id,
+      kind: row.kind as CreatorBoardCardKind,
+      title: row.title,
+      assetId: row.asset_id,
+      caseId: row.case_id,
+      promptText: row.prompt_text,
+      promptSpec: parsePromptSpec(row.prompt_spec_json),
+      direction: parseDirection(row.direction_json),
+      groupName: row.group_name,
+      notes: row.notes,
+      position: row.position,
+      selected: Boolean(row.selected),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     };
   }
 

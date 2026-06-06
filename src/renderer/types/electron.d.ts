@@ -19,7 +19,23 @@ import type {
   CreatorAssetCollectionAddInput,
   CreatorAssetCollectionCreateInput,
   CreatorAssetUpdateInput,
+  CreatorBatchRunCreateInput,
+  CreatorBatchRunListInput,
+  CreatorBatchRunListResult,
+  CreatorBatchRunRecord,
+  CreatorBatchTaskFailInput,
+  CreatorBoardCardCreateInput,
+  CreatorBoardCardMoveInput,
+  CreatorBoardCardRecord,
+  CreatorBoardCardSelectInput,
+  CreatorBoardCardUpdateInput,
+  CreatorBoardContextPackInput,
+  CreatorBoardContextPackResult,
+  CreatorBoardCreateInput,
+  CreatorBoardWorkspaceSnapshot,
+  CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
+  CreatorCreativeModelCapability,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -834,6 +850,92 @@ interface IElectronAPI {
     addAssetToCollection: (input: CreatorAssetCollectionAddInput) => Promise<{
       success: boolean;
       asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    getBoardWorkspace: (projectId?: string) => Promise<{
+      success: boolean;
+      workspace?: CreatorBoardWorkspaceSnapshot;
+      error?: string;
+    }>;
+    createBoard: (input: CreatorBoardCreateInput) => Promise<{
+      success: boolean;
+      workspace?: CreatorBoardWorkspaceSnapshot;
+      error?: string;
+    }>;
+    setCurrentBoard: (input: { projectId: string; boardId: string }) => Promise<{
+      success: boolean;
+      workspace?: CreatorBoardWorkspaceSnapshot;
+      error?: string;
+    }>;
+    addBoardCard: (input: CreatorBoardCardCreateInput) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    updateBoardCard: (input: CreatorBoardCardUpdateInput) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    removeBoardCard: (cardId: string) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    moveBoardCard: (input: CreatorBoardCardMoveInput) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    selectBoardCard: (input: CreatorBoardCardSelectInput) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    buildBoardContextPack: (input: CreatorBoardContextPackInput) => Promise<{
+      success: boolean;
+      contextPack?: CreatorBoardContextPackResult;
+      error?: string;
+    }>;
+    updateBrandKit: (input: CreatorBrandKitUpdateInput) => Promise<{
+      success: boolean;
+      workspace?: CreatorBoardWorkspaceSnapshot;
+      error?: string;
+    }>;
+    listModelCapabilities: () => Promise<{
+      success: boolean;
+      capabilities?: CreatorCreativeModelCapability[];
+      error?: string;
+    }>;
+    createBatchRun: (input: CreatorBatchRunCreateInput) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
+    listBatchRuns: (input?: CreatorBatchRunListInput) => Promise<{
+      success: boolean;
+      runs?: CreatorBatchRunListResult['runs'];
+      total?: number;
+      error?: string;
+    }>;
+    getBatchRun: (batchRunId: string) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
+    retryBatchTask: (taskId: string) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
+    skipBatchTask: (taskId: string) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
+    failBatchTask: (input: CreatorBatchTaskFailInput) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
       error?: string;
     }>;
   };

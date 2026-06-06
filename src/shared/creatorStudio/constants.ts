@@ -11,6 +11,23 @@ export const CreatorStudioIpcChannel = {
   ProjectSetCurrent: 'creatorStudio:project:setCurrent',
   CollectionCreate: 'creatorStudio:collection:create',
   CollectionAddAsset: 'creatorStudio:collection:addAsset',
+  BoardWorkspaceGet: 'creatorStudio:board:workspace:get',
+  BoardCreate: 'creatorStudio:board:create',
+  BoardSetCurrent: 'creatorStudio:board:setCurrent',
+  BoardCardAdd: 'creatorStudio:board:card:add',
+  BoardCardUpdate: 'creatorStudio:board:card:update',
+  BoardCardRemove: 'creatorStudio:board:card:remove',
+  BoardCardMove: 'creatorStudio:board:card:move',
+  BoardCardSelect: 'creatorStudio:board:card:select',
+  BoardBuildContextPack: 'creatorStudio:board:contextPack:build',
+  BrandKitUpdate: 'creatorStudio:brandKit:update',
+  ModelCapabilityList: 'creatorStudio:modelCapability:list',
+  BatchRunCreate: 'creatorStudio:batchRun:create',
+  BatchRunList: 'creatorStudio:batchRun:list',
+  BatchRunGet: 'creatorStudio:batchRun:get',
+  BatchTaskRetry: 'creatorStudio:batchTask:retry',
+  BatchTaskSkip: 'creatorStudio:batchTask:skip',
+  BatchTaskFail: 'creatorStudio:batchTask:fail',
 } as const;
 
 export type CreatorStudioIpcChannel =
@@ -117,6 +134,87 @@ export const CreatorAssetSelectionStatusValues = [
   CreatorAssetSelectionStatus.Unselected,
 ] as const;
 
+export const CreatorBoardCardKind = {
+  Asset: 'asset',
+  Case: 'case',
+  Prompt: 'prompt',
+  Direction: 'direction',
+} as const;
+
+export type CreatorBoardCardKind =
+  typeof CreatorBoardCardKind[keyof typeof CreatorBoardCardKind];
+
+export const CreatorBoardCardKindValues = [
+  CreatorBoardCardKind.Asset,
+  CreatorBoardCardKind.Case,
+  CreatorBoardCardKind.Prompt,
+  CreatorBoardCardKind.Direction,
+] as const;
+
+export const CreatorBoardMoveDirection = {
+  Up: 'up',
+  Down: 'down',
+} as const;
+
+export type CreatorBoardMoveDirection =
+  typeof CreatorBoardMoveDirection[keyof typeof CreatorBoardMoveDirection];
+
+export const CreatorBoardMoveDirectionValues = [
+  CreatorBoardMoveDirection.Up,
+  CreatorBoardMoveDirection.Down,
+] as const;
+
+export const CreatorCreativeModelOutputKind = {
+  Image: 'image',
+  Video: 'video',
+  Text: 'text',
+} as const;
+
+export type CreatorCreativeModelOutputKind =
+  typeof CreatorCreativeModelOutputKind[keyof typeof CreatorCreativeModelOutputKind];
+
+export const CreatorCreativeModelOutputKindValues = [
+  CreatorCreativeModelOutputKind.Image,
+  CreatorCreativeModelOutputKind.Video,
+  CreatorCreativeModelOutputKind.Text,
+] as const;
+
+export const CreatorBatchRunStatus = {
+  Running: 'running',
+  Completed: 'completed',
+  PartialFailed: 'partial_failed',
+  Failed: 'failed',
+} as const;
+
+export type CreatorBatchRunStatus =
+  typeof CreatorBatchRunStatus[keyof typeof CreatorBatchRunStatus];
+
+export const CreatorBatchRunStatusValues = [
+  CreatorBatchRunStatus.Running,
+  CreatorBatchRunStatus.Completed,
+  CreatorBatchRunStatus.PartialFailed,
+  CreatorBatchRunStatus.Failed,
+] as const;
+
+export const CreatorBatchTaskStatus = {
+  Pending: 'pending',
+  Running: 'running',
+  Completed: 'completed',
+  Failed: 'failed',
+  Skipped: 'skipped',
+} as const;
+
+export type CreatorBatchTaskStatus =
+  typeof CreatorBatchTaskStatus[keyof typeof CreatorBatchTaskStatus];
+
+export const CreatorBatchTaskStatusValues = [
+  CreatorBatchTaskStatus.Pending,
+  CreatorBatchTaskStatus.Running,
+  CreatorBatchTaskStatus.Completed,
+  CreatorBatchTaskStatus.Failed,
+  CreatorBatchTaskStatus.Skipped,
+] as const;
+
 export const CreatorStudioDefaultProjectId = 'creator-project-default';
 
 export const CreatorStudioAssetListDefaultLimit = 60;
@@ -155,4 +253,29 @@ export const isCreatorAssetAdoptionStatus = (value: unknown): value is CreatorAs
 export const isCreatorAssetSelectionStatus = (value: unknown): value is CreatorAssetSelectionStatus => (
   typeof value === 'string'
   && CreatorAssetSelectionStatusValues.includes(value as CreatorAssetSelectionStatus)
+);
+
+export const isCreatorBoardCardKind = (value: unknown): value is CreatorBoardCardKind => (
+  typeof value === 'string'
+  && CreatorBoardCardKindValues.includes(value as CreatorBoardCardKind)
+);
+
+export const isCreatorBoardMoveDirection = (value: unknown): value is CreatorBoardMoveDirection => (
+  typeof value === 'string'
+  && CreatorBoardMoveDirectionValues.includes(value as CreatorBoardMoveDirection)
+);
+
+export const isCreatorCreativeModelOutputKind = (value: unknown): value is CreatorCreativeModelOutputKind => (
+  typeof value === 'string'
+  && CreatorCreativeModelOutputKindValues.includes(value as CreatorCreativeModelOutputKind)
+);
+
+export const isCreatorBatchRunStatus = (value: unknown): value is CreatorBatchRunStatus => (
+  typeof value === 'string'
+  && CreatorBatchRunStatusValues.includes(value as CreatorBatchRunStatus)
+);
+
+export const isCreatorBatchTaskStatus = (value: unknown): value is CreatorBatchTaskStatus => (
+  typeof value === 'string'
+  && CreatorBatchTaskStatusValues.includes(value as CreatorBatchTaskStatus)
 );
