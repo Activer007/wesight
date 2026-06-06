@@ -39,15 +39,31 @@ test('normalizes page payload and full prompt records', () => {
       id: 6845,
       title: 'Prompt title',
       content: 'Create a cinematic portrait.',
+      author: {
+        name: 'Nano author',
+        link: 'https://example.com/author',
+      },
       media: ['https://example.com/image.jpg'],
       tags_zh: ['电影感'],
       needReferenceImages: true,
+    }, {
+      id: 6846,
+      title: 'Prompt without author',
+      content: 'Create a product photo.',
+      author: {
+        link: 'https://example.com/missing-name',
+      },
     }],
   }, DefaultNanoBananaPromptSource.id, 'etag-page');
 
-  expect(result?.page.itemCount).toBe(1);
+  expect(result?.page.itemCount).toBe(2);
   expect(result?.page.etag).toBe('etag-page');
   expect(result?.prompts[0].id).toBe('nano-supai:6845');
+  expect(result?.prompts[0].author).toEqual({
+    name: 'Nano author',
+    link: 'https://example.com/author',
+  });
   expect(result?.prompts[0].needReferenceImages).toBe(true);
   expect(result?.prompts[0].tagsZh).toEqual(['电影感']);
+  expect(result?.prompts[1].author).toBeNull();
 });

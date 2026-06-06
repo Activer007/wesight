@@ -35,6 +35,14 @@ const toStringArray = (value: unknown): string[] => (
     : []
 );
 
+const normalizeNanoAuthor = (value: unknown): NanoBananaPrompt['author'] => {
+  const record = toRecord(value);
+  const name = toString(record.name).trim();
+  if (!name) return null;
+  const link = toOptionalString(record.link);
+  return link ? { name, link } : { name };
+};
+
 const getSourcePromptId = (item: Record<string, unknown>): string => {
   const rawId = item.id;
   if (typeof rawId === 'number' || typeof rawId === 'string') {
@@ -111,7 +119,7 @@ export const normalizeNanoPrompt = (
     sourceLink: toOptionalString(record.sourceLink),
     sourcePlatform: toOptionalString(record.sourcePlatform),
     sourcePublishedAt: toOptionalString(record.sourcePublishedAt),
-    author: toRecord(record.author) as NanoBananaPrompt['author'],
+    author: normalizeNanoAuthor(record.author),
     media: toStringArray(record.media),
     mediaThumbnails: toStringArray(record.mediaThumbnails),
     language: toString(record.language),
