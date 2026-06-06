@@ -152,3 +152,49 @@ test('initializes creator image processing schema idempotently', () => {
   expect(indexNames.has('idx_creator_image_processing_jobs_project_created')).toBe(true);
   expect(indexNames.has('idx_creator_image_processing_tasks_job')).toBe(true);
 });
+
+test('initializes Nano prompt schema idempotently', () => {
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wesight-sqlite-'));
+  tempDirs.push(userDataDir);
+
+  const firstStore = SqliteStore.create(userDataDir);
+  firstStore.close();
+  const secondStore = SqliteStore.create(userDataDir);
+  const db = secondStore.getDatabase();
+  const rows = db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN (
+        'nano_sources',
+        'nano_prompt_index_items',
+        'nano_prompts',
+        'nano_prompt_pages',
+        'nano_prompt_imports',
+        'nano_prompt_usage_events'
+      )
+  `).all() as Array<{ name: string }>;
+  const indexes = db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'index'
+      AND name IN (
+        'idx_nano_prompt_index_items_source_page',
+        'idx_nano_prompts_source_page',
+        'idx_nano_prompt_usage_events_source_type'
+      )
+  `).all() as Array<{ name: string }>;
+  secondStore.close();
+
+  const tableNames = new Set(rows.map((row) => row.name));
+  const indexNames = new Set(indexes.map((row) => row.name));
+  expect(tableNames.has('nano_sources')).toBe(true);
+  expect(tableNames.has('nano_prompt_index_items')).toBe(true);
+  expect(tableNames.has('nano_prompts')).toBe(true);
+  expect(tableNames.has('nano_prompt_pages')).toBe(true);
+  expect(tableNames.has('nano_prompt_imports')).toBe(true);
+  expect(tableNames.has('nano_prompt_usage_events')).toBe(true);
+  expect(indexNames.has('idx_nano_prompt_index_items_source_page')).toBe(true);
+  expect(indexNames.has('idx_nano_prompts_source_page')).toBe(true);
+  expect(indexNames.has('idx_nano_prompt_usage_events_source_type')).toBe(true);
+});

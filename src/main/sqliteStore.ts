@@ -10,6 +10,7 @@ import { DB_FILENAME } from './appConstants';
 import { ensureCoworkEventSchema } from './coworkEventStore';
 import { ensureCreatorImageProcessingSchema } from './creatorImageProcessingSchema';
 import { ensureCreatorProductionSchema } from './creatorProductionSchema';
+import { ensureNanoPromptSchema } from './nanoBanana/nanoPromptSchema';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -108,6 +109,7 @@ export class SqliteStore {
     ensureCoworkEventSchema(this.db);
     ensureCreatorProductionSchema(this.db);
     ensureCreatorImageProcessingSchema(this.db);
+    ensureNanoPromptSchema(this.db);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_runtime_calls (
