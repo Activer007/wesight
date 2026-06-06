@@ -193,6 +193,7 @@ import {
 } from './libs/systemProxy';
 import { getLogFilePath, getRecentMainLogEntries,initLogger } from './logger';
 import { McpStore } from './mcpStore';
+import { NanoPromptCacheExporter } from './nanoBanana/nanoPromptCacheExporter';
 import { NanoPromptSearch } from './nanoBanana/nanoPromptSearch';
 import { NanoPromptStore } from './nanoBanana/nanoPromptStore';
 import { NanoPromptSyncService } from './nanoBanana/nanoPromptSyncService';
@@ -1177,7 +1178,11 @@ const getNanoPromptSearch = () => {
 
 const getNanoPromptSyncService = () => {
   if (!nanoPromptSyncService) {
-    nanoPromptSyncService = new NanoPromptSyncService(getNanoPromptStore());
+    nanoPromptSyncService = new NanoPromptSyncService(
+      getNanoPromptStore(),
+      undefined,
+      new NanoPromptCacheExporter(getNanoPromptStore(), app.getPath('userData')),
+    );
   }
   return nanoPromptSyncService;
 };

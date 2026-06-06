@@ -14,6 +14,7 @@ import type {
   NanoBananaUsageEventRecord,
   NanoBananaUsageRecordInput,
 } from '../../shared/nanoBanana/types';
+import type { NanoPromptCacheExporter } from './nanoPromptCacheExporter';
 import {
   normalizeNanoFeedMeta,
   normalizeNanoIndexItems,
@@ -26,6 +27,7 @@ export class NanoPromptSyncService {
   constructor(
     private readonly store: NanoPromptStore,
     private readonly client = new NanoRemoteJsonClient(),
+    private readonly cacheExporter?: NanoPromptCacheExporter,
   ) {}
 
   getStatus(sourceId = NanoBananaDefaultSourceId) {
@@ -127,6 +129,7 @@ export class NanoPromptSyncService {
         lastSyncedAt: now,
         etagIndex: indexResponse.etag ?? source.etagIndex,
       }, now);
+      this.exportCache(sourceId, warnings);
       const status = this.store.getStatus(sourceId);
       return {
         sourceId,
@@ -243,10 +246,21 @@ export class NanoPromptSyncService {
       }
       this.store.upsertPage(normalized.page, now);
       this.store.upsertPrompts(normalized.prompts, now);
+      this.exportCache(source.id, warnings);
       return normalized.prompts;
     } catch (error) {
       warnings.push(error instanceof Error ? error.message : 'Nano page fetch failed');
       return [];
+    }
+  }
+
+  private exportCache(sourceId: string, warnings: string[]): void {
+    if (!this.cacheExporter) return;
+    try {
+      this.cacheExporter.exportSource(sourceId);
+    } catch (error) {
+      warnings.push('Nano read-only cache export failed');
+      console.warn('[NanoBanana] read-only cache export failed:', error);
     }
   }
 }
