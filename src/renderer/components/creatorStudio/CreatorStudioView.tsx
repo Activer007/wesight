@@ -15,9 +15,14 @@ import {
 import {
   CreatorAssetAdoptionStatus,
   CreatorBatchTaskStatus,
+  CreatorImageProcessingJobStatus,
+  CreatorImageProcessingTaskStatus,
   CreatorProductionAssetKind,
   CreatorStudioDefaultProjectId,
 } from '@shared/creatorStudio/constants';
+import type {
+  CreatorImageJobListResult,
+} from '@shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorBatchRunCreateInput,
   CreatorBatchRunRecord,
@@ -82,6 +87,7 @@ import { getCreatorTemplateFieldSchema } from '../../utils/creatorTemplateFields
 import { CreatorAssetGrid } from './CreatorAssetGrid';
 import { CreatorBatchPanel } from './CreatorBatchPanel';
 import { CreatorBoard } from './CreatorBoard';
+import { CreatorImageProcessingBatchPanel } from './CreatorImageProcessingBatchPanel';
 
 const cases = casesData as CreatorStudioCase[];
 const styleLibrary = styleLibraryData as CreatorStudioStyleLibrary;
@@ -97,6 +103,13 @@ const CreatorStudioTab = {
 } as const;
 
 type CreatorStudioTab = typeof CreatorStudioTab[keyof typeof CreatorStudioTab];
+
+const CreatorBatchSubview = {
+  Generation: 'generation',
+  ImageProcessing: 'image_processing',
+} as const;
+
+type CreatorBatchSubview = typeof CreatorBatchSubview[keyof typeof CreatorBatchSubview];
 
 const WINNING_ASSET_ADOPTION_STATUSES = new Set<string>([
   CreatorAssetAdoptionStatus.Adopted,
@@ -361,6 +374,8 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const [batchRuns, setBatchRuns] = useState<CreatorBatchRunRecord[]>([]);
   const [activeBatchRun, setActiveBatchRun] = useState<CreatorBatchRunRecord | null>(null);
   const [isCreatingBatchRun, setIsCreatingBatchRun] = useState(false);
+  const [batchSubview, setBatchSubview] = useState<CreatorBatchSubview>(CreatorBatchSubview.Generation);
+  const [imageProcessingJobs, setImageProcessingJobs] = useState<CreatorImageJobListResult['jobs']>([]);
   const [recipes, setRecipes] = useState<CreatorRecipeRecord[]>([]);
   const [projectAssets, setProjectAssets] = useState<CreatorProductionAssetRecord[]>([]);
 
@@ -389,6 +404,11 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       if (!current) return result.runs[0] ?? null;
       return result.runs.find((run) => run.id === current.id) ?? result.runs[0] ?? null;
     });
+  }, []);
+
+  const loadImageProcessingJobs = useCallback(async (projectId: string) => {
+    const result = await creatorStudioAssetService.listImageJobs({ projectId, limit: 20 });
+    setImageProcessingJobs(result.jobs);
   }, []);
 
   const loadRecipes = useCallback(async (projectId: string) => {
@@ -429,6 +449,31 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       dispatchToast(i18nService.t('creatorBatchLoadFailed'));
     });
   }, [currentProjectId, loadBatchRuns]);
+
+  useEffect(() => {
+    if (!currentProjectId) return;
+    void loadImageProcessingJobs(currentProjectId).catch(() => {
+      dispatchToast(i18nService.t('creatorImageBatchLoadFailed'));
+    });
+  }, [currentProjectId, loadImageProcessingJobs]);
+
+  useEffect(() => {
+    if (!currentProjectId || batchSubview !== CreatorBatchSubview.ImageProcessing) return undefined;
+    const hasActiveImageJob = imageProcessingJobs.some(({ job, tasks }) => (
+      job.status === CreatorImageProcessingJobStatus.Running
+      || tasks.some((task) => (
+        task.status === CreatorImageProcessingTaskStatus.Pending
+        || task.status === CreatorImageProcessingTaskStatus.Running
+      ))
+    ));
+    if (!hasActiveImageJob) return undefined;
+    const timer = window.setInterval(() => {
+      void loadImageProcessingJobs(currentProjectId).catch(() => {
+        dispatchToast(i18nService.t('creatorImageBatchLoadFailed'));
+      });
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [batchSubview, currentProjectId, imageProcessingJobs, loadImageProcessingJobs]);
 
   useEffect(() => {
     if (!currentProjectId) return;
@@ -1044,6 +1089,31 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     }
   };
 
+  const retryImageProcessingTask = async (taskId: string) => {
+    if (!currentProjectId) return;
+    try {
+      await creatorStudioAssetService.retryImageTask({ taskId });
+      await Promise.all([
+        loadImageProcessingJobs(currentProjectId),
+        loadProjectAssets(currentProjectId),
+      ]);
+      dispatchToast(i18nService.t('creatorImageBatchRetryDone'));
+    } catch (error) {
+      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageBatchRetryFailed'));
+    }
+  };
+
+  const cancelImageProcessingTask = async (taskId: string) => {
+    if (!currentProjectId) return;
+    try {
+      await creatorStudioAssetService.cancelImageTask({ taskId });
+      await loadImageProcessingJobs(currentProjectId);
+      dispatchToast(i18nService.t('creatorImageBatchCancelDone'));
+    } catch (error) {
+      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageBatchCancelFailed'));
+    }
+  };
+
   const skipBatchTask = async (taskId: string) => {
     try {
       const batchRun = await creatorStudioAssetService.skipBatchTask(taskId);
@@ -1368,27 +1438,69 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
           />
         )}
         {activeTab === CreatorStudioTab.Batch && (
-          <CreatorBatchPanel
-            projectId={currentProjectId}
-            promptSpec={batchPromptSpec}
-            promptText={batchPromptText}
-            templates={styleLibrary.templates}
-            modelCapabilities={modelCapabilities}
-            batchRuns={batchRuns}
-            activeBatchRun={activeBatchRun}
-            isCreating={isCreatingBatchRun}
-            onCreateBatchRun={(input) => void createBatchRun(input)}
-            onSelectBatchRun={setActiveBatchRun}
-            onRefresh={() => {
-              if (currentProjectId) void loadBatchRuns(currentProjectId);
-            }}
-            onRetryTask={(taskId) => void retryBatchTask(taskId)}
-            onSkipTask={(taskId) => void skipBatchTask(taskId)}
-            onFailTask={(taskId) => void failBatchTask(taskId)}
-            onSendTaskToCowork={(task) => void sendBatchTaskToCowork(task)}
-            onSendBatchToCowork={(batchRun) => void sendBatchRunToCowork(batchRun)}
-            onSaveTaskAsRecipe={(task) => void saveBatchTaskAsRecipe(task)}
-          />
+          <div>
+            <div className="border-b border-border px-4 py-3">
+              <div className="inline-flex rounded-lg border border-border bg-surface p-1">
+                <button
+                  type="button"
+                  onClick={() => setBatchSubview(CreatorBatchSubview.Generation)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                    batchSubview === CreatorBatchSubview.Generation
+                      ? 'bg-primary text-white'
+                      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                  }`}
+                >
+                  {i18nService.t('creatorBatchGenerationSegment')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBatchSubview(CreatorBatchSubview.ImageProcessing)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                    batchSubview === CreatorBatchSubview.ImageProcessing
+                      ? 'bg-primary text-white'
+                      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                  }`}
+                >
+                  {i18nService.t('creatorBatchImageProcessingSegment')}
+                </button>
+              </div>
+            </div>
+            {batchSubview === CreatorBatchSubview.Generation ? (
+              <CreatorBatchPanel
+                projectId={currentProjectId}
+                promptSpec={batchPromptSpec}
+                promptText={batchPromptText}
+                templates={styleLibrary.templates}
+                modelCapabilities={modelCapabilities}
+                batchRuns={batchRuns}
+                activeBatchRun={activeBatchRun}
+                isCreating={isCreatingBatchRun}
+                onCreateBatchRun={(input) => void createBatchRun(input)}
+                onSelectBatchRun={setActiveBatchRun}
+                onRefresh={() => {
+                  if (currentProjectId) void loadBatchRuns(currentProjectId);
+                }}
+                onRetryTask={(taskId) => void retryBatchTask(taskId)}
+                onSkipTask={(taskId) => void skipBatchTask(taskId)}
+                onFailTask={(taskId) => void failBatchTask(taskId)}
+                onSendTaskToCowork={(task) => void sendBatchTaskToCowork(task)}
+                onSendBatchToCowork={(batchRun) => void sendBatchRunToCowork(batchRun)}
+                onSaveTaskAsRecipe={(task) => void saveBatchTaskAsRecipe(task)}
+              />
+            ) : (
+              <CreatorImageProcessingBatchPanel
+                jobs={imageProcessingJobs}
+                onRefresh={() => {
+                  if (currentProjectId) void loadImageProcessingJobs(currentProjectId);
+                }}
+                onRevealOutput={(input) => void creatorStudioAssetService.revealImageOutput(input).catch((error) => {
+                  dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingRevealFailed'));
+                })}
+                onRetryTask={(taskId) => void retryImageProcessingTask(taskId)}
+                onCancelTask={(taskId) => void cancelImageProcessingTask(taskId)}
+              />
+            )}
+          </div>
         )}
       </main>
 

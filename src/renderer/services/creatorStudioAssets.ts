@@ -1,13 +1,21 @@
 import type {
+  CreatorImageBatchCreateInput,
+  CreatorImageBatchCreateResult,
   CreatorImageJobExecuteInput,
   CreatorImageJobExecuteResult,
   CreatorImageJobGetInput,
   CreatorImageJobGetResult,
+  CreatorImageJobListInput,
+  CreatorImageJobListResult,
   CreatorImageOutputRevealInput,
   CreatorImagePlanCreateInput,
   CreatorImagePlanCreateResult,
   CreatorImagePlanGetInput,
   CreatorImagePlanGetResult,
+  CreatorImageTaskCancelInput,
+  CreatorImageTaskCancelResult,
+  CreatorImageTaskRetryInput,
+  CreatorImageTaskRetryResult,
 } from '@shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorAssetCollectionAddInput,
@@ -125,6 +133,53 @@ class CreatorStudioAssetService {
     }
     if (!result.job || !result.tasks) return null;
     return { job: result.job, tasks: result.tasks };
+  }
+
+  async listImageJobs(input: CreatorImageJobListInput): Promise<CreatorImageJobListResult> {
+    const result = await window.electron.creatorStudio.listImageJobs(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to list image processing jobs');
+    }
+    return {
+      jobs: result.jobs ?? [],
+      total: result.total ?? 0,
+    };
+  }
+
+  async createImageBatch(input: CreatorImageBatchCreateInput): Promise<CreatorImageBatchCreateResult> {
+    const result = await window.electron.creatorStudio.createImageBatch(input);
+    if (!result.success || !result.plan || !result.job || !result.tasks) {
+      throw new Error(result.error || 'Failed to create image processing batch');
+    }
+    return {
+      plan: result.plan,
+      job: result.job,
+      tasks: result.tasks,
+      outputAssetIds: result.outputAssetIds ?? [],
+    };
+  }
+
+  async retryImageTask(input: CreatorImageTaskRetryInput): Promise<CreatorImageTaskRetryResult> {
+    const result = await window.electron.creatorStudio.retryImageTask(input);
+    if (!result.success || !result.job || !result.tasks) {
+      throw new Error(result.error || 'Failed to retry image processing task');
+    }
+    return {
+      job: result.job,
+      tasks: result.tasks,
+      outputAssetIds: result.outputAssetIds ?? [],
+    };
+  }
+
+  async cancelImageTask(input: CreatorImageTaskCancelInput): Promise<CreatorImageTaskCancelResult> {
+    const result = await window.electron.creatorStudio.cancelImageTask(input);
+    if (!result.success || !result.job || !result.tasks) {
+      throw new Error(result.error || 'Failed to cancel image processing task');
+    }
+    return {
+      job: result.job,
+      tasks: result.tasks,
+    };
   }
 
   async revealImageOutput(input: CreatorImageOutputRevealInput): Promise<void> {

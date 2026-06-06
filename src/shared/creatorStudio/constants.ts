@@ -40,6 +40,10 @@ export const CreatorStudioIpcChannel = {
   ImagePlanGet: 'creatorStudio:imagePlan:get',
   ImageJobExecute: 'creatorStudio:imageJob:execute',
   ImageJobGet: 'creatorStudio:imageJob:get',
+  ImageJobList: 'creatorStudio:imageJob:list',
+  ImageBatchCreate: 'creatorStudio:imageBatch:create',
+  ImageTaskRetry: 'creatorStudio:imageTask:retry',
+  ImageTaskCancel: 'creatorStudio:imageTask:cancel',
   ImageOutputReveal: 'creatorStudio:imageOutput:reveal',
 } as const;
 

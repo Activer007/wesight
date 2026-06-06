@@ -11,6 +11,9 @@ import {
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
   CreatorImageMetadataStatus,
+  CreatorImageProcessingJobStatus,
+  CreatorImageProcessingPlanStatus,
+  CreatorImageProcessingTaskStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -19,8 +22,22 @@ import {
   CreatorPromptSpecSchemaVersion,
   CreatorStudioDefaultProjectId,
   isCreatorImageMetadataStatus,
+  isCreatorImageProcessingJobStatus,
+  isCreatorImageProcessingPlanStatus,
+  isCreatorImageProcessingTaskStatus,
 } from '../shared/creatorStudio/constants';
-import type { CreatorImageMetadata } from '../shared/creatorStudio/imageProcessingTypes';
+import type {
+  CreatorImageBatchCreateInput,
+  CreatorImageBatchCreateResult,
+  CreatorImageJobListInput,
+  CreatorImageJobListResult,
+  CreatorImageMetadata,
+  CreatorImageProcessingJob,
+  CreatorImageProcessingPlan,
+  CreatorImageProcessingTask,
+  CreatorImageTaskCancelResult,
+  CreatorImageTaskRetryResult,
+} from '../shared/creatorStudio/imageProcessingTypes';
 import { CREATOR_CREATIVE_MODEL_CAPABILITIES } from '../shared/creatorStudio/modelCapabilities';
 import type {
   CreatorAssetCollectionAddInput,
@@ -79,6 +96,8 @@ import type {
 } from '../shared/creatorStudio/types';
 import type { CoworkMessage, CoworkMessageMetadata } from './coworkStore';
 import { inspectImageMetadata } from './libs/imageProcessing/imageMetadataInspector';
+import { createCreatorAssetsImageProcessingPlan } from './libs/imageProcessing/imageProcessingPlanner';
+import { executeImageProcessingTask } from './libs/imageProcessing/imageProcessingService';
 
 interface ProductionAssetRow {
   id: string;
@@ -133,6 +152,55 @@ interface ProductionRunRow {
   case_ids: string;
   prompt_spec: string | null;
   prompt_text: string;
+  created_at: number;
+  updated_at: number;
+  completed_at: number | null;
+}
+
+interface ImageProcessingPlanRow {
+  id: string;
+  project_id: string;
+  source_json: string;
+  plan_json: string;
+  status: string;
+  preset_id: string | null;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+}
+
+interface ImageProcessingJobRow {
+  id: string;
+  project_id: string;
+  plan_id: string;
+  status: string;
+  total_count: number;
+  success_count: number;
+  failed_count: number;
+  input_total_size: number;
+  output_total_size: number;
+  saved_size: number;
+  report_asset_id: string | null;
+  created_at: number;
+  started_at: number | null;
+  completed_at: number | null;
+}
+
+interface ImageProcessingTaskRow {
+  id: string;
+  job_id: string;
+  project_id: string;
+  source_asset_id: string | null;
+  output_asset_id: string | null;
+  source_artifact_id: string | null;
+  source_path: string;
+  output_path: string | null;
+  status: string;
+  input_size: number | null;
+  output_size: number | null;
+  duration_ms: number | null;
+  error_code: string | null;
+  error_message: string | null;
   created_at: number;
   updated_at: number;
   completed_at: number | null;
@@ -299,6 +367,17 @@ const parseJsonObject = (value: string | null | undefined): Record<string, unkno
       : {};
   } catch {
     return {};
+  }
+};
+
+const parseImageProcessingPlanJson = (value: string): CreatorImageProcessingPlan | null => {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as CreatorImageProcessingPlan
+      : null;
+  } catch {
+    return null;
   }
 };
 
@@ -1343,6 +1422,417 @@ export class CreatorAssetStore {
     );
 
     return this.getAsset(id)!;
+  }
+
+  async createImageProcessingBatchJob(input: CreatorImageBatchCreateInput): Promise<CreatorImageBatchCreateResult> {
+    const projectId = input.projectId.trim() || CreatorStudioDefaultProjectId;
+    const assetIds = [...new Set(input.assetIds.map((assetId) => assetId.trim()).filter(Boolean))];
+    const assets: CreatorProductionAssetRecord[] = [];
+    for (const assetId of assetIds) {
+      let asset = this.getAsset(assetId);
+      if (!asset || asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready) {
+        continue;
+      }
+      if (!asset.imageMetadata) {
+        const inspected = await this.inspectImageAsset({ assetId: asset.id });
+        asset = inspected?.asset ?? asset;
+      }
+      assets.push(asset);
+    }
+
+    if (assets.length === 0) {
+      throw new Error('At least one ready image asset is required');
+    }
+
+    const plan = createCreatorAssetsImageProcessingPlan({
+      projectId,
+      assets,
+      presetId: input.presetId,
+      outputFormat: input.outputFormat,
+      quality: input.quality,
+      width: input.width,
+      height: input.height,
+      maxWidth: input.maxWidth,
+      maxHeight: input.maxHeight,
+      cropRatio: input.cropRatio,
+      rotate: input.rotate,
+      outputDirectory: input.outputDirectory,
+    });
+    const job = this.createImageProcessingJobShell(plan);
+    const tasks = plan.inputItems.map((_item, index) => this.createImageProcessingTaskShell(job, plan, index));
+    this.insertImageProcessingPlan(plan);
+    this.insertImageProcessingJob(job);
+    for (const task of tasks) {
+      this.insertImageProcessingTask(task);
+    }
+
+    if (input.waitForCompletion === false) {
+      void this.executeImageProcessingJobQueue(plan, job, tasks).catch((error) => {
+        console.error('[CreatorImageProcessing] batch job execution failed:', error);
+      });
+      return {
+        plan,
+        job,
+        tasks,
+        outputAssetIds: [],
+      };
+    }
+
+    const executed = await this.executeImageProcessingJobQueue(plan, job, tasks);
+    return {
+      plan,
+      job: executed.job,
+      tasks: executed.tasks,
+      outputAssetIds: executed.tasks
+        .map((task) => task.outputAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId)),
+    };
+  }
+
+  listImageProcessingJobs(input: CreatorImageJobListInput = {}): CreatorImageJobListResult {
+    const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 20), 100));
+    const offset = Math.max(0, Math.floor(input.offset ?? 0));
+    const projectId = input.projectId?.trim();
+    const where = projectId ? 'WHERE project_id = ?' : '';
+    const args = projectId ? [projectId] : [];
+    const rows = this.db.prepare(`
+      SELECT * FROM creator_image_processing_jobs
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...args, limit, offset) as ImageProcessingJobRow[];
+    const total = (this.db.prepare(`
+      SELECT COUNT(*) AS count FROM creator_image_processing_jobs ${where}
+    `).get(...args) as { count: number }).count;
+
+    return {
+      jobs: rows.map((row) => {
+        const job = this.mapImageProcessingJobRow(row);
+        return { job, tasks: this.listImageProcessingTasks(job.id) };
+      }),
+      total,
+    };
+  }
+
+  getImageProcessingJob(jobId: string): { job: CreatorImageProcessingJob; tasks: CreatorImageProcessingTask[] } | null {
+    const row = this.db.prepare(`
+      SELECT * FROM creator_image_processing_jobs WHERE id = ? LIMIT 1
+    `).get(jobId) as ImageProcessingJobRow | undefined;
+    if (!row) return null;
+    const job = this.mapImageProcessingJobRow(row);
+    return { job, tasks: this.listImageProcessingTasks(job.id) };
+  }
+
+  getImageProcessingPlan(planId: string): CreatorImageProcessingPlan | null {
+    const row = this.db.prepare(`
+      SELECT * FROM creator_image_processing_plans WHERE id = ? LIMIT 1
+    `).get(planId) as ImageProcessingPlanRow | undefined;
+    if (!row) return null;
+    return this.mapImageProcessingPlanRow(row);
+  }
+
+  async retryImageProcessingTask(taskId: string): Promise<CreatorImageTaskRetryResult | null> {
+    const taskRow = this.db.prepare(`
+      SELECT * FROM creator_image_processing_tasks WHERE id = ? LIMIT 1
+    `).get(taskId) as ImageProcessingTaskRow | undefined;
+    if (!taskRow) return null;
+    const jobRecord = this.getImageProcessingJob(taskRow.job_id);
+    if (!jobRecord) return null;
+    const plan = this.getImageProcessingPlan(jobRecord.job.planId);
+    if (!plan) return null;
+    const index = jobRecord.tasks.findIndex((task) => task.id === taskId);
+    if (index < 0) return null;
+
+    const task: CreatorImageProcessingTask = {
+      ...jobRecord.tasks[index],
+      status: CreatorImageProcessingTaskStatus.Pending,
+      outputAssetId: null,
+      outputSize: null,
+      durationMs: null,
+      errorCode: null,
+      errorMessage: null,
+      completedAt: null,
+      updatedAt: Date.now(),
+    };
+    this.updateImageProcessingTask(task);
+    const executed = await this.executeImageProcessingJobQueue(plan, jobRecord.job, [task], 1);
+    return {
+      job: executed.job,
+      tasks: this.listImageProcessingTasks(executed.job.id),
+      outputAssetIds: executed.tasks
+        .map((item) => item.outputAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId)),
+    };
+  }
+
+  cancelImageProcessingTask(taskId: string): CreatorImageTaskCancelResult | null {
+    const taskRow = this.db.prepare(`
+      SELECT * FROM creator_image_processing_tasks WHERE id = ? LIMIT 1
+    `).get(taskId) as ImageProcessingTaskRow | undefined;
+    if (!taskRow || taskRow.status !== CreatorImageProcessingTaskStatus.Pending) {
+      return null;
+    }
+    const task = this.mapImageProcessingTaskRow(taskRow);
+    task.status = CreatorImageProcessingTaskStatus.Canceled;
+    task.updatedAt = Date.now();
+    task.completedAt = task.updatedAt;
+    this.updateImageProcessingTask(task);
+    const jobRecord = this.getImageProcessingJob(task.jobId);
+    if (!jobRecord) return null;
+    const job = this.recalculateImageProcessingJob(jobRecord.job);
+    return {
+      job,
+      tasks: this.listImageProcessingTasks(job.id),
+    };
+  }
+
+  private createImageProcessingJobShell(plan: CreatorImageProcessingPlan): CreatorImageProcessingJob {
+    const now = Date.now();
+    return {
+      id: `job-${plan.id}`,
+      projectId: plan.projectId,
+      planId: plan.id,
+      status: CreatorImageProcessingJobStatus.Pending,
+      totalCount: plan.inputItems.length,
+      successCount: 0,
+      failedCount: 0,
+      inputTotalSize: plan.inputItems.reduce((total, item) => total + (item.metadata?.fileSize ?? 0), 0),
+      outputTotalSize: 0,
+      savedSize: 0,
+      reportAssetId: null,
+      createdAt: now,
+      startedAt: null,
+      completedAt: null,
+    };
+  }
+
+  private createImageProcessingTaskShell(
+    job: CreatorImageProcessingJob,
+    plan: CreatorImageProcessingPlan,
+    inputIndex: number,
+  ): CreatorImageProcessingTask {
+    const inputItem = plan.inputItems[inputIndex];
+    const outputItem = plan.outputItems[inputIndex];
+    if (!inputItem || !outputItem) {
+      throw new Error('Image processing input item is missing');
+    }
+    const now = Date.now();
+    return {
+      id: `task-${job.id}-${inputItem.id}`,
+      jobId: job.id,
+      projectId: plan.projectId,
+      sourceAssetId: inputItem.sourceAssetId,
+      outputAssetId: null,
+      sourceArtifactId: inputItem.source.artifactId ?? null,
+      sourcePath: inputItem.sourcePath,
+      outputPath: outputItem.outputPath,
+      status: CreatorImageProcessingTaskStatus.Pending,
+      inputSize: inputItem.metadata?.fileSize ?? null,
+      outputSize: null,
+      durationMs: null,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+    };
+  }
+
+  private insertImageProcessingPlan(plan: CreatorImageProcessingPlan): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO creator_image_processing_plans (
+        id, project_id, source_json, plan_json, status, preset_id, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      plan.id,
+      plan.projectId,
+      JSON.stringify(plan.source),
+      JSON.stringify(plan),
+      plan.status,
+      plan.presetId,
+      plan.createdBy,
+      plan.createdAt,
+      plan.updatedAt,
+    );
+  }
+
+  private insertImageProcessingJob(job: CreatorImageProcessingJob): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO creator_image_processing_jobs (
+        id, project_id, plan_id, status, total_count, success_count, failed_count,
+        input_total_size, output_total_size, saved_size, report_asset_id,
+        created_at, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      job.id,
+      job.projectId,
+      job.planId,
+      job.status,
+      job.totalCount,
+      job.successCount,
+      job.failedCount,
+      job.inputTotalSize,
+      job.outputTotalSize,
+      job.savedSize,
+      job.reportAssetId,
+      job.createdAt,
+      job.startedAt,
+      job.completedAt,
+    );
+  }
+
+  private insertImageProcessingTask(task: CreatorImageProcessingTask): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO creator_image_processing_tasks (
+        id, job_id, project_id, source_asset_id, output_asset_id, source_artifact_id,
+        source_path, output_path, status, input_size, output_size, duration_ms,
+        error_code, error_message, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      task.id,
+      task.jobId,
+      task.projectId,
+      task.sourceAssetId,
+      task.outputAssetId,
+      task.sourceArtifactId,
+      task.sourcePath,
+      task.outputPath,
+      task.status,
+      task.inputSize,
+      task.outputSize,
+      task.durationMs,
+      task.errorCode,
+      task.errorMessage,
+      task.createdAt,
+      task.updatedAt,
+      task.completedAt,
+    );
+  }
+
+  private updateImageProcessingTask(task: CreatorImageProcessingTask): void {
+    this.db.prepare(`
+      UPDATE creator_image_processing_tasks
+      SET output_asset_id = ?, output_path = ?, status = ?, input_size = ?, output_size = ?,
+        duration_ms = ?, error_code = ?, error_message = ?, updated_at = ?, completed_at = ?
+      WHERE id = ?
+    `).run(
+      task.outputAssetId,
+      task.outputPath,
+      task.status,
+      task.inputSize,
+      task.outputSize,
+      task.durationMs,
+      task.errorCode,
+      task.errorMessage,
+      task.updatedAt,
+      task.completedAt,
+      task.id,
+    );
+  }
+
+  private updateImageProcessingJob(job: CreatorImageProcessingJob): void {
+    this.db.prepare(`
+      UPDATE creator_image_processing_jobs
+      SET status = ?, success_count = ?, failed_count = ?, output_total_size = ?,
+        saved_size = ?, started_at = ?, completed_at = ?
+      WHERE id = ?
+    `).run(
+      job.status,
+      job.successCount,
+      job.failedCount,
+      job.outputTotalSize,
+      job.savedSize,
+      job.startedAt,
+      job.completedAt,
+      job.id,
+    );
+  }
+
+  private async executeImageProcessingJobQueue(
+    plan: CreatorImageProcessingPlan,
+    job: CreatorImageProcessingJob,
+    tasks: CreatorImageProcessingTask[],
+    concurrency = 2,
+  ): Promise<{ job: CreatorImageProcessingJob; tasks: CreatorImageProcessingTask[] }> {
+    const startedAt = Date.now();
+    job.status = CreatorImageProcessingJobStatus.Running;
+    job.startedAt = job.startedAt ?? startedAt;
+    job.completedAt = null;
+    this.updateImageProcessingJob(job);
+
+    let cursor = 0;
+    const runNext = async (): Promise<void> => {
+      const task = tasks[cursor];
+      cursor += 1;
+      if (!task) return;
+      const latestRow = this.db.prepare(`
+        SELECT * FROM creator_image_processing_tasks WHERE id = ? LIMIT 1
+      `).get(task.id) as ImageProcessingTaskRow | undefined;
+      if (latestRow?.status === CreatorImageProcessingTaskStatus.Canceled) {
+        await runNext();
+        return;
+      }
+      const inputIndex = plan.inputItems.findIndex((item) => item.sourceAssetId === task.sourceAssetId && item.sourcePath === task.sourcePath);
+      task.status = CreatorImageProcessingTaskStatus.Running;
+      task.updatedAt = Date.now();
+      this.updateImageProcessingTask(task);
+
+      await executeImageProcessingTask({
+        plan,
+        task,
+        inputIndex: inputIndex >= 0 ? inputIndex : 0,
+        createAsset: (assetInput) => {
+          if (!task.sourceAssetId) {
+            throw new Error('source asset is required');
+          }
+          return this.createImageProcessingAsset({
+            sourceAssetId: task.sourceAssetId,
+            outputPath: assetInput.outputPath,
+            fileName: assetInput.fileName,
+            mimeType: assetInput.mimeType,
+            imageMetadata: assetInput.imageMetadata,
+            plan: assetInput.plan,
+            job,
+            task: assetInput.task,
+          });
+        },
+      });
+      this.updateImageProcessingTask(task);
+      await runNext();
+    };
+
+    await Promise.all(Array.from({ length: Math.max(1, concurrency) }, () => runNext()));
+    const recalculatedJob = this.recalculateImageProcessingJob(job);
+    return { job: recalculatedJob, tasks: this.listImageProcessingTasks(job.id) };
+  }
+
+  private recalculateImageProcessingJob(job: CreatorImageProcessingJob): CreatorImageProcessingJob {
+    const tasks = this.listImageProcessingTasks(job.id);
+    job.successCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Completed).length;
+    job.failedCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Failed).length;
+    job.outputTotalSize = tasks.reduce((total, task) => total + (task.outputSize ?? 0), 0);
+    job.savedSize = job.inputTotalSize - job.outputTotalSize;
+    const pendingCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Pending).length;
+    const runningCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Running).length;
+    const terminalCount = tasks.filter((task) => (
+      task.status === CreatorImageProcessingTaskStatus.Completed
+      || task.status === CreatorImageProcessingTaskStatus.Failed
+      || task.status === CreatorImageProcessingTaskStatus.Canceled
+      || task.status === CreatorImageProcessingTaskStatus.Skipped
+    )).length;
+    if (pendingCount > 0 || runningCount > 0) {
+      job.status = CreatorImageProcessingJobStatus.Running;
+      job.completedAt = null;
+    } else if (terminalCount === tasks.length) {
+      job.completedAt = Date.now();
+      job.status = job.failedCount > 0
+        ? job.successCount > 0
+          ? CreatorImageProcessingJobStatus.PartialFailed
+          : CreatorImageProcessingJobStatus.Failed
+        : CreatorImageProcessingJobStatus.Completed;
+    }
+    this.updateImageProcessingJob(job);
+    return job;
   }
 
   private resolveControlledImageAsset(source: CreatorImageInspectInput['source']): CreatorProductionAssetRecord | null {
@@ -2875,6 +3365,66 @@ export class CreatorAssetStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  private mapImageProcessingPlanRow(row: ImageProcessingPlanRow): CreatorImageProcessingPlan | null {
+    const plan = parseImageProcessingPlanJson(row.plan_json);
+    if (!plan) return null;
+    return {
+      ...plan,
+      status: isCreatorImageProcessingPlanStatus(row.status) ? row.status : CreatorImageProcessingPlanStatus.Failed,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapImageProcessingJobRow(row: ImageProcessingJobRow): CreatorImageProcessingJob {
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      planId: row.plan_id,
+      status: isCreatorImageProcessingJobStatus(row.status) ? row.status : CreatorImageProcessingJobStatus.Failed,
+      totalCount: row.total_count,
+      successCount: row.success_count,
+      failedCount: row.failed_count,
+      inputTotalSize: row.input_total_size,
+      outputTotalSize: row.output_total_size,
+      savedSize: row.saved_size,
+      reportAssetId: row.report_asset_id,
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+    };
+  }
+
+  private mapImageProcessingTaskRow(row: ImageProcessingTaskRow): CreatorImageProcessingTask {
+    return {
+      id: row.id,
+      jobId: row.job_id,
+      projectId: row.project_id,
+      sourceAssetId: row.source_asset_id,
+      outputAssetId: row.output_asset_id,
+      sourceArtifactId: row.source_artifact_id,
+      sourcePath: row.source_path,
+      outputPath: row.output_path,
+      status: isCreatorImageProcessingTaskStatus(row.status) ? row.status : CreatorImageProcessingTaskStatus.Failed,
+      inputSize: row.input_size,
+      outputSize: row.output_size,
+      durationMs: row.duration_ms,
+      errorCode: row.error_code,
+      errorMessage: row.error_message,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+    };
+  }
+
+  private listImageProcessingTasks(jobId: string): CreatorImageProcessingTask[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM creator_image_processing_tasks
+      WHERE job_id = ?
+      ORDER BY created_at ASC
+    `).all(jobId) as ImageProcessingTaskRow[];
+    return rows.map((row) => this.mapImageProcessingTaskRow(row));
   }
 
   private mapAssetRow(row: ProductionAssetRow): CreatorProductionAssetRecord {

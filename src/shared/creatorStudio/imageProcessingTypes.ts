@@ -158,6 +158,62 @@ export interface CreatorImageJobGetResult {
   tasks: CreatorImageProcessingTask[];
 }
 
+export interface CreatorImageJobListInput {
+  projectId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CreatorImageJobListResult {
+  jobs: Array<{
+    job: CreatorImageProcessingJob;
+    tasks: CreatorImageProcessingTask[];
+  }>;
+  total: number;
+}
+
+export interface CreatorImageBatchCreateInput {
+  projectId: string;
+  assetIds: string[];
+  waitForCompletion?: boolean;
+  presetId?: CreatorImageProcessingPresetId | null;
+  outputFormat?: CreatorImageProcessingOutputFormat | null;
+  quality?: number | null;
+  width?: number | null;
+  height?: number | null;
+  maxWidth?: number | null;
+  maxHeight?: number | null;
+  cropRatio?: string | null;
+  rotate?: number | null;
+  outputDirectory?: string | null;
+}
+
+export interface CreatorImageBatchCreateResult {
+  plan: CreatorImageProcessingPlan;
+  job: CreatorImageProcessingJob;
+  tasks: CreatorImageProcessingTask[];
+  outputAssetIds: string[];
+}
+
+export interface CreatorImageTaskRetryInput {
+  taskId: string;
+}
+
+export interface CreatorImageTaskRetryResult {
+  job: CreatorImageProcessingJob;
+  tasks: CreatorImageProcessingTask[];
+  outputAssetIds: string[];
+}
+
+export interface CreatorImageTaskCancelInput {
+  taskId: string;
+}
+
+export interface CreatorImageTaskCancelResult {
+  job: CreatorImageProcessingJob;
+  tasks: CreatorImageProcessingTask[];
+}
+
 export interface CreatorImageOutputRevealInput {
   jobId?: string;
   taskId?: string;

@@ -41,6 +41,17 @@ export interface ImageProcessingExecuteOptions {
   }) => CreatorProductionAssetRecord;
 }
 
+export interface ImageProcessingTaskExecutionOptions extends ImageProcessingExecuteOptions {
+  plan: CreatorImageProcessingPlan;
+  task: CreatorImageProcessingTask;
+  inputIndex: number;
+}
+
+export interface ImageProcessingTaskExecutionResult {
+  task: CreatorImageProcessingTask;
+  outputAsset: CreatorProductionAssetRecord | null;
+}
+
 export interface ImageProcessingService {
   inspect(sourcePath: string): Promise<CreatorImageMetadata>;
   createPlan(input: CreateImageProcessingPlanInput): CreatorImageProcessingPlan;
@@ -59,6 +70,88 @@ export interface ImageProcessingService {
   ): Promise<ImageProcessingExecutionResult>;
   revealTargetFor(input: { jobId?: string; taskId?: string; outputPath?: string }): string | null;
 }
+
+export const executeImageProcessingTask = async (
+  options: ImageProcessingTaskExecutionOptions,
+): Promise<ImageProcessingTaskExecutionResult> => {
+  const { plan, task, inputIndex } = options;
+  const inputItem = plan.inputItems[inputIndex];
+  const outputItem = plan.outputItems[inputIndex];
+  if (!inputItem || !outputItem) {
+    throw new ImageProcessingError(
+      ImageProcessingErrorCode.MissingInputItem,
+      'input item is required',
+    );
+  }
+
+  const taskStartedAt = Date.now();
+
+  try {
+    if (inputItem.metadata?.status !== CreatorImageMetadataStatus.Ready) {
+      throw new ImageProcessingError(
+        ImageProcessingErrorCode.UnsupportedFormat,
+        'source image is not ready for processing',
+      );
+    }
+
+    await ensureOutputIsNew(inputItem.sourcePath, outputItem.outputPath);
+    await mkdir(outputItem.outputDirectory, { recursive: true });
+    task.status = CreatorImageProcessingTaskStatus.Running;
+    task.updatedAt = Date.now();
+
+    const pipeline = await applyOperations(inputItem.sourcePath, plan);
+    await pipeline.toFile(outputItem.outputPath);
+    const outputMetadata = await inspectImageMetadata(outputItem.outputPath);
+    const outputSize = outputMetadata.fileSize;
+
+    task.status = CreatorImageProcessingTaskStatus.Completed;
+    task.outputSize = outputSize;
+    task.durationMs = Date.now() - taskStartedAt;
+    task.completedAt = Date.now();
+    task.updatedAt = task.completedAt;
+
+    const outputAsset = options.createAsset
+      ? options.createAsset({
+        outputPath: outputItem.outputPath,
+        fileName: outputItem.fileName,
+        mimeType: outputMetadata.mimeType ?? toFormatMimeType(plan.output.format),
+        imageMetadata: outputMetadata,
+        plan,
+        job: {
+          id: task.jobId,
+          projectId: task.projectId,
+          planId: plan.id,
+          status: CreatorImageProcessingJobStatus.Running,
+          totalCount: plan.inputItems.length,
+          successCount: 0,
+          failedCount: 0,
+          inputTotalSize: 0,
+          outputTotalSize: 0,
+          savedSize: 0,
+          reportAssetId: null,
+          createdAt: task.createdAt,
+          startedAt: taskStartedAt,
+          completedAt: null,
+        },
+        task,
+      })
+      : null;
+    if (outputAsset) {
+      task.outputAssetId = outputAsset.id;
+      task.updatedAt = Date.now();
+    }
+
+    return { task, outputAsset };
+  } catch (error) {
+    task.status = CreatorImageProcessingTaskStatus.Failed;
+    task.errorCode = error instanceof ImageProcessingError ? error.code : ImageProcessingErrorCode.CorruptImage;
+    task.errorMessage = error instanceof Error ? error.message : String(error);
+    task.durationMs = Date.now() - taskStartedAt;
+    task.completedAt = Date.now();
+    task.updatedAt = task.completedAt;
+    return { task, outputAsset: null };
+  }
+};
 
 const toFormatMimeType = (format: CreatorImageProcessingOutputFormat): string => {
   switch (format) {
@@ -273,49 +366,29 @@ export const createImageProcessingService = (): ImageProcessingService => {
       jobs.set(job.id, { job, tasks });
 
       for (let index = 0; index < plan.inputItems.length; index += 1) {
-        const inputItem = plan.inputItems[index];
-        const outputItem = plan.outputItems[index];
         const task = tasks[index];
         const taskStartedAt = Date.now();
 
         try {
-          if (inputItem.metadata?.status !== CreatorImageMetadataStatus.Ready) {
-            throw new ImageProcessingError(
-              ImageProcessingErrorCode.UnsupportedFormat,
-              'source image is not ready for processing',
-            );
-          }
-
-          await ensureOutputIsNew(inputItem.sourcePath, outputItem.outputPath);
-          await mkdir(outputItem.outputDirectory, { recursive: true });
           task.status = CreatorImageProcessingTaskStatus.Running;
           task.updatedAt = Date.now();
-
-          const pipeline = await applyOperations(inputItem.sourcePath, plan);
-          await pipeline.toFile(outputItem.outputPath);
-          const outputMetadata = await inspectImageMetadata(outputItem.outputPath);
-          const outputSize = outputMetadata.fileSize;
-
-          task.status = CreatorImageProcessingTaskStatus.Completed;
-          task.outputSize = outputSize;
-          task.durationMs = Date.now() - taskStartedAt;
-          task.completedAt = Date.now();
-          task.updatedAt = task.completedAt;
-          job.successCount += 1;
-          job.outputTotalSize += outputSize;
-
-          if (options.createAsset) {
-            const outputAsset = options.createAsset({
-              outputPath: outputItem.outputPath,
-              fileName: outputItem.fileName,
-              mimeType: outputMetadata.mimeType ?? toFormatMimeType(plan.output.format),
-              imageMetadata: outputMetadata,
-              plan,
-              job,
-              task,
-            });
-            task.outputAssetId = outputAsset.id;
+          const result = await executeImageProcessingTask({
+            plan,
+            task,
+            inputIndex: index,
+            createAsset: options.createAsset
+              ? (assetInput) => options.createAsset!({ ...assetInput, job })
+              : undefined,
+          });
+          if (result.outputAsset) {
+            const outputAsset = result.outputAsset;
             outputAssets.push(outputAsset);
+          }
+          if (result.task.status === CreatorImageProcessingTaskStatus.Completed) {
+            job.successCount += 1;
+            job.outputTotalSize += result.task.outputSize ?? 0;
+          } else {
+            job.failedCount += 1;
           }
         } catch (error) {
           task.status = CreatorImageProcessingTaskStatus.Failed;

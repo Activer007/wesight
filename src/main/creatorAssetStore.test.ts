@@ -28,6 +28,7 @@ import {
   CreatorStudioDefaultProjectId,
 } from '../shared/creatorStudio/constants';
 import { CreatorAssetStore, parseCreatorStudioSourceContext } from './creatorAssetStore';
+import { ensureCreatorImageProcessingSchema } from './creatorImageProcessingSchema';
 import { ensureCreatorProductionSchema } from './creatorProductionSchema';
 
 let db: Database.Database;
@@ -131,6 +132,7 @@ beforeEach(() => {
   db = new Database(':memory:');
   createCoworkTables();
   ensureCreatorProductionSchema(db);
+  ensureCreatorImageProcessingSchema(db);
   store = new CreatorAssetStore(db);
   tempDir = path.join(tmpdir(), `wesight-creator-store-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(tempDir, { recursive: true });
@@ -1202,5 +1204,189 @@ describe('CreatorAssetStore', () => {
     const metadata = JSON.parse(row.metadata) as { processing?: { sourceAssetId?: string; plan?: { id?: string } } };
     expect(metadata.processing?.sourceAssetId).toBe('source-asset');
     expect(metadata.processing?.plan?.id).toBe('plan-1');
+  });
+
+  test('creates image processing batch job and keeps failed tasks isolated', async () => {
+    const sharp = (await import('sharp')).default;
+    const workspace = store.createProject({ name: 'Image Batch Project' });
+    const goodPathA = path.join(tempDir, 'batch-a.png');
+    const goodPathB = path.join(tempDir, 'batch-b.png');
+    const brokenPath = path.join(tempDir, 'batch-broken.png');
+    await sharp({
+      create: {
+        width: 40,
+        height: 30,
+        channels: 3,
+        background: '#336699',
+      },
+    }).png().toFile(goodPathA);
+    await sharp({
+      create: {
+        width: 50,
+        height: 40,
+        channels: 3,
+        background: '#996633',
+      },
+    }).png().toFile(goodPathB);
+    fs.writeFileSync(brokenPath, 'not an image');
+
+    const insertAsset = (id: string, filePath: string) => {
+      db.prepare(`
+        INSERT INTO production_assets (
+          id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id,
+          session_id, source_session_id, message_id, source_message_id, template_id, case_ids, case_ids_json,
+          prompt_spec, prompt_spec_json, prompt_text, parent_prompt_asset_id, prompt_version_id, recipe_id,
+          selected_direction_id, file_path, file_name, mime_type, favorite, adoption_status, tags_json,
+          license_note, usage_note, metadata, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        workspace.currentProjectId,
+        CreatorProductionAssetKind.Image,
+        id,
+        CreatorProductionAssetStatus.Ready,
+        CreatorProductionAssetSource.CoworkGeneratedImage,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        JSON.stringify([]),
+        JSON.stringify([]),
+        null,
+        null,
+        '',
+        null,
+        null,
+        null,
+        null,
+        filePath,
+        path.basename(filePath),
+        'image/png',
+        0,
+        CreatorAssetAdoptionStatus.Unset,
+        JSON.stringify([]),
+        null,
+        null,
+        JSON.stringify({}),
+        1,
+        1,
+      );
+    };
+
+    insertAsset('image-a', goodPathA);
+    insertAsset('image-b', goodPathB);
+    insertAsset('image-broken', brokenPath);
+
+    const result = await store.createImageProcessingBatchJob({
+      projectId: workspace.currentProjectId,
+      assetIds: ['image-a', 'image-b', 'image-broken'],
+      outputFormat: CreatorImageProcessingOutputFormat.Webp,
+      maxWidth: 32,
+      maxHeight: 32,
+    });
+
+    expect(result.job.status).toBe(CreatorImageProcessingJobStatus.PartialFailed);
+    expect(result.job.successCount).toBe(2);
+    expect(result.job.failedCount).toBe(1);
+    expect(result.tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Completed)).toHaveLength(2);
+    expect(result.tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Failed)).toHaveLength(1);
+    expect(result.outputAssetIds).toHaveLength(2);
+
+    const listed = store.listImageProcessingJobs({ projectId: workspace.currentProjectId });
+    expect(listed.total).toBe(1);
+    expect(listed.jobs[0].tasks).toHaveLength(3);
+    const derivedAssets = store.listAssets({
+      projectId: workspace.currentProjectId,
+      source: CreatorProductionAssetSource.LocalImageProcessing,
+    });
+    expect(derivedAssets.total).toBe(2);
+    expect(derivedAssets.assets[0].variantOfAssetId).toBeTruthy();
+
+    const failedTask = result.tasks.find((task) => task.status === CreatorImageProcessingTaskStatus.Failed);
+    expect(failedTask).toBeTruthy();
+    const retry = await store.retryImageProcessingTask(failedTask!.id);
+    expect(retry?.tasks.find((task) => task.id === failedTask!.id)?.status).toBe(CreatorImageProcessingTaskStatus.Failed);
+  });
+
+  test('cancels pending image processing task', () => {
+    const workspace = store.createProject({ name: 'Cancel Image Batch Project' });
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO creator_image_processing_plans (
+        id, project_id, source_json, plan_json, status, preset_id, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'plan-cancel',
+      workspace.currentProjectId,
+      JSON.stringify({ sourceKind: CreatorImageProcessingSourceKind.CreatorAsset }),
+      JSON.stringify({
+        id: 'plan-cancel',
+        projectId: workspace.currentProjectId,
+        source: { sourceKind: CreatorImageProcessingSourceKind.CreatorAsset },
+        inputItems: [],
+        outputItems: [],
+      }),
+      CreatorImageProcessingPlanStatus.Ready,
+      null,
+      CreatorImageProcessingCreatedBy.User,
+      now,
+      now,
+    );
+    db.prepare(`
+      INSERT INTO creator_image_processing_jobs (
+        id, project_id, plan_id, status, total_count, success_count, failed_count,
+        input_total_size, output_total_size, saved_size, report_asset_id, created_at, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'job-cancel',
+      workspace.currentProjectId,
+      'plan-cancel',
+      CreatorImageProcessingJobStatus.Running,
+      1,
+      0,
+      0,
+      100,
+      0,
+      0,
+      null,
+      now,
+      now,
+      null,
+    );
+    db.prepare(`
+      INSERT INTO creator_image_processing_tasks (
+        id, job_id, project_id, source_asset_id, output_asset_id, source_artifact_id,
+        source_path, output_path, status, input_size, output_size, duration_ms,
+        error_code, error_message, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'task-cancel',
+      'job-cancel',
+      workspace.currentProjectId,
+      'source-asset',
+      null,
+      null,
+      '/tmp/source.png',
+      '/tmp/output.webp',
+      CreatorImageProcessingTaskStatus.Pending,
+      100,
+      null,
+      null,
+      null,
+      null,
+      now,
+      now,
+      null,
+    );
+
+    const result = store.cancelImageProcessingTask('task-cancel');
+
+    expect(result?.tasks[0].status).toBe(CreatorImageProcessingTaskStatus.Canceled);
+    expect(result?.job.status).toBe(CreatorImageProcessingJobStatus.Completed);
   });
 });

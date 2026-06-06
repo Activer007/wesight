@@ -8,6 +8,7 @@ import path from 'path';
 import { CoworkAgentEngine, DefaultCoworkAgentEngine, ExternalAgentConfigSource } from '../shared/cowork/constants';
 import { DB_FILENAME } from './appConstants';
 import { ensureCoworkEventSchema } from './coworkEventStore';
+import { ensureCreatorImageProcessingSchema } from './creatorImageProcessingSchema';
 import { ensureCreatorProductionSchema } from './creatorProductionSchema';
 
 type ChangePayload<T = unknown> = {
@@ -106,6 +107,7 @@ export class SqliteStore {
 
     ensureCoworkEventSchema(this.db);
     ensureCreatorProductionSchema(this.db);
+    ensureCreatorImageProcessingSchema(this.db);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_runtime_calls (

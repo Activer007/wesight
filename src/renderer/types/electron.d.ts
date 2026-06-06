@@ -16,15 +16,23 @@ import type {
 import type { CoworkSessionRuntimeSnapshot } from '@shared/cowork/runtimeSnapshot';
 import type { CoworkStudioAssetsResult } from '@shared/cowork/studioAssets';
 import type {
+  CreatorImageBatchCreateInput,
+  CreatorImageBatchCreateResult,
   CreatorImageJobExecuteInput,
   CreatorImageJobExecuteResult,
   CreatorImageJobGetInput,
   CreatorImageJobGetResult,
+  CreatorImageJobListInput,
+  CreatorImageJobListResult,
   CreatorImageOutputRevealInput,
   CreatorImagePlanCreateInput,
   CreatorImagePlanCreateResult,
   CreatorImagePlanGetInput,
   CreatorImagePlanGetResult,
+  CreatorImageTaskCancelInput,
+  CreatorImageTaskCancelResult,
+  CreatorImageTaskRetryInput,
+  CreatorImageTaskRetryResult,
 } from '@shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorAssetCollectionAddInput,
@@ -859,6 +867,33 @@ interface IElectronAPI {
       success: boolean;
       job?: CreatorImageJobGetResult['job'];
       tasks?: CreatorImageJobGetResult['tasks'];
+      error?: string;
+    }>;
+    listImageJobs: (input: CreatorImageJobListInput) => Promise<{
+      success: boolean;
+      jobs?: CreatorImageJobListResult['jobs'];
+      total?: number;
+      error?: string;
+    }>;
+    createImageBatch: (input: CreatorImageBatchCreateInput) => Promise<{
+      success: boolean;
+      plan?: CreatorImageBatchCreateResult['plan'];
+      job?: CreatorImageBatchCreateResult['job'];
+      tasks?: CreatorImageBatchCreateResult['tasks'];
+      outputAssetIds?: CreatorImageBatchCreateResult['outputAssetIds'];
+      error?: string;
+    }>;
+    retryImageTask: (input: CreatorImageTaskRetryInput) => Promise<{
+      success: boolean;
+      job?: CreatorImageTaskRetryResult['job'];
+      tasks?: CreatorImageTaskRetryResult['tasks'];
+      outputAssetIds?: CreatorImageTaskRetryResult['outputAssetIds'];
+      error?: string;
+    }>;
+    cancelImageTask: (input: CreatorImageTaskCancelInput) => Promise<{
+      success: boolean;
+      job?: CreatorImageTaskCancelResult['job'];
+      tasks?: CreatorImageTaskCancelResult['tasks'];
       error?: string;
     }>;
     revealImageOutput: (input: CreatorImageOutputRevealInput) => Promise<{ success: boolean; error?: string }>;

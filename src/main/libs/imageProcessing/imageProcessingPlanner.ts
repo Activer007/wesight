@@ -57,6 +57,11 @@ export interface CreateCreatorAssetImageProcessingPlanInput {
   id?: string;
 }
 
+export interface CreateCreatorAssetsImageProcessingPlanInput extends Omit<CreateCreatorAssetImageProcessingPlanInput, 'asset'> {
+  projectId: string;
+  assets: CreatorProductionAssetRecord[];
+}
+
 const OutputDirectorySegment = '.wesight/creator-outputs/image-processing';
 
 const clampInteger = (
@@ -512,6 +517,66 @@ export const createCreatorAssetImageProcessingPlan = (
       sourcePath: input.asset.filePath,
       metadata: input.asset.imageMetadata,
     }],
+    presetId: fallbackPreset.id,
+    operations,
+    output,
+    now: input.now,
+    id: input.id,
+  });
+};
+
+export const createCreatorAssetsImageProcessingPlan = (
+  input: CreateCreatorAssetsImageProcessingPlanInput,
+): CreatorImageProcessingPlan => {
+  if (input.assets.length === 0) {
+    throw new ImageProcessingError(
+      ImageProcessingErrorCode.MissingInputItem,
+      'at least one image asset is required',
+    );
+  }
+
+  const presetId = input.presetId?.trim() || null;
+  const preset = presetId && isCreatorImageProcessingPresetId(presetId)
+    ? getCreatorImageProcessingPreset(presetId)
+    : null;
+
+  if (presetId && !preset) {
+    throw new ImageProcessingError(
+      ImageProcessingErrorCode.UnknownPreset,
+      'image processing preset is not supported',
+    );
+  }
+
+  const fallbackPreset = preset ?? getCreatorImageProcessingPreset(CreatorImageProcessingPresetId.WebOptimizedWebp);
+  if (!fallbackPreset) {
+    throw new ImageProcessingError(
+      ImageProcessingErrorCode.UnknownPreset,
+      'default image processing preset is not available',
+    );
+  }
+
+  const operations = buildOperationsFromOverrides(fallbackPreset.operationSteps, {
+    ...input,
+    asset: input.assets[0],
+  });
+  const output = applyOutputOverrides(fallbackPreset.output, input);
+  const source: CreatorImageProcessingSource = {
+    sourceKind: CreatorImageProcessingSourceKind.CreatorAsset,
+  };
+
+  return createImageProcessingPlan({
+    projectId: input.projectId,
+    source,
+    inputItems: input.assets.map((asset) => ({
+      id: `input-${asset.id}`,
+      source: {
+        sourceKind: CreatorImageProcessingSourceKind.CreatorAsset,
+        assetId: asset.id,
+      },
+      sourceAssetId: asset.id,
+      sourcePath: asset.filePath,
+      metadata: asset.imageMetadata,
+    })),
     presetId: fallbackPreset.id,
     operations,
     output,

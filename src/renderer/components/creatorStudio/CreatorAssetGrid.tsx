@@ -17,6 +17,7 @@ import {
   CreatorAssetAdoptionStatus,
   type CreatorAssetAdoptionStatus as CreatorAssetAdoptionStatusType,
   CreatorImageMetadataStatus,
+  CreatorImageProcessingOutputFormat,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -323,6 +324,10 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const [isLoadingPromptVersions, setIsLoadingPromptVersions] = useState(false);
   const [inspectingImageAssetIds, setInspectingImageAssetIds] = useState<Set<string>>(() => new Set());
   const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [batchImageAssetIds, setBatchImageAssetIds] = useState<Set<string>>(() => new Set());
+  const [isCreatingImageBatch, setIsCreatingImageBatch] = useState(false);
+  const [imageBatchMaxWidth, setImageBatchMaxWidth] = useState('1600');
+  const [imageBatchMaxHeight, setImageBatchMaxHeight] = useState('1600');
   const imageProcessingEnabled = isCreatorImageProcessingEnabled();
 
   const currentCollections = useMemo(
@@ -685,6 +690,54 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
     [selectedAsset]
   );
   const selectedAssetCanReveal = Boolean(selectedAsset && isFileBackedImage(selectedAsset));
+  const selectedBatchImageAssetIds = useMemo(
+    () => assets
+      .filter((asset) => (
+        batchImageAssetIds.has(asset.id)
+        && asset.kind === CreatorProductionAssetKind.Image
+        && asset.status === CreatorProductionAssetStatus.Ready
+      ))
+      .map((asset) => asset.id),
+    [assets, batchImageAssetIds]
+  );
+
+  const toggleBatchImageAsset = (asset: CreatorProductionAssetRecord) => {
+    if (asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready) return;
+    setBatchImageAssetIds((ids) => {
+      const next = new Set(ids);
+      if (next.has(asset.id)) {
+        next.delete(asset.id);
+      } else {
+        next.add(asset.id);
+      }
+      return next;
+    });
+  };
+
+  const createImageBatch = async (mode: 'webp' | 'compress' | 'resize') => {
+    if (!currentProjectId || selectedBatchImageAssetIds.length === 0) return;
+    const maxWidth = Number(imageBatchMaxWidth);
+    const maxHeight = Number(imageBatchMaxHeight);
+    setIsCreatingImageBatch(true);
+    try {
+      await creatorStudioAssetService.createImageBatch({
+        projectId: currentProjectId,
+        assetIds: selectedBatchImageAssetIds,
+        waitForCompletion: false,
+        outputFormat: CreatorImageProcessingOutputFormat.Webp,
+        quality: mode === 'compress' ? 72 : 82,
+        ...(mode === 'resize' && Number.isFinite(maxWidth) && maxWidth > 0 ? { maxWidth } : {}),
+        ...(mode === 'resize' && Number.isFinite(maxHeight) && maxHeight > 0 ? { maxHeight } : {}),
+      });
+      setBatchImageAssetIds(new Set());
+      await loadAssets();
+      dispatchToast(i18nService.t('creatorImageBatchCreated'));
+    } catch (batchError) {
+      dispatchToast(batchError instanceof Error ? batchError.message : i18nService.t('creatorImageBatchCreateFailed'));
+    } finally {
+      setIsCreatingImageBatch(false);
+    }
+  };
 
   return (
     <section className="grid min-h-full gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -698,6 +751,22 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <input
+                value={imageBatchMaxWidth}
+                onChange={(event) => setImageBatchMaxWidth(event.target.value)}
+                inputMode="numeric"
+                aria-label={i18nService.t('creatorImageBatchMaxWidth')}
+                placeholder={i18nService.t('creatorImageBatchMaxWidth')}
+                className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary"
+              />
+              <input
+                value={imageBatchMaxHeight}
+                onChange={(event) => setImageBatchMaxHeight(event.target.value)}
+                inputMode="numeric"
+                aria-label={i18nService.t('creatorImageBatchMaxHeight')}
+                placeholder={i18nService.t('creatorImageBatchMaxHeight')}
+                className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary"
+              />
               <button
                 type="button"
                 onClick={() => setIsProjectFormOpen(true)}
@@ -847,6 +916,51 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
           </div>
         )}
 
+        {imageProcessingEnabled && selectedBatchImageAssetIds.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+            <div>
+              <div className="text-sm font-semibold text-primary">
+                {i18nService.t('creatorImageBatchSelected').replace('{count}', String(selectedBatchImageAssetIds.length))}
+              </div>
+              <div className="mt-1 text-xs text-muted">{i18nService.t('creatorImageBatchToolbarHint')}</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={isCreatingImageBatch}
+                onClick={() => void createImageBatch('webp')}
+                className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {i18nService.t('creatorImageBatchWebp')}
+              </button>
+              <button
+                type="button"
+                disabled={isCreatingImageBatch}
+                onClick={() => void createImageBatch('compress')}
+                className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {i18nService.t('creatorImageBatchCompress')}
+              </button>
+              <button
+                type="button"
+                disabled={isCreatingImageBatch}
+                onClick={() => void createImageBatch('resize')}
+                className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {i18nService.t('creatorImageBatchResize')}
+              </button>
+              <button
+                type="button"
+                disabled={isCreatingImageBatch}
+                onClick={() => setBatchImageAssetIds(new Set())}
+                className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {i18nService.t('cancel')}
+              </button>
+            </div>
+          </div>
+        )}
+
         {!isLoading && assets.length === 0 ? (
           <div className="flex min-h-[260px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-surface text-center">
             <PhotoIcon className="h-10 w-10 text-muted" />
@@ -880,6 +994,17 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   >
                     <StarIcon className="h-4 w-4" />
                   </button>
+                  {imageProcessingEnabled && asset.kind === CreatorProductionAssetKind.Image && asset.status === CreatorProductionAssetStatus.Ready && (
+                    <label className="absolute bottom-2 left-2 inline-flex items-center gap-2 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-secondary">
+                      <input
+                        type="checkbox"
+                        checked={batchImageAssetIds.has(asset.id)}
+                        onChange={() => toggleBatchImageAsset(asset)}
+                        className="h-3.5 w-3.5 rounded border-border"
+                      />
+                      {i18nService.t('creatorImageBatchSelect')}
+                    </label>
+                  )}
                 </div>
                 <div className="space-y-2 p-3">
                   <h3 className="truncate text-sm font-semibold">{asset.fileName}</h3>
