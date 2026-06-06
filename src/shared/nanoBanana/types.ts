@@ -74,6 +74,7 @@ export interface NanoBananaPromptIndexItem {
   page: number;
   searchTerms: string;
   thumbnailUrl: string | null;
+  needReferenceImages?: boolean | null;
   raw: unknown;
   createdAt?: number;
   updatedAt?: number;

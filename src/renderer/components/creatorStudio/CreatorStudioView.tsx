@@ -89,6 +89,7 @@ import { CreatorAssetGrid } from './CreatorAssetGrid';
 import { CreatorBatchPanel } from './CreatorBatchPanel';
 import { CreatorBoard } from './CreatorBoard';
 import { CreatorImageProcessingBatchPanel } from './CreatorImageProcessingBatchPanel';
+import { NanoLibraryView } from './nano/NanoLibraryView';
 
 const cases = casesData as CreatorStudioCase[];
 const styleLibrary = styleLibraryData as CreatorStudioStyleLibrary;
@@ -96,6 +97,7 @@ const manifest = manifestData as CreatorStudioManifest;
 
 const CreatorStudioTab = {
   Gallery: 'gallery',
+  NanoLibrary: 'nano_library',
   Templates: 'templates',
   Builder: 'builder',
   Assets: 'assets',
@@ -1379,6 +1381,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         <TabButton active={activeTab === CreatorStudioTab.Gallery} onClick={() => setActiveTab(CreatorStudioTab.Gallery)}>
           {i18nService.t('creatorGalleryTab')}
         </TabButton>
+        <TabButton active={activeTab === CreatorStudioTab.NanoLibrary} onClick={() => setActiveTab(CreatorStudioTab.NanoLibrary)}>
+          {i18nService.t('creatorNanoLibraryTab')}
+        </TabButton>
         <TabButton active={activeTab === CreatorStudioTab.Templates} onClick={() => setActiveTab(CreatorStudioTab.Templates)}>
           {i18nService.t('creatorTemplatesTab')}
         </TabButton>
@@ -1428,6 +1433,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
             onSelectTemplate={setSelectedTemplate}
             onUseTemplate={startFromTemplate}
           />
+        )}
+        {activeTab === CreatorStudioTab.NanoLibrary && (
+          <NanoLibraryView />
         )}
         {activeTab === CreatorStudioTab.Builder && (
           <PromptBuilder

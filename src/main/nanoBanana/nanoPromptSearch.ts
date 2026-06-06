@@ -55,6 +55,9 @@ const toIndexItem = (row: IndexRow): NanoBananaPromptIndexItem => ({
   page: row.page,
   searchTerms: row.search_terms,
   thumbnailUrl: row.thumbnail_url,
+  needReferenceImages: row.prompt_need_reference_images === null || row.prompt_need_reference_images === undefined
+    ? null
+    : row.prompt_need_reference_images === 1,
   raw: parseJson(row.raw_json, {}),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
