@@ -1,26 +1,17 @@
 import {
   CreatorImageProcessingOperation,
   CreatorImageProcessingOutputFormat,
+  CreatorImageProcessingPresetId,
 } from '../../../shared/creatorStudio/constants';
 import type {
   CreatorImageProcessingOperationStep,
   CreatorImageProcessingOutput,
 } from '../../../shared/creatorStudio/imageProcessingTypes';
 
-export const CreatorImageProcessingPresetId = {
-  WebOptimizedWebp: 'web-optimized-webp',
-  ReadmeBanner: 'readme-banner',
-  SocialCard1200x675: 'social-card-1200x675',
-} as const;
-
-export type CreatorImageProcessingPresetId =
-  typeof CreatorImageProcessingPresetId[keyof typeof CreatorImageProcessingPresetId];
-
-export const CreatorImageProcessingPresetIdValues = [
-  CreatorImageProcessingPresetId.WebOptimizedWebp,
-  CreatorImageProcessingPresetId.ReadmeBanner,
-  CreatorImageProcessingPresetId.SocialCard1200x675,
-] as const;
+export {
+  CreatorImageProcessingPresetId,
+  isCreatorImageProcessingPresetId,
+} from '../../../shared/creatorStudio/constants';
 
 export interface CreatorImageProcessingPreset {
   id: CreatorImageProcessingPresetId;
@@ -139,13 +130,6 @@ export const CreatorImageProcessingPresets: CreatorImageProcessingPreset[] = [
     ),
   },
 ];
-
-export const isCreatorImageProcessingPresetId = (
-  value: unknown,
-): value is CreatorImageProcessingPresetId => (
-  typeof value === 'string'
-  && CreatorImageProcessingPresetIdValues.includes(value as CreatorImageProcessingPresetId)
-);
 
 export const getCreatorImageProcessingPreset = (
   presetId: CreatorImageProcessingPresetId,

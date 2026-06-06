@@ -1,4 +1,5 @@
 import {
+  AdjustmentsHorizontalIcon,
   ArrowTopRightOnSquareIcon,
   CheckCircleIcon,
   ClipboardDocumentIcon,
@@ -33,6 +34,8 @@ import casesData from '../../data/creatorStudio/cases.json';
 import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
 import type { CreatorStudioCase } from '../../types/creatorStudio';
+import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
+import { ImagePostProcessingDrawer } from './ImagePostProcessingDrawer';
 
 interface CreatorAssetGridProps {
   onOpenCoworkSession: (sessionId: string) => Promise<boolean>;
@@ -211,6 +214,12 @@ const formatImageType = (metadata: CreatorImageMetadata | null | undefined, fall
   return format || mimeType || i18nService.t('creatorImageUnknown');
 };
 
+const formatProcessingOperations = (asset: CreatorProductionAssetRecord): string => {
+  const operations = asset.imageProcessing?.operations ?? [];
+  if (!operations.length) return i18nService.t('creatorImageUnknown');
+  return operations.map((item) => item.operation).join(', ');
+};
+
 const getCasePreview = (asset: CreatorProductionAssetRecord): CreatorStudioCase | null => {
   if (asset.kind !== CreatorProductionAssetKind.Case && asset.source !== CreatorProductionAssetSource.CreatorCase) {
     return null;
@@ -313,6 +322,8 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const [promptVersionDiff, setPromptVersionDiff] = useState('');
   const [isLoadingPromptVersions, setIsLoadingPromptVersions] = useState(false);
   const [inspectingImageAssetIds, setInspectingImageAssetIds] = useState<Set<string>>(() => new Set());
+  const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const imageProcessingEnabled = isCreatorImageProcessingEnabled();
 
   const currentCollections = useMemo(
     () => workspace?.collections.filter((collection) => collection.projectId === currentProjectId) ?? [],
@@ -662,6 +673,13 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
     setFavoriteOnly(false);
   };
 
+  const handleImageProcessingCompleted = (outputAssets: CreatorProductionAssetRecord[]) => {
+    void loadAssets();
+    if (outputAssets[0]) {
+      setSelectedAsset(outputAssets[0]);
+    }
+  };
+
   const selectedAssetCases = useMemo(
     () => selectedAsset ? getAssetCases(selectedAsset) : [],
     [selectedAsset]
@@ -914,7 +932,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                     <div className="text-xs text-muted">{i18nService.t('creatorAssetSourceMissing')}</div>
                   )}
                 </div>
-                <div className="grid grid-cols-5 gap-1 border-t border-border p-2">
+                <div className="grid grid-cols-6 gap-1 border-t border-border p-2">
                   <IconAction label={i18nService.t('creatorAssetUseAsReference')} onClick={() => onUseAssetAsReference(asset)}>
                     <SparklesIcon className="h-4 w-4" />
                   </IconAction>
@@ -930,6 +948,15 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   <IconAction label={i18nService.t('creatorAssetDetails')} onClick={() => setSelectedAsset(asset)}>
                     <InformationCircleIcon className="h-4 w-4" />
                   </IconAction>
+                  {imageProcessingEnabled && (
+                    <IconAction
+                      label={i18nService.t('creatorImagePostProcessingAction')}
+                      onClick={() => setPostProcessingAsset(asset)}
+                      disabled={asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready}
+                    >
+                      <AdjustmentsHorizontalIcon className="h-4 w-4" />
+                    </IconAction>
+                  )}
                 </div>
               </article>
             ))}
@@ -969,6 +996,21 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                     {selectedAsset.imageMetadata?.warningCodes.length ? (
                       <ProvenanceRow label={i18nService.t('creatorImageWarnings')} value={selectedAsset.imageMetadata.warningCodes.join(', ')} />
                     ) : null}
+                  </div>
+                </section>
+              )}
+              {selectedAsset.kind === CreatorProductionAssetKind.Image && selectedAsset.imageProcessing && (
+                <section className="rounded-lg border border-border p-3">
+                  <h3 className="text-xs font-medium text-secondary">{i18nService.t('creatorImageProcessingDetails')}</h3>
+                  <div className="mt-2 space-y-2">
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingSourceAsset')} value={selectedAsset.imageProcessing.sourceAssetId} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingPlanId')} value={selectedAsset.imageProcessing.plan?.id || 'none'} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingPreset')} value={selectedAsset.imageProcessing.presetId || i18nService.t('creatorImageProcessingPresetCustom')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingOutputFormat')} value={selectedAsset.imageProcessing.plan?.output.format?.toUpperCase() || selectedAsset.imageMetadata?.format?.toUpperCase() || i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingQuality')} value={selectedAsset.imageProcessing.plan?.output.quality === null || selectedAsset.imageProcessing.plan?.output.quality === undefined ? i18nService.t('creatorImageUnknown') : String(selectedAsset.imageProcessing.plan.output.quality)} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingOperations')} value={formatProcessingOperations(selectedAsset)} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingJobStatus')} value={selectedAsset.imageProcessing.job?.status || 'none'} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingTaskStatus')} value={selectedAsset.imageProcessing.task?.status || 'none'} />
                   </div>
                 </section>
               )}
@@ -1136,6 +1178,17 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   <FolderOpenIcon className="h-4 w-4" />
                   {i18nService.t('creatorAssetReveal')}
                 </button>
+                {imageProcessingEnabled && selectedAsset.kind === CreatorProductionAssetKind.Image && (
+                  <button
+                    type="button"
+                    onClick={() => setPostProcessingAsset(selectedAsset)}
+                    disabled={selectedAsset.status !== CreatorProductionAssetStatus.Ready}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AdjustmentsHorizontalIcon className="h-4 w-4" />
+                    {i18nService.t('creatorImagePostProcessingAction')}
+                  </button>
+                )}
               </div>
 
               <section>
@@ -1154,6 +1207,11 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
           </div>
         )}
       </aside>
+      <ImagePostProcessingDrawer
+        asset={postProcessingAsset}
+        onClose={() => setPostProcessingAsset(null)}
+        onCompleted={handleImageProcessingCompleted}
+      />
     </section>
   );
 };

@@ -3,18 +3,20 @@ import { expect, test } from 'vitest';
 import {
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
+  CreatorImageProcessingJobStatus,
   CreatorImageProcessingOperation,
   CreatorImageProcessingOutputFormat,
   CreatorImageProcessingPlanSchemaVersion,
   CreatorImageProcessingPlanStatus,
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
+  CreatorImageProcessingTaskStatus,
 } from '../../../shared/creatorStudio/constants';
 import type {
   CreatorImageMetadata,
   CreatorImageProcessingInputItem,
 } from '../../../shared/creatorStudio/imageProcessingTypes';
-import { ImageProcessingError, ImageProcessingErrorCode } from './imageProcessingErrors';
+import { ImageProcessingError } from './imageProcessingErrors';
 import { createImageProcessingPlan } from './imageProcessingPlanner';
 import {
   CreatorImageProcessingPresetId,
@@ -68,6 +70,13 @@ test('expands the web optimized preset into a ready non-overwriting plan', () =>
   expect(plan.status).toBe(CreatorImageProcessingPlanStatus.Ready);
   expect(plan.output.format).toBe(CreatorImageProcessingOutputFormat.Webp);
   expect(plan.output.overwrite).toBe(false);
+  expect(plan.outputItems[0]).toMatchObject({
+    fileName: 'image.web-optimized.1600w.webp',
+    width: 1600,
+    height: 900,
+    format: CreatorImageProcessingOutputFormat.Webp,
+  });
+  expect(plan.outputItems[0].outputPath).toContain('.wesight/creator-outputs/image-processing/plan-1');
   expect(plan.operations.map((operation) => operation.operation)).toEqual([
     CreatorImageProcessingOperation.AutoOrient,
     CreatorImageProcessingOperation.Resize,
@@ -124,7 +133,7 @@ test('keeps preset definitions available without executing image work', () => {
   ))).toBe(true);
 });
 
-test('keeps phase zero execution service disabled', async () => {
+test('creates failed job state without mutating source when execution cannot read input', async () => {
   const service = createImageProcessingService();
   const plan = service.createPlan({
     id: 'plan-1',
@@ -142,7 +151,8 @@ test('keeps phase zero execution service disabled', async () => {
 
   expect(job.planId).toBe(plan.id);
   expect(task.sourceAssetId).toBe('asset-1');
-  await expect(service.executePlan(plan)).rejects.toMatchObject({
-    code: ImageProcessingErrorCode.ExecutionNotImplemented,
-  });
+  const result = await service.executePlan(plan);
+  expect(result.job.status).toBe(CreatorImageProcessingJobStatus.Failed);
+  expect(result.tasks[0].status).toBe(CreatorImageProcessingTaskStatus.Failed);
+  expect(result.outputAssets).toEqual([]);
 });

@@ -6,6 +6,10 @@ export const ImageProcessingErrorCode = {
   UnsupportedFormat: 'unsupported_format',
   MissingFile: 'missing_file',
   CorruptImage: 'corrupt_image',
+  OutputWouldOverwrite: 'output_would_overwrite',
+  OutputExists: 'output_exists',
+  PlanNotFound: 'plan_not_found',
+  JobNotFound: 'job_not_found',
   ExecutionNotImplemented: 'execution_not_implemented',
 } as const;
 

@@ -3,14 +3,18 @@ import { shell } from 'electron';
 import fs from 'fs';
 
 import {
+  CreatorProductionAssetKind,
   CreatorStudioAssetListDefaultLimit,
   CreatorStudioAssetListMaxLimit,
   CreatorStudioIpcChannel,
   isCreatorAssetAdoptionStatus,
   isCreatorBoardCardKind,
   isCreatorBoardMoveDirection,
+  isCreatorImageProcessingOutputFormat,
+  isCreatorImageProcessingPresetId,
   isCreatorProductionAssetSource,
 } from '../../../shared/creatorStudio/constants';
+import type { CreatorImagePlanCreateInput } from '../../../shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorAssetUpdateInput,
   CreatorBoardCardCreateInput,
@@ -21,6 +25,8 @@ import type {
   CreatorRecipeCreateInput,
 } from '../../../shared/creatorStudio/types';
 import type { CreatorAssetStore } from '../../creatorAssetStore';
+import { createCreatorAssetImageProcessingPlan } from '../../libs/imageProcessing/imageProcessingPlanner';
+import { createImageProcessingService } from '../../libs/imageProcessing/imageProcessingService';
 
 type CreatorStudioIpcResponse<T> = {
   success: boolean;
@@ -112,19 +118,46 @@ const normalizeImageInspectInput = (input: unknown): CreatorImageInspectInput | 
   const source = normalizeObject(record?.source);
   const sessionId = toTrimmedString(source?.sessionId);
   const messageId = toTrimmedString(source?.messageId);
+  const artifactId = toTrimmedString(source?.artifactId);
   const filePath = toTrimmedString(source?.filePath);
-  if (!sessionId || !messageId || !filePath) {
+  if (!sessionId || (!messageId && !artifactId) || !filePath) {
     return null;
   }
 
   return {
     source: {
       sessionId,
-      messageId,
+      ...(messageId ? { messageId } : {}),
+      ...(artifactId ? { artifactId } : {}),
       filePath,
     },
   };
 };
+
+const normalizeNumber = (value: unknown): number | null => (
+  typeof value === 'number' && Number.isFinite(value) ? value : null
+);
+
+const normalizeImagePlanCreateInput = (input: unknown): CreatorImagePlanCreateInput | null => {
+  const record = normalizeObject(input);
+  const assetId = toTrimmedString(record?.assetId);
+  if (!assetId) return null;
+  return {
+    assetId,
+    ...(isCreatorImageProcessingPresetId(record?.presetId) ? { presetId: record.presetId } : {}),
+    ...(isCreatorImageProcessingOutputFormat(record?.outputFormat) ? { outputFormat: record.outputFormat } : {}),
+    ...(normalizeNumber(record?.quality) !== null ? { quality: normalizeNumber(record?.quality) } : {}),
+    ...(normalizeNumber(record?.width) !== null ? { width: normalizeNumber(record?.width) } : {}),
+    ...(normalizeNumber(record?.height) !== null ? { height: normalizeNumber(record?.height) } : {}),
+    ...(normalizeNumber(record?.maxWidth) !== null ? { maxWidth: normalizeNumber(record?.maxWidth) } : {}),
+    ...(normalizeNumber(record?.maxHeight) !== null ? { maxHeight: normalizeNumber(record?.maxHeight) } : {}),
+    ...(toTrimmedString(record?.cropRatio) ? { cropRatio: toTrimmedString(record?.cropRatio) } : {}),
+    ...(normalizeNumber(record?.rotate) !== null ? { rotate: normalizeNumber(record?.rotate) } : {}),
+    ...(toTrimmedString(record?.outputDirectory) ? { outputDirectory: toTrimmedString(record?.outputDirectory) } : {}),
+  };
+};
+
+const imageProcessingService = createImageProcessingService();
 
 export const registerCreatorStudioIpcHandlers = (
   ipcMain: IpcMain,
@@ -180,6 +213,123 @@ export const registerCreatorStudioIpcHandlers = (
         error: error instanceof Error ? error.message : 'Failed to inspect image metadata',
       };
     }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImagePlanCreate, async (_event, input: unknown) => {
+    try {
+      const normalized = normalizeImagePlanCreateInput(input);
+      if (!normalized) {
+        return { success: false, error: 'assetId is required' };
+      }
+      const store = getCreatorAssetStore();
+      let asset = store.getAsset(normalized.assetId);
+      if (!asset || asset.kind !== CreatorProductionAssetKind.Image) {
+        return { success: false, error: 'Image asset not found' };
+      }
+      if (!asset.imageMetadata) {
+        const inspected = await store.inspectImageAsset({ assetId: asset.id });
+        asset = inspected?.asset ?? asset;
+      }
+      const plan = createCreatorAssetImageProcessingPlan({
+        asset,
+        presetId: normalized.presetId,
+        outputFormat: normalized.outputFormat,
+        quality: normalized.quality,
+        width: normalized.width,
+        height: normalized.height,
+        maxWidth: normalized.maxWidth,
+        maxHeight: normalized.maxHeight,
+        cropRatio: normalized.cropRatio,
+        rotate: normalized.rotate,
+        outputDirectory: normalized.outputDirectory,
+      });
+      imageProcessingService.savePlan(plan);
+      return { success: true, plan };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create image processing plan',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImagePlanGet, async (_event, input: unknown) => {
+    const planId = toTrimmedString(normalizeObject(input)?.planId) ?? toTrimmedString(input);
+    if (!planId) {
+      return { success: false, error: 'planId is required' };
+    }
+    const plan = imageProcessingService.getPlan(planId);
+    if (!plan) {
+      return { success: false, error: 'Image processing plan not found' };
+    }
+    return { success: true, plan };
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageJobExecute, async (_event, input: unknown) => {
+    try {
+      const planId = toTrimmedString(normalizeObject(input)?.planId) ?? toTrimmedString(input);
+      if (!planId) {
+        return { success: false, error: 'planId is required' };
+      }
+      const plan = imageProcessingService.getPlan(planId);
+      if (!plan) {
+        return { success: false, error: 'Image processing plan not found' };
+      }
+      const sourceAssetId = plan.inputItems[0]?.sourceAssetId;
+      if (!sourceAssetId) {
+        return { success: false, error: 'source asset is required' };
+      }
+      const result = await imageProcessingService.executePlan(plan, {
+        createAsset: (assetInput) => getCreatorAssetStore().createImageProcessingAsset({
+          sourceAssetId,
+          outputPath: assetInput.outputPath,
+          fileName: assetInput.fileName,
+          mimeType: assetInput.mimeType,
+          imageMetadata: assetInput.imageMetadata,
+          plan: assetInput.plan,
+          job: assetInput.job,
+          task: assetInput.task,
+        }),
+      });
+      return {
+        success: true,
+        job: result.job,
+        tasks: result.tasks,
+        outputAssetIds: result.outputAssets.map((asset) => asset.id),
+        outputAssets: result.outputAssets,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to execute image processing job',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageJobGet, async (_event, input: unknown) => {
+    const jobId = toTrimmedString(normalizeObject(input)?.jobId) ?? toTrimmedString(input);
+    if (!jobId) {
+      return { success: false, error: 'jobId is required' };
+    }
+    const record = imageProcessingService.getJob(jobId);
+    if (!record) {
+      return { success: false, error: 'Image processing job not found' };
+    }
+    return { success: true, ...record };
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageOutputReveal, async (_event, input: unknown) => {
+    const record = normalizeObject(input);
+    const target = imageProcessingService.revealTargetFor({
+      jobId: toTrimmedString(record?.jobId) ?? undefined,
+      taskId: toTrimmedString(record?.taskId) ?? undefined,
+      outputPath: toTrimmedString(record?.outputPath) ?? undefined,
+    });
+    if (!target || !fs.existsSync(target)) {
+      return { success: false, error: 'Output file not found' };
+    }
+    shell.showItemInFolder(target);
+    return { success: true };
   });
 
   ipcMain.handle(CreatorStudioIpcChannel.AssetSetFavorite, async (_event, input: unknown) => {

@@ -540,6 +540,16 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetGetSource, assetId),
     inspectImage: (input: Record<string, unknown>) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.ImageInspect, input),
+    createImagePlan: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImagePlanCreate, input),
+    getImagePlan: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImagePlanGet, input),
+    executeImageJob: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageJobExecute, input),
+    getImageJob: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageJobGet, input),
+    revealImageOutput: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageOutputReveal, input),
     setAssetFavorite: (input: { assetId: string; favorite: boolean }) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetSetFavorite, input),
     updateAsset: (input: Record<string, unknown>) =>

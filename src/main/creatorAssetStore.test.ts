@@ -1,4 +1,7 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 
 import {
@@ -8,6 +11,15 @@ import {
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
   CreatorImageMetadataStatus,
+  CreatorImageProcessingCreatedBy,
+  CreatorImageProcessingJobStatus,
+  CreatorImageProcessingOperation,
+  CreatorImageProcessingOutputFormat,
+  CreatorImageProcessingPlanSchemaVersion,
+  CreatorImageProcessingPlanStatus,
+  CreatorImageProcessingRisk,
+  CreatorImageProcessingSourceKind,
+  CreatorImageProcessingTaskStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -20,6 +32,7 @@ import { ensureCreatorProductionSchema } from './creatorProductionSchema';
 
 let db: Database.Database;
 let store: CreatorAssetStore;
+let tempDir: string;
 
 const createCoworkTables = () => {
   db.exec(`
@@ -119,10 +132,13 @@ beforeEach(() => {
   createCoworkTables();
   ensureCreatorProductionSchema(db);
   store = new CreatorAssetStore(db);
+  tempDir = path.join(tmpdir(), `wesight-creator-store-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  fs.mkdirSync(tempDir, { recursive: true });
 });
 
 afterEach(() => {
   db.close();
+  fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
 describe('CreatorAssetStore', () => {
@@ -239,6 +255,97 @@ describe('CreatorAssetStore', () => {
       status: CreatorImageMetadataStatus.Ready,
       warningCodes: ['large_pixel_count'],
     });
+  });
+
+  test('maps controlled cowork generated image source into a creator asset during inspect', async () => {
+    const imagePath = path.join(tempDir, 'controlled-generated.png');
+    fs.writeFileSync(imagePath, Buffer.from('not-real-but-present'));
+    db.prepare('INSERT INTO cowork_sessions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('session-controlled', 'Creative Producer', 'running', 1, 1);
+    db.prepare('INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('message-user', 'session-controlled', 'user', creatorDraft, null, 10, 1);
+    store.handleCoworkMessageInserted({
+      sessionId: 'session-controlled',
+      message: {
+        id: 'message-user',
+        type: 'user',
+        content: creatorDraft,
+        timestamp: 10,
+        sequence: 1,
+      },
+    });
+    db.prepare('INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('message-generated', 'session-controlled', 'assistant', 'Generated image', JSON.stringify({
+        generatedImages: [{ path: imagePath, name: 'controlled-generated.png', mimeType: 'image/png' }],
+      }), 20, 2);
+
+    const result = await store.inspectImageAsset({
+      source: {
+        sessionId: 'session-controlled',
+        messageId: 'message-generated',
+        filePath: imagePath,
+      },
+    });
+
+    expect(result?.asset.source).toBe(CreatorProductionAssetSource.CoworkGeneratedImage);
+    expect(result?.asset.sessionId).toBe('session-controlled');
+    expect(result?.asset.messageId).toBe('message-generated');
+    expect(result?.asset.templateId).toBe('poster-system');
+    expect(result?.asset.caseIds).toEqual(['case-1', 'case-2']);
+  });
+
+  test('rejects uncontrolled activity image artifact inspect sources', async () => {
+    const imagePath = path.join(tempDir, 'uncontrolled-artifact.png');
+    fs.writeFileSync(imagePath, Buffer.from('not-real-but-present'));
+    db.prepare('INSERT INTO cowork_sessions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('session-artifact', 'Creative Producer', 'running', 1, 1);
+    db.prepare('INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('message-artifact', 'session-artifact', 'assistant', 'No file links here', null, 20, 1);
+
+    const result = await store.inspectImageAsset({
+      source: {
+        sessionId: 'session-artifact',
+        artifactId: 'file:/tmp/uncontrolled-artifact.png',
+        filePath: imagePath,
+      },
+    });
+
+    expect(result).toBeNull();
+    expect(store.listAssets().assets.some((asset) => asset.filePath === imagePath)).toBe(false);
+  });
+
+  test('maps controlled activity image artifact file links into a creator asset', async () => {
+    const imagePath = path.join(tempDir, 'activity-artifact.png');
+    fs.writeFileSync(imagePath, Buffer.from('not-real-but-present'));
+    db.prepare('INSERT INTO cowork_sessions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('session-artifact-controlled', 'Creative Producer', 'running', 1, 1);
+    db.prepare('INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('message-user-artifact', 'session-artifact-controlled', 'user', creatorDraft, null, 10, 1);
+    store.handleCoworkMessageInserted({
+      sessionId: 'session-artifact-controlled',
+      message: {
+        id: 'message-user-artifact',
+        type: 'user',
+        content: creatorDraft,
+        timestamp: 10,
+        sequence: 1,
+      },
+    });
+    db.prepare('INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('message-link-artifact', 'session-artifact-controlled', 'assistant', `[artifact](${imagePath})`, null, 20, 2);
+
+    const result = await store.inspectImageAsset({
+      source: {
+        sessionId: 'session-artifact-controlled',
+        artifactId: `file:${imagePath}`,
+        filePath: imagePath,
+      },
+    });
+
+    expect(result?.asset.filePath).toBe(imagePath);
+    expect(result?.asset.messageId).toBe('message-link-artifact');
+    expect(result?.asset.templateId).toBe('poster-system');
+    expect(result?.asset.caseIds).toEqual(['case-1', 'case-2']);
   });
 
   test('creates a separate run for each creator draft in one session', () => {
@@ -948,5 +1055,152 @@ describe('CreatorAssetStore', () => {
     expect(failedTask?.status).toBe(CreatorBatchTaskStatus.Failed);
     expect(failedTask?.error).toBe('Provider timeout');
     expect(failed?.status).toBe(CreatorBatchRunStatus.PartialFailed);
+  });
+
+  test('creates local image processing derived asset with source lineage', () => {
+    const workspace = store.createProject({ name: 'Derived Project' });
+    const sourcePath = path.join(tempDir, 'source.png');
+    const outputPath = path.join(tempDir, 'source.web-optimized.100x80.webp');
+    fs.writeFileSync(sourcePath, Buffer.from('source'));
+    fs.writeFileSync(outputPath, Buffer.from('output'));
+
+    db.prepare(`
+      INSERT INTO production_assets (
+        id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id,
+        session_id, source_session_id, message_id, source_message_id, template_id, case_ids, case_ids_json,
+        prompt_spec, prompt_spec_json, prompt_text, parent_prompt_asset_id, prompt_version_id, recipe_id,
+        selected_direction_id, file_path, file_name, mime_type, favorite, adoption_status, tags_json,
+        license_note, usage_note, metadata, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'source-asset',
+      workspace.currentProjectId,
+      CreatorProductionAssetKind.Image,
+      'Source',
+      CreatorProductionAssetStatus.Ready,
+      CreatorProductionAssetSource.CoworkGeneratedImage,
+      'run-1',
+      'run-1',
+      null,
+      'session-1',
+      'session-1',
+      'message-1',
+      'message-1',
+      'poster-system',
+      JSON.stringify(['case-1']),
+      JSON.stringify(['case-1']),
+      JSON.stringify({ schemaVersion: CreatorPromptSpecSchemaVersion.V1, sourceTitle: 'Source' }),
+      JSON.stringify({ schemaVersion: CreatorPromptSpecSchemaVersion.V1, sourceTitle: 'Source' }),
+      'Generate source.',
+      null,
+      'version-1',
+      'recipe-1',
+      'direction-1',
+      sourcePath,
+      'source.png',
+      'image/png',
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(['tag-a']),
+      'license',
+      'usage',
+      JSON.stringify({}),
+      1,
+      1,
+    );
+
+    const imageMetadata = {
+      sourcePath: outputPath,
+      width: 100,
+      height: 80,
+      fileSize: 6,
+      format: CreatorImageProcessingOutputFormat.Webp,
+      mimeType: 'image/webp',
+      hasAlpha: false,
+      exifOrientation: null,
+      colorSpace: 'srgb',
+      inspectedAt: 2,
+      status: CreatorImageMetadataStatus.Ready,
+      warningCodes: [],
+    };
+    const plan = {
+      schemaVersion: CreatorImageProcessingPlanSchemaVersion.V1,
+      id: 'plan-1',
+      projectId: workspace.currentProjectId,
+      source: { sourceKind: CreatorImageProcessingSourceKind.CreatorAsset, assetId: 'source-asset' },
+      inputItems: [],
+      presetId: null,
+      operations: [{ id: 'convert-webp', operation: CreatorImageProcessingOperation.Convert, params: { format: CreatorImageProcessingOutputFormat.Webp } }],
+      output: { format: CreatorImageProcessingOutputFormat.Webp, quality: 80, outputDirectory: tempDir, fileNamePattern: '{name}.webp', overwrite: false as const },
+      outputItems: [],
+      warnings: [],
+      estimatedRisk: CreatorImageProcessingRisk.Low,
+      createdBy: CreatorImageProcessingCreatedBy.User,
+      status: CreatorImageProcessingPlanStatus.Ready,
+      createdAt: 2,
+      updatedAt: 2,
+    };
+    const job = {
+      id: 'job-1',
+      projectId: workspace.currentProjectId,
+      planId: plan.id,
+      status: CreatorImageProcessingJobStatus.Completed,
+      totalCount: 1,
+      successCount: 1,
+      failedCount: 0,
+      inputTotalSize: 10,
+      outputTotalSize: 6,
+      savedSize: 4,
+      reportAssetId: null,
+      createdAt: 2,
+      startedAt: 2,
+      completedAt: 3,
+    };
+    const task = {
+      id: 'task-1',
+      jobId: job.id,
+      projectId: workspace.currentProjectId,
+      sourceAssetId: 'source-asset',
+      outputAssetId: null,
+      sourceArtifactId: null,
+      sourcePath,
+      outputPath,
+      status: CreatorImageProcessingTaskStatus.Completed,
+      inputSize: 10,
+      outputSize: 6,
+      durationMs: 1,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: 2,
+      updatedAt: 3,
+      completedAt: 3,
+    };
+
+    const derived = store.createImageProcessingAsset({
+      sourceAssetId: 'source-asset',
+      outputPath,
+      fileName: 'source.web-optimized.100x80.webp',
+      mimeType: 'image/webp',
+      imageMetadata,
+      plan,
+      job,
+      task,
+    });
+
+    expect(derived.kind).toBe(CreatorProductionAssetKind.Image);
+    expect(derived.source).toBe(CreatorProductionAssetSource.LocalImageProcessing);
+    expect(derived.variantOfAssetId).toBe('source-asset');
+    expect(derived.templateId).toBe('poster-system');
+    expect(derived.caseIds).toEqual(['case-1']);
+    expect(derived.promptText).toBe('Generate source.');
+    expect(derived.licenseNote).toBe('license');
+    expect(derived.usageNote).toBe('usage');
+    expect(derived.imageMetadata?.format).toBe(CreatorImageProcessingOutputFormat.Webp);
+
+    const row = db.prepare('SELECT metadata FROM production_assets WHERE id = ?').get(derived.id) as { metadata: string };
+    const metadata = JSON.parse(row.metadata) as { processing?: { sourceAssetId?: string; plan?: { id?: string } } };
+    expect(metadata.processing?.sourceAssetId).toBe('source-asset');
+    expect(metadata.processing?.plan?.id).toBe('plan-1');
   });
 });

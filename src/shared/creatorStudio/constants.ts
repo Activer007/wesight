@@ -36,6 +36,11 @@ export const CreatorStudioIpcChannel = {
   BatchTaskSkip: 'creatorStudio:batchTask:skip',
   BatchTaskFail: 'creatorStudio:batchTask:fail',
   ImageInspect: 'creatorStudio:image:inspect',
+  ImagePlanCreate: 'creatorStudio:imagePlan:create',
+  ImagePlanGet: 'creatorStudio:imagePlan:get',
+  ImageJobExecute: 'creatorStudio:imageJob:execute',
+  ImageJobGet: 'creatorStudio:imageJob:get',
+  ImageOutputReveal: 'creatorStudio:imageOutput:reveal',
 } as const;
 
 export type CreatorStudioIpcChannel =
@@ -440,6 +445,21 @@ export const CreatorImageProcessingCreatedByValues = [
   CreatorImageProcessingCreatedBy.Recipe,
 ] as const;
 
+export const CreatorImageProcessingPresetId = {
+  WebOptimizedWebp: 'web-optimized-webp',
+  ReadmeBanner: 'readme-banner',
+  SocialCard1200x675: 'social-card-1200x675',
+} as const;
+
+export type CreatorImageProcessingPresetId =
+  typeof CreatorImageProcessingPresetId[keyof typeof CreatorImageProcessingPresetId];
+
+export const CreatorImageProcessingPresetIdValues = [
+  CreatorImageProcessingPresetId.WebOptimizedWebp,
+  CreatorImageProcessingPresetId.ReadmeBanner,
+  CreatorImageProcessingPresetId.SocialCard1200x675,
+] as const;
+
 export const CreatorStudioDefaultProjectId = 'creator-project-default';
 
 export const CreatorStudioAssetListDefaultLimit = 60;
@@ -556,6 +576,13 @@ export const isCreatorImageProcessingCreatedBy = (
 ): value is CreatorImageProcessingCreatedBy => (
   typeof value === 'string'
   && CreatorImageProcessingCreatedByValues.includes(value as CreatorImageProcessingCreatedBy)
+);
+
+export const isCreatorImageProcessingPresetId = (
+  value: unknown,
+): value is CreatorImageProcessingPresetId => (
+  typeof value === 'string'
+  && CreatorImageProcessingPresetIdValues.includes(value as CreatorImageProcessingPresetId)
 );
 
 export const isCreatorAssetAdoptionStatus = (value: unknown): value is CreatorAssetAdoptionStatus => (

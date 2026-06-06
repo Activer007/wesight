@@ -54,6 +54,7 @@ const createAsset = (overrides: Partial<CreatorProductionAssetRecord> = {}): Cre
   sourceSessionAvailable: true,
   imageMetadata: null,
   ...overrides,
+  imageProcessing: overrides.imageProcessing ?? null,
 });
 
 const createRecipe = (overrides: Partial<CreatorRecipeRecord> = {}): CreatorRecipeRecord => ({

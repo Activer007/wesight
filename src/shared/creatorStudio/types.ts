@@ -11,7 +11,12 @@ import type {
   CreatorProductionRunSource,
   CreatorProductionRunStatus,
 } from './constants';
-import type { CreatorImageMetadata } from './imageProcessingTypes';
+import type {
+  CreatorImageMetadata,
+  CreatorImageProcessingJob,
+  CreatorImageProcessingPlan,
+  CreatorImageProcessingTask,
+} from './imageProcessingTypes';
 
 export interface CreatorPromptSpecSnapshot {
   schemaVersion?: 'creator.prompt.v1';
@@ -234,6 +239,16 @@ export interface CreatorProductionAssetRecord {
   updatedAt: number;
   sourceSessionAvailable: boolean;
   imageMetadata: CreatorImageMetadata | null;
+  imageProcessing: CreatorImageProcessingAssetMetadata | null;
+}
+
+export interface CreatorImageProcessingAssetMetadata {
+  sourceAssetId: string;
+  presetId: string | null;
+  operations: CreatorImageProcessingPlan['operations'];
+  plan: CreatorImageProcessingPlan | null;
+  job: CreatorImageProcessingJob | null;
+  task: CreatorImageProcessingTask | null;
 }
 
 export interface CreatorImageInspectInput {
@@ -241,6 +256,7 @@ export interface CreatorImageInspectInput {
   source?: {
     sessionId?: string;
     messageId?: string;
+    artifactId?: string;
     filePath?: string;
   };
 }
@@ -248,6 +264,17 @@ export interface CreatorImageInspectInput {
 export interface CreatorImageInspectResult {
   asset: CreatorProductionAssetRecord;
   imageMetadata: CreatorImageMetadata;
+}
+
+export interface CreatorImageProcessingAssetCreateInput {
+  sourceAssetId: string;
+  outputPath: string;
+  fileName: string;
+  mimeType: string | null;
+  imageMetadata: CreatorImageMetadata;
+  plan: CreatorImageProcessingPlan;
+  job: CreatorImageProcessingJob;
+  task: CreatorImageProcessingTask;
 }
 
 export interface CreatorProductionAssetSourceLookup {

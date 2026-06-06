@@ -51,6 +51,8 @@ import type {
   CreatorCaseAssetCreateInput,
   CreatorImageInspectInput,
   CreatorImageInspectResult,
+  CreatorImageProcessingAssetCreateInput,
+  CreatorImageProcessingAssetMetadata,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -142,6 +144,17 @@ type GeneratedImageInput = {
   mimeType?: string;
   source?: string;
 };
+
+interface CreatorGeneratedImageContext {
+  templateId: string | null;
+  caseIds: string[];
+  promptSpec: CreatorPromptSpecSnapshot | null;
+  promptText: string;
+  variantOfAssetId: string | null;
+  promptVersionId: string | null;
+  recipeId: string | null;
+  selectedDirectionId: string | null;
+}
 
 interface ProjectRow {
   id: string;
@@ -317,6 +330,39 @@ const parseImageMetadata = (metadata: Record<string, unknown>): CreatorImageMeta
       : [],
     ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
     ...(typeof record.errorMessage === 'string' ? { errorMessage: record.errorMessage } : {}),
+  };
+};
+
+const parseImageProcessingMetadata = (metadata: Record<string, unknown>): CreatorImageProcessingAssetMetadata | null => {
+  const value = metadata.processing;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const sourceAssetId = typeof record.sourceAssetId === 'string' && record.sourceAssetId.trim()
+    ? record.sourceAssetId.trim()
+    : null;
+  if (!sourceAssetId) return null;
+
+  const plan = record.plan && typeof record.plan === 'object' && !Array.isArray(record.plan)
+    ? record.plan as CreatorImageProcessingAssetMetadata['plan']
+    : null;
+  const job = record.job && typeof record.job === 'object' && !Array.isArray(record.job)
+    ? record.job as CreatorImageProcessingAssetMetadata['job']
+    : null;
+  const task = record.task && typeof record.task === 'object' && !Array.isArray(record.task)
+    ? record.task as CreatorImageProcessingAssetMetadata['task']
+    : null;
+  const planOperations = plan?.operations ?? [];
+  const operations = Array.isArray(record.operations)
+    ? record.operations as CreatorImageProcessingAssetMetadata['operations']
+    : planOperations;
+
+  return {
+    sourceAssetId,
+    presetId: typeof record.presetId === 'string' ? record.presetId : plan?.presetId ?? null,
+    operations,
+    plan,
+    job,
+    task,
   };
 };
 
@@ -1158,7 +1204,7 @@ export class CreatorAssetStore {
     const assetId = input.assetId?.trim();
     const asset = assetId
       ? this.getAsset(assetId)
-      : this.getControlledCoworkImageAsset(input.source);
+      : this.resolveControlledImageAsset(input.source);
     if (!asset || asset.kind !== CreatorProductionAssetKind.Image) {
       return null;
     }
@@ -1189,11 +1235,121 @@ export class CreatorAssetStore {
     return updated ? { asset: updated, imageMetadata } : null;
   }
 
-  private getControlledCoworkImageAsset(source: CreatorImageInspectInput['source']): CreatorProductionAssetRecord | null {
+  resolveImageProcessingSourceAsset(input: CreatorImageInspectInput): CreatorProductionAssetRecord | null {
+    const assetId = input.assetId?.trim();
+    if (assetId) {
+      const asset = this.getAsset(assetId);
+      return asset?.kind === CreatorProductionAssetKind.Image ? asset : null;
+    }
+    return this.resolveControlledImageAsset(input.source);
+  }
+
+  createImageProcessingAsset(input: CreatorImageProcessingAssetCreateInput): CreatorProductionAssetRecord {
+    const sourceAsset = this.getAsset(input.sourceAssetId);
+    if (!sourceAsset || sourceAsset.kind !== CreatorProductionAssetKind.Image) {
+      throw new Error('Source image asset not found');
+    }
+    if (path.resolve(sourceAsset.filePath) === path.resolve(input.outputPath)) {
+      throw new Error('Output file must not overwrite the source image');
+    }
+
+    const now = Date.now();
+    const id = uuidv4();
+    const metadata = {
+      imageMetadata: input.imageMetadata,
+      processing: {
+        sourceAssetId: sourceAsset.id,
+        plan: input.plan,
+        job: input.job,
+        task: input.task,
+        presetId: input.plan.presetId,
+        operations: input.plan.operations,
+      },
+    };
+
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id,
+        project_id,
+        kind,
+        title,
+        status,
+        source,
+        run_id,
+        source_run_id,
+        variant_of_asset_id,
+        session_id,
+        source_session_id,
+        message_id,
+        source_message_id,
+        template_id,
+        case_ids,
+        case_ids_json,
+        prompt_spec,
+        prompt_spec_json,
+        prompt_text,
+        parent_prompt_asset_id,
+        prompt_version_id,
+        recipe_id,
+        selected_direction_id,
+        file_path,
+        file_name,
+        mime_type,
+        favorite,
+        adoption_status,
+        tags_json,
+        license_note,
+        usage_note,
+        metadata,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      sourceAsset.projectId,
+      CreatorProductionAssetKind.Image,
+      input.fileName,
+      CreatorProductionAssetStatus.Ready,
+      CreatorProductionAssetSource.LocalImageProcessing,
+      sourceAsset.runId,
+      sourceAsset.runId,
+      sourceAsset.id,
+      null,
+      sourceAsset.sessionId,
+      null,
+      sourceAsset.messageId,
+      sourceAsset.templateId,
+      JSON.stringify(sourceAsset.caseIds),
+      JSON.stringify(sourceAsset.caseIds),
+      sourceAsset.promptSpec ? JSON.stringify(sourceAsset.promptSpec) : null,
+      sourceAsset.promptSpec ? JSON.stringify(sourceAsset.promptSpec) : null,
+      sourceAsset.promptText,
+      sourceAsset.parentPromptAssetId,
+      sourceAsset.promptVersionId,
+      sourceAsset.recipeId,
+      sourceAsset.selectedDirectionId,
+      input.outputPath,
+      input.fileName,
+      input.mimeType,
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(sourceAsset.tags),
+      sourceAsset.licenseNote,
+      sourceAsset.usageNote,
+      JSON.stringify(metadata),
+      now,
+      now,
+    );
+
+    return this.getAsset(id)!;
+  }
+
+  private resolveControlledImageAsset(source: CreatorImageInspectInput['source']): CreatorProductionAssetRecord | null {
     const sessionId = source?.sessionId?.trim();
-    const messageId = source?.messageId?.trim();
+    const messageId = source?.messageId?.trim() ?? null;
     const filePath = source?.filePath?.trim();
-    if (!sessionId || !messageId || !filePath) {
+    if (!sessionId || !filePath) {
       return null;
     }
 
@@ -1204,20 +1360,234 @@ export class CreatorAssetStore {
       FROM production_assets a
       LEFT JOIN cowork_sessions s ON s.id = COALESCE(a.source_session_id, a.session_id)
       WHERE COALESCE(a.source_session_id, a.session_id) = ?
-        AND COALESCE(a.source_message_id, a.message_id) = ?
+        AND (? IS NULL OR COALESCE(a.source_message_id, a.message_id) = ?)
         AND a.file_path = ?
         AND a.kind = ?
-        AND a.source = ?
+        AND a.source IN (?, ?)
       LIMIT 1
     `).get(
       sessionId,
       messageId,
+      messageId,
       filePath,
       CreatorProductionAssetKind.Image,
-      CreatorProductionAssetSource.CoworkGeneratedImage
+      CreatorProductionAssetSource.CoworkGeneratedImage,
+      CreatorProductionAssetSource.LocalImageProcessing,
     ) as ProductionAssetRow | undefined;
 
-    return row ? this.mapAssetRow(row) : null;
+    if (row) {
+      return this.mapAssetRow(row);
+    }
+
+    return messageId
+      ? this.createControlledGeneratedImageAsset({ sessionId, messageId, filePath })
+        ?? this.createControlledActivityImageAsset({
+          sessionId,
+          messageId,
+          artifactId: source?.artifactId,
+          filePath,
+        })
+      : this.createControlledActivityImageAsset({ sessionId, artifactId: source?.artifactId, filePath });
+  }
+
+  private createControlledGeneratedImageAsset(input: {
+    sessionId: string;
+    messageId: string;
+    filePath: string;
+  }): CreatorProductionAssetRecord | null {
+    const row = this.db.prepare(`
+      SELECT id, session_id, type, content, metadata, created_at, sequence
+      FROM cowork_messages
+      WHERE session_id = ? AND id = ?
+      LIMIT 1
+    `).get(input.sessionId, input.messageId) as {
+      id: string;
+      session_id: string;
+      type: string;
+      content: string;
+      metadata: string | null;
+      created_at: number;
+      sequence: number | null;
+    } | undefined;
+    if (!row) return null;
+
+    const metadata = parseJsonObject(row.metadata) as CoworkMessageMetadata;
+    const image = getGeneratedImages(metadata).find((item) => item.path.trim() === input.filePath);
+    if (!image) return null;
+
+    return this.upsertControlledImageAsset({
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      image,
+      timestamp: row.created_at,
+      source: CreatorProductionAssetSource.CoworkGeneratedImage,
+      metadata: { generatedImageSource: image.source || null },
+    });
+  }
+
+  private createControlledActivityImageAsset(input: {
+    sessionId: string;
+    messageId?: string | null;
+    artifactId?: string;
+    filePath: string;
+  }): CreatorProductionAssetRecord | null {
+    const rows = this.db.prepare(`
+      SELECT id, type, content, metadata, created_at, sequence
+      FROM cowork_messages
+      WHERE session_id = ?
+        AND (? IS NULL OR id = ?)
+      ORDER BY COALESCE(sequence, 0) ASC, created_at ASC
+    `).all(input.sessionId, input.messageId ?? null, input.messageId ?? null) as Array<{
+      id: string;
+      type: string;
+      content: string;
+      metadata: string | null;
+      created_at: number;
+      sequence: number | null;
+    }>;
+
+    for (const row of rows) {
+      const metadata = parseJsonObject(row.metadata) as CoworkMessageMetadata;
+      const generatedImage = getGeneratedImages(metadata).find((item) => item.path.trim() === input.filePath);
+      if (generatedImage) {
+        return this.upsertControlledImageAsset({
+          sessionId: input.sessionId,
+          messageId: row.id,
+          image: generatedImage,
+          timestamp: row.created_at,
+          source: CreatorProductionAssetSource.CoworkGeneratedImage,
+          metadata: {
+            activityArtifactId: input.artifactId ?? null,
+            generatedImageSource: generatedImage.source || null,
+          },
+        });
+      }
+
+      if (row.type === 'assistant' && this.messageContentLinksFile(row.content, input.filePath)) {
+        return this.upsertControlledImageAsset({
+          sessionId: input.sessionId,
+          messageId: row.id,
+          image: {
+            path: input.filePath,
+            name: path.basename(input.filePath),
+          },
+          timestamp: row.created_at,
+          source: CreatorProductionAssetSource.CoworkGeneratedImage,
+          metadata: {
+            activityArtifactId: input.artifactId ?? null,
+            activityArtifactSource: 'assistant_file_link',
+          },
+        });
+      }
+    }
+
+    return null;
+  }
+
+  private messageContentLinksFile(content: string, filePath: string): boolean {
+    const normalizedTarget = path.resolve(filePath);
+    const linkPattern = /\[([^\]]+)\]\((file:\/\/[^)\s]+|\/[^)\s]+)\)/g;
+    let match: RegExpExecArray | null;
+    while ((match = linkPattern.exec(content)) !== null) {
+      const rawPath = match[2]?.trim().replace(/^file:\/\//i, '');
+      if (rawPath && path.resolve(rawPath) === normalizedTarget) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private upsertControlledImageAsset(input: {
+    sessionId: string;
+    messageId: string;
+    image: GeneratedImageInput;
+    timestamp: number;
+    source: CreatorProductionAssetSource;
+    metadata: Record<string, unknown>;
+  }): CreatorProductionAssetRecord | null {
+    const run = this.getLatestPendingRunForSession(input.sessionId)
+      ?? this.createRunFromLatestPrompt(input.sessionId, input.timestamp);
+    const context = this.getImageAssetContextFromRun(run);
+    const filePath = input.image.path.trim();
+    const now = input.timestamp || Date.now();
+    const caseIdsJson = JSON.stringify(context.caseIds);
+    const promptSpecJson = context.promptSpec ? JSON.stringify(context.promptSpec) : null;
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id, session_id,
+        source_session_id, message_id, source_message_id, template_id,
+        case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text,
+        parent_prompt_asset_id, prompt_version_id, recipe_id, selected_direction_id,
+        file_path, file_name, mime_type,
+        favorite, adoption_status, tags_json, license_note, usage_note, metadata, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id, message_id, file_path) DO UPDATE SET
+        status = excluded.status,
+        run_id = COALESCE(production_assets.run_id, excluded.run_id),
+        source_run_id = COALESCE(production_assets.source_run_id, excluded.source_run_id),
+        variant_of_asset_id = COALESCE(production_assets.variant_of_asset_id, excluded.variant_of_asset_id),
+        source_session_id = COALESCE(production_assets.source_session_id, excluded.source_session_id),
+        source_message_id = COALESCE(production_assets.source_message_id, excluded.source_message_id),
+        template_id = COALESCE(production_assets.template_id, excluded.template_id),
+        case_ids = excluded.case_ids,
+        case_ids_json = excluded.case_ids_json,
+        prompt_spec = excluded.prompt_spec,
+        prompt_spec_json = excluded.prompt_spec_json,
+        prompt_text = excluded.prompt_text,
+        parent_prompt_asset_id = COALESCE(production_assets.parent_prompt_asset_id, excluded.parent_prompt_asset_id),
+        prompt_version_id = COALESCE(production_assets.prompt_version_id, excluded.prompt_version_id),
+        recipe_id = COALESCE(production_assets.recipe_id, excluded.recipe_id),
+        selected_direction_id = COALESCE(production_assets.selected_direction_id, excluded.selected_direction_id),
+        title = excluded.title,
+        file_name = excluded.file_name,
+        mime_type = excluded.mime_type,
+        metadata = excluded.metadata,
+        updated_at = excluded.updated_at
+    `).run(
+      uuidv4(),
+      this.getCurrentProjectId(),
+      CreatorProductionAssetKind.Image,
+      getImageName(input.image),
+      fs.existsSync(filePath) ? CreatorProductionAssetStatus.Ready : CreatorProductionAssetStatus.Missing,
+      input.source,
+      run?.id ?? null,
+      run?.id ?? null,
+      context.variantOfAssetId,
+      input.sessionId,
+      input.sessionId,
+      input.messageId,
+      input.messageId,
+      context.templateId,
+      caseIdsJson,
+      caseIdsJson,
+      promptSpecJson,
+      promptSpecJson,
+      context.promptText,
+      context.variantOfAssetId,
+      context.promptVersionId,
+      context.recipeId,
+      context.selectedDirectionId,
+      filePath,
+      getImageName(input.image),
+      input.image.mimeType || null,
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      '[]',
+      null,
+      null,
+      JSON.stringify(input.metadata),
+      now,
+      now,
+    );
+
+    const assetRow = this.db.prepare(`
+      SELECT id
+      FROM production_assets
+      WHERE session_id = ? AND message_id = ? AND file_path = ?
+      LIMIT 1
+    `).get(input.sessionId, input.messageId, filePath) as { id: string } | undefined;
+    return assetRow?.id ? this.getAsset(assetRow.id) : null;
   }
 
   private getAssetMetadataJson(assetId: string): string | null {
@@ -1750,27 +2120,7 @@ export class CreatorAssetStore {
     const images = getGeneratedImages(message.metadata);
     if (images.length === 0) return;
     const run = this.getLatestPendingRunForSession(sessionId) ?? this.createRunFromLatestPrompt(sessionId, message.timestamp);
-    const context = run
-      ? {
-        templateId: run.templateId,
-        caseIds: run.caseIds,
-        promptSpec: run.promptSpec,
-        promptText: run.promptText,
-        variantOfAssetId: run.variantOfAssetId,
-        promptVersionId: run.promptVersionId,
-        recipeId: run.recipeId,
-        selectedDirectionId: run.selectedDirectionId,
-      }
-      : {
-        templateId: null,
-        caseIds: [],
-        promptSpec: null,
-        promptText: '',
-        variantOfAssetId: null,
-        promptVersionId: null,
-        recipeId: null,
-        selectedDirectionId: null,
-      };
+    const context = this.getImageAssetContextFromRun(run);
     const now = message.timestamp || Date.now();
     const insertAsset = this.db.prepare(`
       INSERT INTO production_assets (
@@ -1872,6 +2222,30 @@ export class CreatorAssetStore {
         this.completeBatchTaskForRun(run, outputAssetIds, now);
       }
     })();
+  }
+
+  private getImageAssetContextFromRun(run: CreatorProductionRunRecord | null): CreatorGeneratedImageContext {
+    return run
+      ? {
+        templateId: run.templateId,
+        caseIds: run.caseIds,
+        promptSpec: run.promptSpec,
+        promptText: run.promptText,
+        variantOfAssetId: run.variantOfAssetId,
+        promptVersionId: run.promptVersionId,
+        recipeId: run.recipeId,
+        selectedDirectionId: run.selectedDirectionId,
+      }
+      : {
+        templateId: null,
+        caseIds: [],
+        promptSpec: null,
+        promptText: '',
+        variantOfAssetId: null,
+        promptVersionId: null,
+        recipeId: null,
+        selectedDirectionId: null,
+      };
   }
 
   private completeBatchTaskForRun(
@@ -2545,6 +2919,7 @@ export class CreatorAssetStore {
       updatedAt: row.updated_at,
       sourceSessionAvailable: Boolean(row.source_session_available),
       imageMetadata: parseImageMetadata(metadata),
+      imageProcessing: parseImageProcessingMetadata(metadata),
     };
   }
 }

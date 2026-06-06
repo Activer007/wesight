@@ -12,6 +12,7 @@ import { FolderIcon } from '@heroicons/react/24/solid';
 import { CoworkAgentEngine } from '@shared/cowork/constants';
 import { CoworkFileActivityStatus } from '@shared/cowork/fileActivity';
 import type { CreatorImageMetadata } from '@shared/creatorStudio/imageProcessingTypes';
+import type { CreatorProductionAssetRecord } from '@shared/creatorStudio/types';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -35,6 +36,7 @@ import {
   getPreferredActivityFileChangeId,
 } from '../../utils/coworkActivity';
 import { buildCoworkStudioSnapshot } from '../../utils/coworkStudio';
+import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
 import { getCompactFolderName } from '../../utils/path';
 import {
   getCollapsedText,
@@ -44,6 +46,7 @@ import {
 } from '../../utils/renderingGuards';
 import { getAgentEngineLabel } from '../agent/AgentEngineSelect';
 import Modal from '../common/Modal';
+import { ImagePostProcessingDrawer } from '../creatorStudio/ImagePostProcessingDrawer';
 import ComposeIcon from '../icons/ComposeIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
@@ -1282,8 +1285,12 @@ const AssistantMessageItem: React.FC<{
   const [expandedImageMetadataError, setExpandedImageMetadataError] = useState<string | null>(null);
   const [isDownloadingImage, setIsDownloadingImage] = useState(false);
   const [imageDownloadStatus, setImageDownloadStatus] = useState<ImageDownloadStatus | null>(null);
+  const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [isPreparingPostProcessing, setIsPreparingPostProcessing] = useState(false);
+  const [postProcessingStatus, setPostProcessingStatus] = useState<ImageDownloadStatus | null>(null);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
   const generatedImages = getGeneratedImages(message.metadata);
+  const imageProcessingEnabled = isCreatorImageProcessingEnabled();
 
   const openGeneratedImage = useCallback((image: GeneratedImage, src: string, name: string) => {
     setImageDownloadStatus(null);
@@ -1296,6 +1303,7 @@ const AssistantMessageItem: React.FC<{
     setExpandedImageMetadata(null);
     setExpandedImageMetadataError(null);
     setImageDownloadStatus(null);
+    setPostProcessingStatus(null);
   }, [isDownloadingImage]);
 
   useEffect(() => {
@@ -1373,6 +1381,47 @@ const AssistantMessageItem: React.FC<{
     }
   }, [expandedImage, isDownloadingImage]);
 
+  const handlePostProcessGeneratedImage = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!expandedImage || !sessionId || isPreparingPostProcessing) return;
+
+    setIsPreparingPostProcessing(true);
+    setPostProcessingStatus(null);
+    try {
+      const result = await creatorStudioAssetService.inspectImage({
+        source: {
+          sessionId,
+          messageId: message.id,
+          filePath: expandedImage.image.path,
+        },
+      });
+      if (!result?.asset) {
+        setPostProcessingStatus({
+          type: 'error',
+          message: i18nService.t('creatorImageProcessingSourceMapFailed'),
+        });
+        return;
+      }
+      setPostProcessingAsset(result.asset);
+    } catch (error) {
+      setPostProcessingStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : i18nService.t('creatorImageProcessingSourceMapFailed'),
+      });
+    } finally {
+      setIsPreparingPostProcessing(false);
+    }
+  }, [expandedImage, isPreparingPostProcessing, message.id, sessionId]);
+
+  const handlePostProcessingCompleted = useCallback((assets: CreatorProductionAssetRecord[]) => {
+    setPostProcessingStatus({
+      type: 'success',
+      message: assets[0]
+        ? i18nService.t('creatorImageProcessingCoworkCompleted')
+        : i18nService.t('creatorImageProcessingCompleted'),
+    });
+  }, []);
+
   return (
     <div
       className="relative"
@@ -1443,16 +1492,36 @@ const AssistantMessageItem: React.FC<{
                 <DocumentArrowDownIcon className="h-4 w-4" />
                 {isDownloadingImage ? i18nService.t('downloadingImage') : i18nService.t('downloadImage')}
               </button>
-              {imageDownloadStatus && (
+              {imageProcessingEnabled && sessionId && (
+                <button
+                  type="button"
+                  onClick={handlePostProcessGeneratedImage}
+                  disabled={isPreparingPostProcessing}
+                  className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-900 shadow-lg transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-900 dark:text-white dark:hover:bg-slate-800"
+                >
+                  <PhotoIcon className="h-4 w-4" />
+                  {isPreparingPostProcessing
+                    ? i18nService.t('creatorImageProcessingPreparing')
+                    : i18nService.t('creatorImagePostProcessingAction')}
+                </button>
+              )}
+              {(imageDownloadStatus || postProcessingStatus) && (
                 <div className={`rounded-full px-3 py-1 text-xs shadow ${
-                  imageDownloadStatus.type === 'success'
+                  (postProcessingStatus ?? imageDownloadStatus)?.type === 'success'
                     ? 'bg-emerald-500/90 text-white'
                     : 'bg-red-500/90 text-white'
                 }`}>
-                  {imageDownloadStatus.message}
+                  {(postProcessingStatus ?? imageDownloadStatus)?.message}
                 </div>
               )}
             </div>
+          </div>
+          <div onClick={(event) => event.stopPropagation()}>
+            <ImagePostProcessingDrawer
+              asset={postProcessingAsset}
+              onClose={() => setPostProcessingAsset(null)}
+              onCompleted={handlePostProcessingCompleted}
+            />
           </div>
         </div>
       )}
@@ -3579,6 +3648,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           <div className="hidden h-full lg:block">
             <CoworkActivitySidebar
               snapshot={activitySnapshot}
+              sessionId={currentSession.id}
               sessionStatus={currentSession.status}
               engineLabel={getEngineLabel()}
               cwd={currentSession.cwd}
@@ -3601,6 +3671,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           <div className="absolute inset-0 z-40 flex justify-end bg-black/20 lg:hidden">
             <CoworkActivitySidebar
               snapshot={activitySnapshot}
+              sessionId={currentSession.id}
               sessionStatus={currentSession.status}
               engineLabel={getEngineLabel()}
               cwd={currentSession.cwd}

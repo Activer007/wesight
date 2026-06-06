@@ -6,6 +6,7 @@ import type {
   CreatorImageProcessingOutputFormat,
   CreatorImageProcessingPlanSchemaVersion,
   CreatorImageProcessingPlanStatus,
+  CreatorImageProcessingPresetId,
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
@@ -59,6 +60,17 @@ export interface CreatorImageProcessingOutput {
   overwrite: false;
 }
 
+export interface CreatorImageProcessingOutputItem {
+  inputItemId: string;
+  sourceAssetId: string | null;
+  outputDirectory: string;
+  fileName: string;
+  outputPath: string;
+  width: number | null;
+  height: number | null;
+  format: CreatorImageProcessingOutputFormat;
+}
+
 export interface CreatorImageProcessingWarning {
   code: string;
   severity: CreatorImageProcessingRisk;
@@ -72,9 +84,10 @@ export interface CreatorImageProcessingPlan {
   projectId: string;
   source: CreatorImageProcessingSource;
   inputItems: CreatorImageProcessingInputItem[];
-  presetId: string | null;
+  presetId: CreatorImageProcessingPresetId | null;
   operations: CreatorImageProcessingOperationStep[];
   output: CreatorImageProcessingOutput;
+  outputItems: CreatorImageProcessingOutputItem[];
   warnings: CreatorImageProcessingWarning[];
   estimatedRisk: CreatorImageProcessingRisk;
   createdBy: CreatorImageProcessingCreatedBy;
@@ -98,6 +111,57 @@ export interface CreatorImageProcessingJob {
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
+}
+
+export interface CreatorImagePlanCreateInput {
+  assetId: string;
+  presetId?: CreatorImageProcessingPresetId | null;
+  outputFormat?: CreatorImageProcessingOutputFormat | null;
+  quality?: number | null;
+  width?: number | null;
+  height?: number | null;
+  maxWidth?: number | null;
+  maxHeight?: number | null;
+  cropRatio?: string | null;
+  rotate?: number | null;
+  outputDirectory?: string | null;
+}
+
+export interface CreatorImagePlanCreateResult {
+  plan: CreatorImageProcessingPlan;
+}
+
+export interface CreatorImagePlanGetInput {
+  planId: string;
+}
+
+export interface CreatorImagePlanGetResult {
+  plan: CreatorImageProcessingPlan;
+}
+
+export interface CreatorImageJobExecuteInput {
+  planId: string;
+}
+
+export interface CreatorImageJobExecuteResult {
+  job: CreatorImageProcessingJob;
+  tasks: CreatorImageProcessingTask[];
+  outputAssetIds: string[];
+}
+
+export interface CreatorImageJobGetInput {
+  jobId: string;
+}
+
+export interface CreatorImageJobGetResult {
+  job: CreatorImageProcessingJob;
+  tasks: CreatorImageProcessingTask[];
+}
+
+export interface CreatorImageOutputRevealInput {
+  jobId?: string;
+  taskId?: string;
+  outputPath?: string;
 }
 
 export interface CreatorImageProcessingTask {

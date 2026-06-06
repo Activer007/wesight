@@ -62,6 +62,7 @@ export interface CoworkActivityArtifact {
   name: string;
   type: ActivityArtifactType;
   source: string | null;
+  messageId: string | null;
   timestamp: number;
 }
 
@@ -384,6 +385,7 @@ export function buildCoworkActivitySnapshot(
         name: toTrimmedString(record.name) ?? getFileName(imagePath),
         type: inferArtifactType(imagePath, toTrimmedString(record.mimeType) ?? undefined),
         source: toTrimmedString(record.source),
+        messageId: message.id,
         timestamp: message.timestamp,
       });
     }
@@ -396,6 +398,7 @@ export function buildCoworkActivitySnapshot(
           name: link.name,
           type: inferArtifactType(link.path),
           source: null,
+          messageId: message.id,
           timestamp: message.timestamp,
         });
       }
