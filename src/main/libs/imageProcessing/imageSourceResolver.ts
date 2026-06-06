@@ -40,7 +40,16 @@ const resolveBundledCreatorImagePath = (value: string | null): string | null => 
   if (!value?.trim()) return null;
   const normalized = value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
   if (!normalized.startsWith('creator-studio/images/')) return null;
-  return path.resolve(process.cwd(), 'public', normalized);
+  const electronResourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const candidates = [
+    path.resolve(process.cwd(), 'public', normalized),
+    path.resolve(process.cwd(), 'dist', normalized),
+    path.resolve(__dirname, '..', 'dist', normalized),
+    path.resolve(__dirname, '..', '..', 'dist', normalized),
+    electronResourcesPath ? path.resolve(electronResourcesPath, 'app.asar', 'dist', normalized) : null,
+    electronResourcesPath ? path.resolve(electronResourcesPath, 'app', 'dist', normalized) : null,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0] ?? null;
 };
 
 export const parseCreatorImageSourceFile = (

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat } from 'fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import sharp from 'sharp';
@@ -87,6 +87,22 @@ test('save_as writes to the requested output path', async () => {
 
   expect(result.outputPath).toBe(outputPath);
   expect((await sharp(outputPath).metadata()).format).toBe('jpeg');
+});
+
+test('save_as refuses to overwrite an existing output path', async () => {
+  const sourcePath = await createImage('save-as-existing.png');
+  const outputPath = path.join(tempDir, 'existing.jpg');
+  await writeFile(outputPath, 'existing');
+
+  await expect(executeImageQuickEdit({
+    sourceAssetId: 'asset-1',
+    sourcePath,
+    saveMode: CreatorImageQuickEditSaveMode.SaveAs,
+    outputPath,
+    outputFormat: CreatorImageProcessingOutputFormat.Jpeg,
+  })).rejects.toThrow('output file already exists');
+
+  expect(await readFile(outputPath, 'utf8')).toBe('existing');
 });
 
 test('overwrites the source through a temporary file', async () => {

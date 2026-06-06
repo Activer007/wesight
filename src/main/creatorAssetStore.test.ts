@@ -920,6 +920,7 @@ describe('CreatorAssetStore', () => {
       variantOfAssetId: imported.assets[0].id,
       filePath: path.join(tempDir, 'quick-copy-edited.webp'),
     });
+    expect(store.getAssetByFilePath(result.outputPath)?.id).toBe(result.asset?.id);
     expect(result.asset?.imageProcessing).toMatchObject({
       sourceAssetId: imported.assets[0].id,
       quickEdit: {

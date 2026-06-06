@@ -68,6 +68,7 @@ const ipcMain = {
 const createStore = () => ({
   listAssets: vi.fn(() => ({ assets: [], total: 0, limit: 0, offset: 0 })),
   getAsset: vi.fn(),
+  getAssetByFilePath: vi.fn(() => null),
   getAssetSource: vi.fn(),
   inspectImageAsset: vi.fn(() => ({
     asset: { id: 'asset-1' },
@@ -303,6 +304,35 @@ test('returns an empty quick edit result when save_as dialog is cancelled', asyn
 
   expect(result).toEqual({ success: true, outputPath: '', overwritten: false, warningCodes: [] });
   expect(store.saveImageQuickEdit).not.toHaveBeenCalled();
+});
+
+test('rejects quick edit reveal paths that are not registered assets', async () => {
+  const store = createStore();
+  registerCreatorStudioIpcHandlers(ipcMain, () => store);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.ImageQuickEditReveal);
+  expect(handler).toBeDefined();
+  const result = await handler?.(null, { outputPath: __filename });
+
+  expect(result).toEqual({ success: false, error: 'Output file is not a registered creator asset' });
+  expect(store.getAssetByFilePath).toHaveBeenCalledWith(__filename);
+  expect(electronMocks.showItemInFolder).not.toHaveBeenCalled();
+});
+
+test('reveals quick edit output only after resolving a registered asset path', async () => {
+  const store = createStore();
+  vi.mocked(store.getAssetByFilePath).mockReturnValue({
+    id: 'asset-output',
+    filePath: __filename,
+  } as ReturnType<CreatorAssetStore['getAssetByFilePath']>);
+  registerCreatorStudioIpcHandlers(ipcMain, () => store);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.ImageQuickEditReveal);
+  expect(handler).toBeDefined();
+  const result = await handler?.(null, { outputPath: __filename });
+
+  expect(result).toEqual({ success: true });
+  expect(electronMocks.showItemInFolder).toHaveBeenCalledWith(__filename);
 });
 
 test('returns an empty local image folder import result when folder selection is cancelled', async () => {

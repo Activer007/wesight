@@ -57,6 +57,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     externalCliCodexGeneratedImageAlt: 'Codex 生成的图片',
     externalCliCodexOpenImage: '打开图片',
     externalCliCodexNoVisibleOutput: 'Codex CLI 已完成任务，但没有返回可显示内容。请检查本机 Codex 会话或重新发送消息。',
+    creatorImageQuickEditSaveDialogTitle: '保存编辑后的图片',
 
     // Feishu bot install
     feishuVerifyCredentialsFailed: '凭证验证失败，请检查 App ID 和 App Secret 是否正确',
@@ -264,6 +265,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     externalCliCodexGeneratedImageAlt: 'Codex generated image',
     externalCliCodexOpenImage: 'Open image',
     externalCliCodexNoVisibleOutput: 'Codex CLI completed the task, but returned no visible content. Check the local Codex session or send the message again.',
+    creatorImageQuickEditSaveDialogTitle: 'Save edited image',
 
     // Feishu bot install
     feishuVerifyCredentialsFailed: 'Credential validation failed. Please check your App ID and App Secret.',

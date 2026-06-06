@@ -261,7 +261,7 @@ export const executeImageQuickEdit = async (
   const outputPath = await resolveOutputPath(input, outputFormat);
   const overwritten = input.saveMode === CreatorImageQuickEditSaveMode.Overwrite;
 
-  if (!overwritten && input.saveMode !== CreatorImageQuickEditSaveMode.SaveAs && fs.existsSync(outputPath)) {
+  if (!overwritten && fs.existsSync(outputPath)) {
     throw new ImageProcessingError(ImageProcessingErrorCode.OutputExists, 'output file already exists');
   }
 

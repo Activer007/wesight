@@ -150,6 +150,28 @@ test('falls back from virtual case image paths to bundled thumbnail files', asyn
   ]);
 });
 
+test('falls back to built renderer assets when public bundled thumbnails are unavailable', async () => {
+  const assetName = `resolver-dist-only-${Date.now()}.jpg`;
+  const distPath = path.resolve(process.cwd(), 'dist', 'creator-studio', 'images', assetName);
+  fs.mkdirSync(path.dirname(distPath), { recursive: true });
+  fs.writeFileSync(distPath, 'thumbnail');
+  const asset = createAsset('creator://case-image/case-dist-only');
+  asset.imageSource = buildCreatorImageSourceFile({
+    localPath: 'creator://case-image/case-dist-only',
+    assetQuality: CreatorImageAssetQuality.Thumbnail,
+    thumbnailUrl: `./creator-studio/images/${assetName}`,
+  });
+
+  try {
+    const resolved = await resolveCreatorImageSourceForProcessing(asset);
+
+    expect(resolved.sourcePath).toBe(distPath);
+    expect(resolved.imageSource.resolvedReason).toBe('thumbnail_fallback');
+  } finally {
+    fs.rmSync(distPath, { force: true });
+  }
+});
+
 test('can inspect local thumbnails without downloading remote originals', async () => {
   const thumbnailPath = path.join(tempDir, 'thumb.png');
   fs.writeFileSync(thumbnailPath, 'thumb');

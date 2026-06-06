@@ -1813,6 +1813,21 @@ export class CreatorAssetStore {
     };
   }
 
+  getAssetByFilePath(filePath: string): CreatorProductionAssetRecord | null {
+    const normalizedPath = path.resolve(filePath);
+    const rows = this.db.prepare(`
+      SELECT
+        a.*,
+        CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS source_session_available
+      FROM production_assets a
+      LEFT JOIN cowork_sessions s ON s.id = COALESCE(a.source_session_id, a.session_id)
+      WHERE a.file_path = ?
+    `).all(normalizedPath) as ProductionAssetRow[];
+    return rows.map((row) => this.mapAssetRow(row))
+      .find((asset) => !asset.filePath.startsWith('creator://') && path.resolve(asset.filePath) === normalizedPath)
+      ?? null;
+  }
+
   async inspectImageAsset(input: CreatorImageInspectInput): Promise<CreatorImageInspectResult | null> {
     const assetId = input.assetId?.trim();
     const asset = assetId

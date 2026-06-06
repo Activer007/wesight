@@ -41,6 +41,7 @@ import type {
 } from '../../../shared/creatorStudio/types';
 import type { CoworkStore } from '../../coworkStore';
 import type { CreatorAssetStore } from '../../creatorAssetStore';
+import { t } from '../../i18n';
 import { createCreatorAssetImageProcessingPlan } from '../../libs/imageProcessing/imageProcessingPlanner';
 import { createImageProcessingService } from '../../libs/imageProcessing/imageProcessingService';
 
@@ -480,12 +481,12 @@ export const registerCreatorStudioIpcHandlers = (
       if (normalized.saveMode === CreatorImageQuickEditSaveMode.SaveAs && !normalized.outputPath) {
         const result = ownerWindow
           ? await dialog.showSaveDialog(ownerWindow, {
-            title: 'Save edited image',
+            title: t('creatorImageQuickEditSaveDialogTitle'),
             defaultPath: 'image-edited',
             filters: LocalImageImportDialogFilters,
           })
           : await dialog.showSaveDialog({
-            title: 'Save edited image',
+            title: t('creatorImageQuickEditSaveDialogTitle'),
             defaultPath: 'image-edited',
             filters: LocalImageImportDialogFilters,
           });
@@ -528,7 +529,11 @@ export const registerCreatorStudioIpcHandlers = (
     if (!fs.existsSync(outputPath)) {
       return { success: false, error: 'Output file not found' };
     }
-    shell.showItemInFolder(outputPath);
+    const asset = getCreatorAssetStore().getAssetByFilePath(outputPath);
+    if (!asset) {
+      return { success: false, error: 'Output file is not a registered creator asset' };
+    }
+    shell.showItemInFolder(asset.filePath);
     return { success: true };
   });
 
