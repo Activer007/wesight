@@ -572,6 +572,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetCreateCase, input),
     createCaseImageAsset: (input: Record<string, unknown>) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetCreateCaseImage, input),
+    importLocalImages: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.AssetImportLocalImages, input),
+    importLocalImageFolder: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.AssetImportLocalImageFolder, input),
     revealAssetInFolder: (assetId: string) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetRevealInFolder, assetId),
     createRecipe: (input: Record<string, unknown>) =>

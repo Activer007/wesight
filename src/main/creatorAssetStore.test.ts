@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 
 import {
@@ -22,6 +23,7 @@ import {
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -667,6 +669,150 @@ describe('CreatorAssetStore', () => {
       status: CreatorImageMetadataStatus.Ready,
     });
     expect(store.listAssets({ projectId }).total).toBe(1);
+  });
+
+  test('imports a local image by reference as a ready image asset', async () => {
+    const workspace = store.createProject({ name: 'Local Import Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'local-reference.png');
+    await sharp({
+      create: {
+        width: 32,
+        height: 18,
+        channels: 4,
+        background: { r: 10, g: 20, b: 30, alpha: 1 },
+      },
+    }).png().toFile(imagePath);
+
+    const result = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+
+    expect(result).toMatchObject({ total: 1, imported: 1, reused: 0, skipped: 0, failures: [] });
+    expect(result.assets[0]).toMatchObject({
+      projectId,
+      kind: CreatorProductionAssetKind.Image,
+      source: CreatorProductionAssetSource.LocalImageImport,
+      status: CreatorProductionAssetStatus.Ready,
+      filePath: imagePath,
+      fileName: 'local-reference.png',
+      mimeType: 'image/png',
+    });
+    expect(result.assets[0].imageMetadata).toMatchObject({
+      width: 32,
+      height: 18,
+      format: 'png',
+      status: CreatorImageMetadataStatus.Ready,
+    });
+    expect(result.assets[0].imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Original,
+      localPath: imagePath,
+      provider: CreatorProductionAssetSource.LocalImageImport,
+      resolvedPath: imagePath,
+      resolvedReason: 'referenced_local_import',
+    });
+  });
+
+  test('reuses an existing referenced local image import in the same project', async () => {
+    const workspace = store.createProject({ name: 'Local Import Reuse Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'reuse-reference.jpg');
+    await sharp({
+      create: {
+        width: 20,
+        height: 12,
+        channels: 3,
+        background: { r: 240, g: 210, b: 120 },
+      },
+    }).jpeg().toFile(imagePath);
+
+    const first = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+    const second = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [imagePath],
+    });
+
+    expect(first.imported).toBe(1);
+    expect(second).toMatchObject({ total: 1, imported: 0, reused: 1, skipped: 0, failures: [] });
+    expect(second.assets[0].id).toBe(first.assets[0].id);
+    expect(store.listAssets({ projectId }).total).toBe(1);
+  });
+
+  test('imports copied local images into a managed directory without overwriting files', async () => {
+    const workspace = store.createProject({ name: 'Local Import Copy Project' });
+    const projectId = workspace.currentProjectId;
+    const imagePath = path.join(tempDir, 'copy-source.webp');
+    const managedDirectory = path.join(tempDir, 'managed-local-images');
+    const existingPath = path.join(managedDirectory, 'copy-source.webp');
+    await fs.promises.mkdir(managedDirectory, { recursive: true });
+    await fs.promises.writeFile(existingPath, 'existing-file');
+    await sharp({
+      create: {
+        width: 24,
+        height: 24,
+        channels: 3,
+        background: { r: 20, g: 120, b: 180 },
+      },
+    }).webp().toFile(imagePath);
+
+    const result = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Copy,
+      managedDirectory,
+      filePaths: [imagePath],
+    });
+    const reused = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Copy,
+      managedDirectory,
+      filePaths: [imagePath],
+    });
+
+    expect(result).toMatchObject({ total: 1, imported: 1, reused: 0, skipped: 0, failures: [] });
+    expect(result.assets[0].filePath).toBe(path.join(managedDirectory, 'copy-source-1.webp'));
+    expect(result.assets[0].imageSource).toMatchObject({
+      assetQuality: CreatorImageAssetQuality.Original,
+      localPath: path.join(managedDirectory, 'copy-source-1.webp'),
+      resolvedReason: 'copied_local_import',
+    });
+    expect(reused).toMatchObject({ total: 1, imported: 0, reused: 1, skipped: 0, failures: [] });
+    expect(reused.assets[0].id).toBe(result.assets[0].id);
+    expect(await fs.promises.readFile(existingPath, 'utf8')).toBe('existing-file');
+  });
+
+  test('keeps importing valid local images when one file is corrupt', async () => {
+    const workspace = store.createProject({ name: 'Local Import Partial Project' });
+    const projectId = workspace.currentProjectId;
+    const validPath = path.join(tempDir, 'valid-local.png');
+    const corruptPath = path.join(tempDir, 'corrupt-local.png');
+    await sharp({
+      create: {
+        width: 16,
+        height: 16,
+        channels: 4,
+        background: { r: 80, g: 60, b: 180, alpha: 1 },
+      },
+    }).png().toFile(validPath);
+    await fs.promises.writeFile(corruptPath, 'not an image');
+
+    const result = await store.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: [validPath, corruptPath],
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.failures).toEqual([expect.objectContaining({ path: corruptPath })]);
+    expect(store.listAssets({ projectId }).total).toBe(1);
+    expect(store.listAssets({ projectId }).assets[0].filePath).toBe(validPath);
   });
 
   test('tracks prompt versions, recipes, diffs, and forks', () => {

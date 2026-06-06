@@ -1,8 +1,10 @@
 import type { IpcMain } from 'electron';
-import { shell } from 'electron';
+import { app, BrowserWindow, dialog, shell } from 'electron';
 import fs from 'fs';
+import path from 'path';
 
 import {
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorStudioAssetListDefaultLimit,
   CreatorStudioAssetListMaxLimit,
@@ -12,6 +14,7 @@ import {
   isCreatorBoardMoveDirection,
   isCreatorImageProcessingOutputFormat,
   isCreatorImageProcessingPresetId,
+  isCreatorLocalImageImportMode,
   isCreatorProductionAssetSource,
 } from '../../../shared/creatorStudio/constants';
 import type {
@@ -27,6 +30,7 @@ import type {
   CreatorBrandKitUpdateInput,
   CreatorCaseImageAssetCreateInput,
   CreatorImageInspectInput,
+  CreatorLocalImageImportInput,
   CreatorProductionAssetRecord,
   CreatorPromptAssetCreateInput,
   CreatorRecipeCreateInput,
@@ -60,6 +64,51 @@ const normalizeListInput = (input: unknown) => {
     limit: Math.max(1, Math.min(Math.floor(rawLimit), CreatorStudioAssetListMaxLimit)),
     offset: Math.max(0, Math.floor(rawOffset)),
   };
+};
+
+const LocalImageImportDialogFilters = [
+  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif', 'tif', 'tiff'] },
+];
+
+const LocalImageImportExtensions = new Set(LocalImageImportDialogFilters[0].extensions.map((item) => `.${item}`));
+const LocalImageImportIgnoredDirectories = new Set([
+  'node_modules',
+  'dist',
+  'dist-electron',
+  'release',
+]);
+
+const normalizeLocalImageImportInput = (input: unknown): CreatorLocalImageImportInput | null => {
+  const record = normalizeObject(input);
+  const projectId = toTrimmedString(record?.projectId);
+  if (!projectId) return null;
+  return {
+    projectId,
+    mode: isCreatorLocalImageImportMode(record?.mode) ? record.mode : CreatorLocalImageImportMode.Reference,
+    ...(toTrimmedString(record?.collectionId) ? { collectionId: toTrimmedString(record?.collectionId)! } : {}),
+  };
+};
+
+const getLocalImageManagedDirectory = (projectId: string): string => (
+  path.join(app.getPath('userData'), 'creator-assets', 'local-images', projectId)
+);
+
+const collectLocalImagePaths = async (directory: string): Promise<string[]> => {
+  const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+  const paths: string[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (LocalImageImportIgnoredDirectories.has(entry.name)) continue;
+      paths.push(...await collectLocalImagePaths(entryPath));
+      continue;
+    }
+    if (entry.isFile() && LocalImageImportExtensions.has(path.extname(entry.name).toLowerCase())) {
+      paths.push(entryPath);
+    }
+  }
+  return paths;
 };
 
 const normalizeStringArray = (value: unknown): string[] | undefined => {
@@ -231,6 +280,72 @@ export const registerCreatorStudioIpcHandlers = (
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to list creator assets',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.AssetImportLocalImages, async (event, input: unknown) => {
+    try {
+      const normalized = normalizeLocalImageImportInput(input);
+      if (!normalized) {
+        return { success: false, error: 'projectId is required' };
+      }
+      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      const dialogOptions = {
+        properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
+        filters: LocalImageImportDialogFilters,
+      };
+      const result = ownerWindow
+        ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions);
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: true, assets: [], total: 0, imported: 0, reused: 0, skipped: 0, failures: [] };
+      }
+      return {
+        success: true,
+        ...await getCreatorAssetStore().importLocalImages({
+          ...normalized,
+          filePaths: result.filePaths,
+          managedDirectory: getLocalImageManagedDirectory(normalized.projectId),
+        }),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to import local images',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.AssetImportLocalImageFolder, async (event, input: unknown) => {
+    try {
+      const normalized = normalizeLocalImageImportInput(input);
+      if (!normalized) {
+        return { success: false, error: 'projectId is required' };
+      }
+      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      const dialogOptions = {
+        properties: ['openDirectory'] as ('openDirectory')[],
+      };
+      const result = ownerWindow
+        ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions);
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: true, assets: [], total: 0, imported: 0, reused: 0, skipped: 0, failures: [] };
+      }
+      const filePaths = await collectLocalImagePaths(result.filePaths[0]);
+      return {
+        success: true,
+        ...await getCreatorAssetStore().importLocalImages({
+          ...normalized,
+          filePaths,
+          managedDirectory: getLocalImageManagedDirectory(normalized.projectId),
+        }),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to import local image folder',
       };
     }
   });

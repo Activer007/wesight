@@ -44,6 +44,8 @@ import type {
   CreatorCreativeModelCapability,
   CreatorImageInspectInput,
   CreatorImageInspectResult,
+  CreatorLocalImageImportInput,
+  CreatorLocalImageImportResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -254,6 +256,36 @@ class CreatorStudioAssetService {
       throw new Error(result.error || 'Failed to save creator case image asset');
     }
     return result.asset ?? null;
+  }
+
+  async importLocalImages(input: CreatorLocalImageImportInput): Promise<CreatorLocalImageImportResult> {
+    const result = await window.electron.creatorStudio.importLocalImages(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to import local images');
+    }
+    return {
+      assets: result.assets ?? [],
+      total: result.total ?? 0,
+      imported: result.imported ?? 0,
+      reused: result.reused ?? 0,
+      skipped: result.skipped ?? 0,
+      failures: result.failures ?? [],
+    };
+  }
+
+  async importLocalImageFolder(input: CreatorLocalImageImportInput): Promise<CreatorLocalImageImportResult> {
+    const result = await window.electron.creatorStudio.importLocalImageFolder(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to import local image folder');
+    }
+    return {
+      assets: result.assets ?? [],
+      total: result.total ?? 0,
+      imported: result.imported ?? 0,
+      reused: result.reused ?? 0,
+      skipped: result.skipped ?? 0,
+      failures: result.failures ?? [],
+    };
   }
 
   async revealAssetInFolder(assetId: string): Promise<void> {

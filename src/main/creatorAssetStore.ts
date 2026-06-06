@@ -17,6 +17,7 @@ import {
   CreatorImageProcessingPlanStatus,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -84,6 +85,7 @@ import type {
   CreatorImageInspectResult,
   CreatorImageProcessingAssetCreateInput,
   CreatorImageProcessingAssetMetadata,
+  CreatorLocalImageImportResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -258,6 +260,25 @@ interface CreatorGeneratedImageContext {
   promptVersionId: string | null;
   recipeId: string | null;
   selectedDirectionId: string | null;
+}
+
+const LocalImageImportExtensions = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.avif',
+  '.gif',
+  '.tif',
+  '.tiff',
+]);
+
+export interface CreatorLocalImageImportStoreInput {
+  projectId: string;
+  filePaths: string[];
+  mode?: CreatorLocalImageImportMode | null;
+  collectionId?: string | null;
+  managedDirectory?: string | null;
 }
 
 interface ProjectRow {
@@ -929,6 +950,18 @@ const getImageName = (image: GeneratedImageInput): string => {
   return path.basename(image.path.trim()) || 'generated-image.png';
 };
 
+const buildUniqueLocalImageImportPath = (directory: string, fileName: string): string => {
+  const extension = path.extname(fileName);
+  const baseName = path.basename(fileName, extension) || 'image';
+  let candidate = path.join(directory, `${baseName}${extension}`);
+  let index = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(directory, `${baseName}-${index}${extension}`);
+    index += 1;
+  }
+  return candidate;
+};
+
 export class CreatorAssetStore {
   constructor(private readonly db: Database.Database) {}
 
@@ -1027,6 +1060,189 @@ export class CreatorAssetStore {
       VALUES (?, ?, ?)
     `).run(collection.id, asset.id, Date.now());
     return this.getAsset(asset.id);
+  }
+
+  async importLocalImages(input: CreatorLocalImageImportStoreInput): Promise<CreatorLocalImageImportResult> {
+    const projectId = input.projectId.trim() || this.getCurrentProjectId();
+    const project = this.db.prepare('SELECT id FROM creator_projects WHERE id = ?').get(projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    const mode = input.mode === CreatorLocalImageImportMode.Copy
+      ? CreatorLocalImageImportMode.Copy
+      : CreatorLocalImageImportMode.Reference;
+    if (mode === CreatorLocalImageImportMode.Copy && !input.managedDirectory?.trim()) {
+      throw new Error('Managed image directory is required');
+    }
+
+    const uniqueSourcePaths = Array.from(new Set(input.filePaths
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => path.resolve(item))));
+    const failures: CreatorLocalImageImportResult['failures'] = [];
+    const assets: CreatorProductionAssetRecord[] = [];
+    let imported = 0;
+    let reused = 0;
+    let skipped = 0;
+
+    for (const sourcePath of uniqueSourcePaths) {
+      try {
+        const extension = path.extname(sourcePath).toLowerCase();
+        if (!LocalImageImportExtensions.has(extension)) {
+          skipped += 1;
+          failures.push({ path: sourcePath, reason: 'unsupported_extension' });
+          continue;
+        }
+
+        const stat = await fs.promises.stat(sourcePath);
+        if (!stat.isFile()) {
+          skipped += 1;
+          failures.push({ path: sourcePath, reason: 'not_a_file' });
+          continue;
+        }
+
+        const existing = mode === CreatorLocalImageImportMode.Reference
+          ? this.db.prepare(`
+            SELECT id FROM production_assets
+            WHERE project_id = ?
+              AND kind = ?
+              AND source = ?
+              AND file_path = ?
+            LIMIT 1
+          `).get(
+            projectId,
+            CreatorProductionAssetKind.Image,
+            CreatorProductionAssetSource.LocalImageImport,
+            sourcePath,
+          ) as { id: string } | undefined
+          : this.findCopiedLocalImageImport(projectId, sourcePath);
+        const existingAsset = existing ? this.getAsset(existing.id) : null;
+        if (existingAsset) {
+          if (input.collectionId) {
+            this.addAssetToCollection({ assetId: existingAsset.id, collectionId: input.collectionId });
+          }
+          assets.push(existingAsset);
+          reused += 1;
+          continue;
+        }
+
+        let filePath = sourcePath;
+        if (mode === CreatorLocalImageImportMode.Copy) {
+          const managedDirectory = path.resolve(input.managedDirectory!);
+          await fs.promises.mkdir(managedDirectory, { recursive: true });
+          filePath = buildUniqueLocalImageImportPath(managedDirectory, path.basename(sourcePath));
+          await fs.promises.copyFile(sourcePath, filePath, fs.constants.COPYFILE_EXCL);
+        }
+
+        const imageMetadata = await inspectImageMetadata(filePath);
+        if (
+          imageMetadata.status !== CreatorImageMetadataStatus.Ready
+          && imageMetadata.status !== CreatorImageMetadataStatus.Missing
+        ) {
+          skipped += 1;
+          failures.push({
+            path: sourcePath,
+            reason: imageMetadata.errorCode ?? imageMetadata.status,
+          });
+          continue;
+        }
+
+        const now = Date.now();
+        const id = uuidv4();
+        const fileName = path.basename(filePath);
+        const metadata = {
+          importMode: mode,
+          importedSourcePath: sourcePath,
+          imageSource: buildCreatorImageSourceFile({
+            localPath: filePath,
+            assetQuality: CreatorImageAssetQuality.Original,
+            provider: CreatorProductionAssetSource.LocalImageImport,
+            resolvedPath: filePath,
+            resolvedReason: mode === CreatorLocalImageImportMode.Copy
+              ? 'copied_local_import'
+              : 'referenced_local_import',
+          }),
+          imageMetadata,
+        };
+
+        this.db.prepare(`
+          INSERT INTO production_assets (
+            id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id, session_id,
+            source_session_id, message_id, source_message_id, template_id,
+            case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text,
+            parent_prompt_asset_id, prompt_version_id, recipe_id, selected_direction_id,
+            file_path, file_name, mime_type,
+            favorite, adoption_status, tags_json, license_note, usage_note, metadata, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, '', NULL, NULL, NULL, NULL, ?, ?, ?, 0, ?, '[]', NULL, NULL, ?, ?, ?)
+        `).run(
+          id,
+          projectId,
+          CreatorProductionAssetKind.Image,
+          fileName,
+          imageMetadata.status === CreatorImageMetadataStatus.Missing
+            ? CreatorProductionAssetStatus.Missing
+            : CreatorProductionAssetStatus.Ready,
+          CreatorProductionAssetSource.LocalImageImport,
+          JSON.stringify([]),
+          JSON.stringify([]),
+          filePath,
+          fileName,
+          imageMetadata.mimeType,
+          CreatorAssetAdoptionStatus.Unset,
+          JSON.stringify(metadata),
+          now,
+          now,
+        );
+
+        if (input.collectionId) {
+          this.addAssetToCollection({ assetId: id, collectionId: input.collectionId });
+        }
+        const asset = this.getAsset(id);
+        if (asset) {
+          assets.push(asset);
+        }
+        imported += 1;
+      } catch (error) {
+        skipped += 1;
+        failures.push({
+          path: sourcePath,
+          reason: error instanceof Error ? error.message : 'import_failed',
+        });
+      }
+    }
+
+    return {
+      assets,
+      total: uniqueSourcePaths.length,
+      imported,
+      reused,
+      skipped,
+      failures,
+    };
+  }
+
+  private findCopiedLocalImageImport(projectId: string, sourcePath: string): { id: string } | undefined {
+    const rows = this.db.prepare(`
+      SELECT id, file_path, metadata
+      FROM production_assets
+      WHERE project_id = ?
+        AND kind = ?
+        AND source = ?
+    `).all(
+      projectId,
+      CreatorProductionAssetKind.Image,
+      CreatorProductionAssetSource.LocalImageImport,
+    ) as Array<{ id: string; file_path: string; metadata: string | null }>;
+    return rows.find((row) => {
+      if (!fs.existsSync(row.file_path)) return false;
+      const metadata = parseJsonObject(row.metadata);
+      return metadata.importMode === CreatorLocalImageImportMode.Copy
+        && typeof metadata.importedSourcePath === 'string'
+        && path.resolve(metadata.importedSourcePath) === sourcePath;
+    });
   }
 
   createPromptAsset(input: CreatorPromptAssetCreateInput): CreatorProductionAssetRecord {

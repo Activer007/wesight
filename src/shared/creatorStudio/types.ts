@@ -8,6 +8,7 @@ import type {
   CreatorImageAssetQuality,
   CreatorImageProcessingOutputFormat,
   CreatorImageProcessingPresetId,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -384,6 +385,26 @@ export interface CreatorAssetUpdateInput {
 export interface CreatorAssetCollectionAddInput {
   assetId: string;
   collectionId: string;
+}
+
+export interface CreatorLocalImageImportInput {
+  projectId: string;
+  mode?: CreatorLocalImageImportMode | null;
+  collectionId?: string | null;
+}
+
+export interface CreatorLocalImageImportFailure {
+  path: string;
+  reason: string;
+}
+
+export interface CreatorLocalImageImportResult {
+  assets: CreatorProductionAssetRecord[];
+  total: number;
+  imported: number;
+  reused: number;
+  skipped: number;
+  failures: CreatorLocalImageImportFailure[];
 }
 
 export interface CreatorPromptAssetCreateInput {

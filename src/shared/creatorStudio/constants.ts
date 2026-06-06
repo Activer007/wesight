@@ -6,6 +6,8 @@ export const CreatorStudioIpcChannel = {
   AssetCreatePrompt: 'creatorStudio:asset:createPrompt',
   AssetCreateCase: 'creatorStudio:asset:createCase',
   AssetCreateCaseImage: 'creatorStudio:asset:createCaseImage',
+  AssetImportLocalImages: 'creatorStudio:asset:importLocalImages',
+  AssetImportLocalImageFolder: 'creatorStudio:asset:importLocalImageFolder',
   AssetRevealInFolder: 'creatorStudio:asset:revealInFolder',
   RecipeCreate: 'creatorStudio:recipe:create',
   RecipeList: 'creatorStudio:recipe:list',
@@ -111,6 +113,7 @@ export const CreatorProductionAssetSource = {
   CoworkGeneratedImage: 'cowork_generated_image',
   CreatorPrompt: 'creator_prompt',
   CreatorCase: 'creator_case',
+  LocalImageImport: 'local_image_import',
   LocalImageProcessing: 'local_image_processing',
   ImageProcessingReport: 'image_processing_report',
   RecipePostProcessing: 'recipe_post_processing',
@@ -123,9 +126,23 @@ export const CreatorProductionAssetSourceValues = [
   CreatorProductionAssetSource.CoworkGeneratedImage,
   CreatorProductionAssetSource.CreatorPrompt,
   CreatorProductionAssetSource.CreatorCase,
+  CreatorProductionAssetSource.LocalImageImport,
   CreatorProductionAssetSource.LocalImageProcessing,
   CreatorProductionAssetSource.ImageProcessingReport,
   CreatorProductionAssetSource.RecipePostProcessing,
+] as const;
+
+export const CreatorLocalImageImportMode = {
+  Reference: 'reference',
+  Copy: 'copy',
+} as const;
+
+export type CreatorLocalImageImportMode =
+  typeof CreatorLocalImageImportMode[keyof typeof CreatorLocalImageImportMode];
+
+export const CreatorLocalImageImportModeValues = [
+  CreatorLocalImageImportMode.Reference,
+  CreatorLocalImageImportMode.Copy,
 ] as const;
 
 export const CreatorProductionRunStatus = {
@@ -556,6 +573,11 @@ export const isCreatorProductionAssetStatus = (value: unknown): value is Creator
 export const isCreatorProductionAssetSource = (value: unknown): value is CreatorProductionAssetSource => (
   typeof value === 'string'
   && CreatorProductionAssetSourceValues.includes(value as CreatorProductionAssetSource)
+);
+
+export const isCreatorLocalImageImportMode = (value: unknown): value is CreatorLocalImageImportMode => (
+  typeof value === 'string'
+  && CreatorLocalImageImportModeValues.includes(value as CreatorLocalImageImportMode)
 );
 
 export const isCreatorProductionRunStatus = (value: unknown): value is CreatorProductionRunStatus => (

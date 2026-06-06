@@ -18,6 +18,8 @@ import {
   type CreatorAssetAdoptionStatus as CreatorAssetAdoptionStatusType,
   CreatorImageMetadataStatus,
   CreatorImageProcessingOutputFormat,
+  CreatorLocalImageImportMode,
+  type CreatorLocalImageImportMode as CreatorLocalImageImportModeType,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -31,6 +33,7 @@ import {
 } from '@shared/creatorStudio/constants';
 import type { CreatorImageMetadata } from '@shared/creatorStudio/imageProcessingTypes';
 import type {
+  CreatorLocalImageImportResult,
   CreatorProductionAssetRecord,
   CreatorPromptVersionRecord,
   CreatorRecipeRecord,
@@ -331,6 +334,8 @@ const getAssetSourceLabel = (source: CreatorProductionAssetSource): string => {
       return i18nService.t('creatorAssetSourcePrompt');
     case CreatorProductionAssetSource.CreatorCase:
       return i18nService.t('creatorAssetSourceCase');
+    case CreatorProductionAssetSource.LocalImageImport:
+      return i18nService.t('creatorAssetSourceLocalImageImport');
     case CreatorProductionAssetSource.CoworkGeneratedImage:
     default:
       return i18nService.t('creatorAssetSourceCowork');
@@ -417,6 +422,9 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const [isCreatingImageBatch, setIsCreatingImageBatch] = useState(false);
   const [imageBatchMaxWidth, setImageBatchMaxWidth] = useState('1600');
   const [imageBatchMaxHeight, setImageBatchMaxHeight] = useState('1600');
+  const [localImageImportMode, setLocalImageImportMode] = useState<CreatorLocalImageImportModeType>(CreatorLocalImageImportMode.Reference);
+  const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
+  const [isImportingLocalImages, setIsImportingLocalImages] = useState(false);
   const imageProcessingEnabled = isCreatorImageProcessingEnabled();
 
   const currentCollections = useMemo(
@@ -458,6 +466,45 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
       setIsLoading(false);
     }
   }, [adoptionStatus, collectionId, currentProjectId, favoriteOnly, source, tag, templateId, workspace?.currentProjectId]);
+
+  const getLocalImageImportSummary = (result: CreatorLocalImageImportResult): string => {
+    if (result.total === 0) {
+      return i18nService.t('creatorLocalImageImportEmpty');
+    }
+    const summary = i18nService.t('creatorLocalImageImportDone')
+      .replace('{imported}', String(result.imported))
+      .replace('{reused}', String(result.reused))
+      .replace('{skipped}', String(result.skipped));
+    return result.failures.length > 0
+      ? `${summary} ${i18nService.t('creatorLocalImageImportPartialFailed').replace('{count}', String(result.failures.length))}`
+      : summary;
+  };
+
+  const handleImportLocalImages = async (kind: 'files' | 'folder') => {
+    const projectId = currentProjectId || workspace?.currentProjectId;
+    if (!projectId) {
+      dispatchToast(i18nService.t('creatorWorkspaceLoadFailed'));
+      return;
+    }
+    setIsImportingLocalImages(true);
+    setIsImportMenuOpen(false);
+    try {
+      const input = {
+        projectId,
+        mode: localImageImportMode,
+        ...(collectionId ? { collectionId } : {}),
+      };
+      const result = kind === 'files'
+        ? await creatorStudioAssetService.importLocalImages(input)
+        : await creatorStudioAssetService.importLocalImageFolder(input);
+      dispatchToast(getLocalImageImportSummary(result));
+      await loadAssets();
+    } catch (importError) {
+      dispatchToast(importError instanceof Error ? importError.message : i18nService.t('creatorLocalImageImportFailed'));
+    } finally {
+      setIsImportingLocalImages(false);
+    }
+  };
 
   useEffect(() => {
     void loadWorkspace().catch((loadError) => {
@@ -930,6 +977,44 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                 placeholder={i18nService.t('creatorImageBatchMaxHeight')}
                 className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary"
               />
+              <select
+                value={localImageImportMode}
+                onChange={(event) => setLocalImageImportMode(event.target.value as CreatorLocalImageImportModeType)}
+                className="h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+                aria-label={i18nService.t('creatorLocalImageImportMode')}
+              >
+                <option value={CreatorLocalImageImportMode.Reference}>{i18nService.t('creatorLocalImageImportModeReference')}</option>
+                <option value={CreatorLocalImageImportMode.Copy}>{i18nService.t('creatorLocalImageImportModeCopy')}</option>
+              </select>
+              <div className="relative">
+                <button
+                  type="button"
+                  disabled={isImportingLocalImages}
+                  onClick={() => setIsImportMenuOpen((open) => !open)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <PhotoIcon className="h-4 w-4" />
+                  {isImportingLocalImages ? i18nService.t('creatorLocalImageImporting') : i18nService.t('creatorLocalImageImport')}
+                </button>
+                {isImportMenuOpen && (
+                  <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => void handleImportLocalImages('files')}
+                      className="block w-full px-3 py-2 text-left text-sm text-secondary hover:bg-surface-raised hover:text-foreground"
+                    >
+                      {i18nService.t('creatorLocalImageImportFiles')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleImportLocalImages('folder')}
+                      className="block w-full px-3 py-2 text-left text-sm text-secondary hover:bg-surface-raised hover:text-foreground"
+                    >
+                      {i18nService.t('creatorLocalImageImportFolder')}
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => setIsProjectFormOpen(true)}
@@ -1051,6 +1136,9 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
               </option>
               <option value={CreatorProductionAssetSource.CreatorCase}>
                 {i18nService.t('creatorAssetSourceCase')}
+              </option>
+              <option value={CreatorProductionAssetSource.LocalImageImport}>
+                {i18nService.t('creatorAssetSourceLocalImageImport')}
               </option>
             </select>
             <button

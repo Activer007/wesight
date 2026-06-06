@@ -1,4 +1,5 @@
 import type { IpcMain } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import {
@@ -13,6 +14,7 @@ import {
   CreatorImageProcessingRisk,
   CreatorImageProcessingSourceKind,
   CreatorImageProcessingTaskStatus,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -28,9 +30,25 @@ import type { CoworkStore } from '../../coworkStore';
 import type { CreatorAssetStore } from '../../creatorAssetStore';
 import { registerCreatorStudioIpcHandlers } from './handlers';
 
+const electronMocks = vi.hoisted(() => ({
+  getPath: vi.fn(() => '/tmp/wesight-user-data'),
+  fromWebContents: vi.fn(() => null),
+  showOpenDialog: vi.fn(),
+  showItemInFolder: vi.fn(),
+}));
+
 vi.mock('electron', () => ({
+  app: {
+    getPath: electronMocks.getPath,
+  },
+  BrowserWindow: {
+    fromWebContents: electronMocks.fromWebContents,
+  },
+  dialog: {
+    showOpenDialog: electronMocks.showOpenDialog,
+  },
   shell: {
-    showItemInFolder: vi.fn(),
+    showItemInFolder: electronMocks.showItemInFolder,
   },
 }));
 
@@ -70,6 +88,14 @@ const createStore = () => ({
   createPromptAsset: vi.fn(),
   createCaseAsset: vi.fn(),
   createCaseImageAsset: vi.fn(),
+  importLocalImages: vi.fn(() => ({
+    assets: [],
+    total: 0,
+    imported: 0,
+    reused: 0,
+    skipped: 0,
+    failures: [],
+  })),
   getWorkspace: vi.fn(() => ({ currentProjectId: 'project-1', projects: [], collections: [] })),
   createProject: vi.fn(() => ({ currentProjectId: 'project-2', projects: [], collections: [] })),
   setCurrentProject: vi.fn(() => ({ currentProjectId: 'project-1', projects: [], collections: [] })),
@@ -107,6 +133,9 @@ const createStore = () => ({
 beforeEach(() => {
   handlers.clear();
   vi.clearAllMocks();
+  vi.mocked(app.getPath).mockReturnValue('/tmp/wesight-user-data');
+  vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(null);
+  vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: true, filePaths: [] });
 });
 
 test('registers creator studio asset IPC handlers with constant channels', () => {
@@ -120,6 +149,8 @@ test('registers creator studio asset IPC handlers with constant channels', () =>
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetCreatePrompt, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetCreateCase, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetCreateCaseImage, expect.any(Function));
+  expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetImportLocalImages, expect.any(Function));
+  expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetImportLocalImageFolder, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.AssetRevealInFolder, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.WorkspaceGet, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(CreatorStudioIpcChannel.ProjectCreate, expect.any(Function));
@@ -163,6 +194,72 @@ test('clamps asset list parameters before reaching the store', async () => {
     limit: CreatorStudioAssetListMaxLimit,
     offset: 0,
   });
+});
+
+test('returns an empty local image import result when file selection is cancelled', async () => {
+  const store = createStore();
+  registerCreatorStudioIpcHandlers(ipcMain, () => store);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.AssetImportLocalImages);
+  expect(handler).toBeDefined();
+  const result = await handler?.({ sender: {} }, { projectId: 'project-1' });
+
+  expect(result).toEqual({
+    success: true,
+    assets: [],
+    total: 0,
+    imported: 0,
+    reused: 0,
+    skipped: 0,
+    failures: [],
+  });
+  expect(store.importLocalImages).not.toHaveBeenCalled();
+});
+
+test('normalizes local image import mode before reaching the store', async () => {
+  const store = createStore();
+  vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+    canceled: false,
+    filePaths: ['/tmp/source.png'],
+  });
+  registerCreatorStudioIpcHandlers(ipcMain, () => store);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.AssetImportLocalImages);
+  expect(handler).toBeDefined();
+  const result = await handler?.({ sender: {} }, {
+    projectId: ' project-1 ',
+    mode: 'unsafe-mode',
+    collectionId: ' collection-1 ',
+  });
+
+  expect(result).toMatchObject({ success: true });
+  expect(store.importLocalImages).toHaveBeenCalledWith({
+    projectId: 'project-1',
+    mode: CreatorLocalImageImportMode.Reference,
+    collectionId: 'collection-1',
+    filePaths: ['/tmp/source.png'],
+    managedDirectory: '/tmp/wesight-user-data/creator-assets/local-images/project-1',
+  });
+});
+
+test('returns an empty local image folder import result when folder selection is cancelled', async () => {
+  const store = createStore();
+  registerCreatorStudioIpcHandlers(ipcMain, () => store);
+
+  const handler = handlers.get(CreatorStudioIpcChannel.AssetImportLocalImageFolder);
+  expect(handler).toBeDefined();
+  const result = await handler?.({ sender: {} }, { projectId: 'project-1' });
+
+  expect(result).toEqual({
+    success: true,
+    assets: [],
+    total: 0,
+    imported: 0,
+    reused: 0,
+    skipped: 0,
+    failures: [],
+  });
+  expect(store.importLocalImages).not.toHaveBeenCalled();
 });
 
 test('rejects asset reveal requests without an asset id', async () => {

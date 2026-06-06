@@ -61,6 +61,8 @@ import type {
   CreatorCreativeModelCapability,
   CreatorImageInspectInput,
   CreatorImageInspectResult,
+  CreatorLocalImageImportInput,
+  CreatorLocalImageImportResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -934,6 +936,26 @@ interface IElectronAPI {
     createCaseImageAsset: (input: CreatorCaseImageAssetCreateInput) => Promise<{
       success: boolean;
       asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    importLocalImages: (input: CreatorLocalImageImportInput) => Promise<{
+      success: boolean;
+      assets?: CreatorLocalImageImportResult['assets'];
+      total?: number;
+      imported?: number;
+      reused?: number;
+      skipped?: number;
+      failures?: CreatorLocalImageImportResult['failures'];
+      error?: string;
+    }>;
+    importLocalImageFolder: (input: CreatorLocalImageImportInput) => Promise<{
+      success: boolean;
+      assets?: CreatorLocalImageImportResult['assets'];
+      total?: number;
+      imported?: number;
+      reused?: number;
+      skipped?: number;
+      failures?: CreatorLocalImageImportResult['failures'];
       error?: string;
     }>;
     revealAssetInFolder: (assetId: string) => Promise<{ success: boolean; error?: string }>;
