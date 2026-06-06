@@ -1,5 +1,13 @@
-import type { CreatorBuilderMaterial, CreatorCreativeDirection, CreatorPromptMaterial, CreatorPromptSpec } from '../types/creatorStudio';
+import type {
+  CreatorBuilderMaterial,
+  CreatorCreativeDirection,
+  CreatorPromptMaterial,
+  CreatorPromptReferenceAnalysis,
+  CreatorPromptSpec,
+  CreatorTemplateFieldSchema,
+} from '../types/creatorStudio';
 import { CreatorMaterialRole } from '../types/creatorStudio';
+import { CreatorPromptSourceMode } from '../types/creatorStudio';
 import { CreatorStudioSourceType } from '../types/creatorStudio';
 
 export const CreatorStudioAgentId = {
@@ -29,6 +37,7 @@ export const CREATOR_STUDIO_RECOMMENDED_SKILL_IDS = [
 
 export interface CreatorPromptSeed {
   sourceType: CreatorPromptSpec['sourceType'];
+  sourceMode?: CreatorPromptSpec['sourceMode'];
   sourceId: string;
   sourceTitle: string;
   referencePrompt?: string;
@@ -39,6 +48,8 @@ export interface CreatorPromptSeed {
   scenes?: string[];
   templateGuidance?: string[];
   templatePitfalls?: string[];
+  templateFieldSchema?: CreatorTemplateFieldSchema[];
+  referenceAnalysis?: CreatorPromptReferenceAnalysis;
   variantOfAssetId?: string;
 }
 
@@ -51,13 +62,18 @@ export interface CreatorCoworkDraftInput {
 }
 
 export interface CreatorPromptForm {
+  taskType: string;
   subject: string;
   platform: string;
+  audience: string;
   mainObject: string;
   requiredText: string;
   visualStyle: string;
+  colorPreference: string;
   aspectRatio: string;
+  outputCount: string;
   negativeRequirements: string;
+  templateFieldValues: Record<string, string>;
 }
 
 export const CREATOR_MATERIAL_ROLE_LABELS: Record<CreatorMaterialRole, { zh: string; en: string }> = {
@@ -75,7 +91,21 @@ export const normalizePromptLanguage = (
   if (uiLanguage === 'zh') {
     return 'zh';
   }
-  return Object.values(form).some((value) => /[\u3400-\u9fff]/.test(value)) ? 'zh' : 'en';
+  const values = [
+    form.taskType,
+    form.subject,
+    form.platform,
+    form.audience,
+    form.mainObject,
+    form.requiredText,
+    form.visualStyle,
+    form.colorPreference,
+    form.aspectRatio,
+    form.outputCount,
+    form.negativeRequirements,
+    ...Object.values(form.templateFieldValues),
+  ];
+  return values.some((value) => /[\u3400-\u9fff]/.test(value)) ? 'zh' : 'en';
 };
 
 export const buildPromptSpec = (
@@ -88,6 +118,7 @@ export const buildPromptSpec = (
   const promptMaterials = materials.map(toPromptMaterial);
   const baseSpec: CreatorPromptSpec = {
     sourceType: seed?.sourceType ?? CreatorStudioSourceType.Template,
+    sourceMode: seed?.sourceMode ?? CreatorPromptSourceMode.Blank,
     sourceId: seed?.sourceId ?? 'blank',
     sourceTitle: seed?.sourceTitle ?? blankSourceTitle,
     language,
@@ -95,10 +126,14 @@ export const buildPromptSpec = (
     caseIds: seed?.caseIds ?? [],
     styles: seed?.styles ?? [],
     scenes: seed?.scenes ?? [],
+    taskType: form.taskType.trim(),
     subject: form.subject.trim(),
     platform: form.platform.trim(),
+    audience: form.audience.trim(),
     mainObject: form.mainObject.trim(),
     visualStyle: form.visualStyle.trim(),
+    colorPreference: form.colorPreference.trim(),
+    outputCount: form.outputCount.trim(),
     constraints: {
       ...(form.aspectRatio.trim() ? { aspectRatio: form.aspectRatio.trim() } : {}),
       ...(form.requiredText.trim() ? { requiredText: form.requiredText.trim() } : {}),
@@ -106,6 +141,9 @@ export const buildPromptSpec = (
     },
     templateGuidance: seed?.templateGuidance ?? [],
     templatePitfalls: seed?.templatePitfalls ?? [],
+    templateFieldValues: form.templateFieldValues,
+    templateFieldSchema: seed?.templateFieldSchema,
+    referenceAnalysis: seed?.referenceAnalysis,
     referencePrompt: seed?.referencePrompt,
     templateId: seed?.templateId,
     variantOfAssetId: seed?.variantOfAssetId,
@@ -147,20 +185,25 @@ export const renderCreatorPrompt = (spec: CreatorPromptSpec): string => {
 
 const renderChinesePrompt = (spec: CreatorPromptSpec): string[] => [
   '请生成一张专业视觉图像。',
+  spec.taskType ? `任务类型：${spec.taskType}` : '',
   spec.subject ? `主题：${spec.subject}` : '',
   spec.platform ? `使用场景 / 平台：${spec.platform}` : '',
+  spec.audience ? `目标受众：${spec.audience}` : '',
   spec.mainObject ? `主体：${spec.mainObject}` : '',
   spec.constraints.requiredText ? `必须出现的文字：${spec.constraints.requiredText}` : '',
   spec.visualStyle ? `视觉风格：${spec.visualStyle}` : '',
+  spec.colorPreference ? `色彩偏好：${spec.colorPreference}` : '',
   spec.styles.length > 0 ? `继承风格标签：${spec.styles.join('、')}` : '',
   spec.scenes.length > 0 ? `适用场景标签：${spec.scenes.join('、')}` : '',
   spec.constraints.aspectRatio ? `画面比例：${spec.constraints.aspectRatio}` : '',
+  spec.outputCount ? `输出数量：${spec.outputCount}` : '',
   spec.templateGuidance.length > 0 ? `模板建议：\n${spec.templateGuidance.map((item) => `- ${item}`).join('\n')}` : '',
   spec.templatePitfalls.length > 0 ? `避免问题：\n${spec.templatePitfalls.map((item) => `- ${item}`).join('\n')}` : '',
+  renderTemplateFieldLines(spec),
   spec.constraints.negativeRequirements ? `负向要求：${spec.constraints.negativeRequirements}` : '',
   spec.contextPack ? `Context Pack：\n${spec.contextPack}` : '',
   spec.selectedCreativeDirection ? `已选择创意方向：\n${renderSelectedDirection(spec.selectedCreativeDirection, spec.language)}` : '',
-  spec.creativeDirections && spec.creativeDirections.length > 0
+  !spec.selectedCreativeDirection && spec.creativeDirections && spec.creativeDirections.length > 0
     ? `四个差异化创意方向：\n${renderDirectionLines(spec.creativeDirections)}`
     : '',
   `来源：${spec.sourceTitle}`,
@@ -212,7 +255,7 @@ export const renderCreatorCoworkDraft = ({
           '```',
         ].join('\n')
         : '',
-      promptSpec.creativeDirections && promptSpec.creativeDirections.length > 0
+      !promptSpec.selectedCreativeDirection && promptSpec.creativeDirections && promptSpec.creativeDirections.length > 0
         ? [
           '',
           'Creative Directions:',
@@ -271,7 +314,7 @@ export const renderCreatorCoworkDraft = ({
         '```',
       ].join('\n')
       : '',
-    promptSpec.creativeDirections && promptSpec.creativeDirections.length > 0
+    !promptSpec.selectedCreativeDirection && promptSpec.creativeDirections && promptSpec.creativeDirections.length > 0
       ? [
         '',
         'Creative Directions:',
@@ -308,20 +351,25 @@ export const hasSeedreamApiConfig = (config: Record<string, string>): boolean =>
 
 const renderEnglishPrompt = (spec: CreatorPromptSpec): string[] => [
   'Generate a professional visual image.',
+  spec.taskType ? `Task type: ${spec.taskType}` : '',
   spec.subject ? `Topic: ${spec.subject}` : '',
   spec.platform ? `Platform or usage context: ${spec.platform}` : '',
+  spec.audience ? `Audience: ${spec.audience}` : '',
   spec.mainObject ? `Main subject: ${spec.mainObject}` : '',
   spec.constraints.requiredText ? `Required visible text: ${spec.constraints.requiredText}` : '',
   spec.visualStyle ? `Visual style: ${spec.visualStyle}` : '',
+  spec.colorPreference ? `Color preference: ${spec.colorPreference}` : '',
   spec.styles.length > 0 ? `Inherited style tags: ${spec.styles.join(', ')}` : '',
   spec.scenes.length > 0 ? `Usage scene tags: ${spec.scenes.join(', ')}` : '',
   spec.constraints.aspectRatio ? `Aspect ratio: ${spec.constraints.aspectRatio}` : '',
+  spec.outputCount ? `Output count: ${spec.outputCount}` : '',
   spec.templateGuidance.length > 0 ? `Template guidance:\n${spec.templateGuidance.map((item) => `- ${item}`).join('\n')}` : '',
   spec.templatePitfalls.length > 0 ? `Avoid:\n${spec.templatePitfalls.map((item) => `- ${item}`).join('\n')}` : '',
+  renderTemplateFieldLines(spec),
   spec.constraints.negativeRequirements ? `Negative requirements: ${spec.constraints.negativeRequirements}` : '',
   spec.contextPack ? `Context Pack:\n${spec.contextPack}` : '',
   spec.selectedCreativeDirection ? `Selected creative direction:\n${renderSelectedDirection(spec.selectedCreativeDirection, spec.language)}` : '',
-  spec.creativeDirections && spec.creativeDirections.length > 0
+  !spec.selectedCreativeDirection && spec.creativeDirections && spec.creativeDirections.length > 0
     ? `Four differentiated creative directions:\n${renderDirectionLines(spec.creativeDirections)}`
     : '',
   `Source: ${spec.sourceTitle}`,
@@ -348,6 +396,7 @@ const toPromptMaterial = (material: CreatorBuilderMaterial): CreatorPromptMateri
   mimeType: material.mimeType,
   hasImageAttachment: hasImageAttachment(material),
   localPathAvailable: hasUsableLocalPath(material.path),
+  imageAnalysis: material.imageAnalysis,
 });
 
 export const renderCreatorContextPack = (
@@ -366,6 +415,13 @@ export const renderCreatorContextPack = (
     ...materials.map((material, index) => {
       const attachment = material.hasImageAttachment ? 'base64' : 'none';
       const localPath = material.localPathAvailable ? 'available' : 'unavailable';
+      const imageSummary = material.imageAnalysis
+        ? (
+          language === 'zh'
+            ? `；image=${material.imageAnalysis.width}x${material.imageAnalysis.height}；colors=${material.imageAnalysis.dominantColors.join(', ')}`
+            : `; image=${material.imageAnalysis.width}x${material.imageAnalysis.height}; colors=${material.imageAnalysis.dominantColors.join(', ')}`
+        )
+        : '';
       const fallbackNote = !material.localPathAvailable && material.hasImageAttachment
         ? (
           language === 'zh'
@@ -374,14 +430,337 @@ export const renderCreatorContextPack = (
         )
         : '';
       return language === 'zh'
-        ? `${index + 1}. role=${material.role}（${roleText(material.role)}）；name=${material.name}；path=${material.path}；mime=${material.mimeType}；attachment=${attachment}；localPath=${localPath}${fallbackNote}`
-        : `${index + 1}. role=${material.role} (${roleText(material.role)}); name=${material.name}; path=${material.path}; mime=${material.mimeType}; attachment=${attachment}; localPath=${localPath}${fallbackNote}`;
+        ? `${index + 1}. role=${material.role}（${roleText(material.role)}）；name=${material.name}；path=${material.path}；mime=${material.mimeType}；attachment=${attachment}；localPath=${localPath}${imageSummary}${fallbackNote}`
+        : `${index + 1}. role=${material.role} (${roleText(material.role)}); name=${material.name}; path=${material.path}; mime=${material.mimeType}; attachment=${attachment}; localPath=${localPath}${imageSummary}${fallbackNote}`;
     }),
   ].join('\n');
 };
 
 export const buildCreatorCreativeDirections = (spec: CreatorPromptSpec): CreatorCreativeDirection[] => {
   const topic = spec.subject || spec.mainObject || spec.sourceTitle;
+  if (spec.category === 'UI & Interfaces') {
+    return buildUiCreativeDirections(spec, topic);
+  }
+  if (spec.category === 'Posters & Typography') {
+    return buildPosterCreativeDirections(spec, topic);
+  }
+  if (spec.category === 'Charts & Infographics') {
+    return buildInfographicCreativeDirections(spec, topic);
+  }
+  if (spec.category === 'Products & E-commerce') {
+    return buildProductCreativeDirections(spec, topic);
+  }
+  return buildDefaultCreativeDirections(spec, topic);
+};
+
+const buildUiCreativeDirections = (
+  spec: CreatorPromptSpec,
+  topic: string
+): CreatorCreativeDirection[] => {
+  if (spec.language === 'zh') {
+    return [
+      {
+        id: 'ui-product-flow',
+        title: '产品流程截图',
+        template: '真实界面框架 + 清晰操作路径',
+        style: spec.visualStyle || '高保真 SaaS / App 截图',
+        reason: `适合把「${topic}」呈现为可理解的产品流程。`,
+        promptFocus: '明确状态栏、导航、核心卡片、按钮状态和可读 UI 文案。',
+      },
+      {
+        id: 'ui-dashboard-density',
+        title: '数据仪表盘',
+        template: '密集信息面板 + 层级化指标',
+        style: '专业 dashboard / analytics UI',
+        reason: '适合呈现运营、数据、监控和决策场景。',
+        promptFocus: '强化 KPI、图表、筛选器、表格和信息分组，不做空泛界面。',
+      },
+      {
+        id: 'ui-social-context',
+        title: '社媒界面语境',
+        template: '平台截图 + 评论/互动层',
+        style: '真实社媒截图 / mobile UI',
+        reason: '适合把内容放进可传播的平台环境。',
+        promptFocus: '加入平台 chrome、点赞评论、头像、时间戳和边缘安全区。',
+      },
+      {
+        id: 'ui-state-variant',
+        title: '关键状态变体',
+        template: '同一界面的状态差异',
+        style: '产品原型 / design review',
+        reason: '适合对比加载、空状态、成功、异常或选中状态。',
+        promptFocus: '突出交互状态变化，同时保持界面系统一致。',
+      },
+    ];
+  }
+  return [
+    {
+      id: 'ui-product-flow',
+      title: 'Product flow screenshot',
+      template: 'real interface frame with clear action path',
+      style: spec.visualStyle || 'high-fidelity SaaS / app screenshot',
+      reason: `Best for presenting "${topic}" as an understandable product flow.`,
+      promptFocus: 'Specify chrome, navigation, primary cards, button states, and readable UI copy.',
+    },
+    {
+      id: 'ui-dashboard-density',
+      title: 'Dashboard density',
+      template: 'dense information panel with metric hierarchy',
+      style: 'professional dashboard / analytics UI',
+      reason: 'Best for operations, data, monitoring, and decision-support scenes.',
+      promptFocus: 'Emphasize KPIs, charts, filters, tables, and grouped information instead of generic UI.',
+    },
+    {
+      id: 'ui-social-context',
+      title: 'Social context UI',
+      template: 'platform screenshot with comments and interaction layers',
+      style: 'realistic social / mobile UI',
+      reason: 'Best for placing content inside a recognizable distribution context.',
+      promptFocus: 'Add platform chrome, reactions, comments, avatars, timestamps, and safe margins.',
+    },
+    {
+      id: 'ui-state-variant',
+      title: 'State variant',
+      template: 'same interface with a meaningful state difference',
+      style: 'product prototype / design review',
+      reason: 'Best for comparing loading, empty, success, error, or selected states.',
+      promptFocus: 'Make the interaction state obvious while preserving system consistency.',
+    },
+  ];
+};
+
+const buildPosterCreativeDirections = (
+  spec: CreatorPromptSpec,
+  topic: string
+): CreatorCreativeDirection[] => {
+  if (spec.language === 'zh') {
+    return [
+      {
+        id: 'poster-type-hero',
+        title: '大字主视觉',
+        template: '强标题 + 单一视觉符号',
+        style: spec.visualStyle || '高冲击商业海报',
+        reason: `适合快速建立「${topic}」的首屏记忆点。`,
+        promptFocus: '控制标题层级、留白、对比和主体轮廓，保证远距离可读。',
+      },
+      {
+        id: 'poster-editorial-grid',
+        title: '编辑网格',
+        template: '杂志网格 + 多层信息',
+        style: 'editorial poster / typography system',
+        reason: '适合活动、展览、发布和内容型海报。',
+        promptFocus: '用网格、编号、短标签和图片块组织信息层级。',
+      },
+      {
+        id: 'poster-symbolic-collage',
+        title: '符号拼贴',
+        template: '核心符号 + 情绪化拼贴',
+        style: 'campaign collage / art direction',
+        reason: '适合建立更强的情绪、叙事和品牌识别。',
+        promptFocus: '将主体、纹理、背景符号和辅助文字形成统一视觉隐喻。',
+      },
+      {
+        id: 'poster-minimal-premium',
+        title: '高级极简',
+        template: '大留白 + 精准主体',
+        style: 'premium minimal poster',
+        reason: '适合高端、克制、品牌感强的表达。',
+        promptFocus: '减少元素数量，强化材质、比例、字距和细节控制。',
+      },
+    ];
+  }
+  return [
+    {
+      id: 'poster-type-hero',
+      title: 'Type hero',
+      template: 'bold headline with one visual symbol',
+      style: spec.visualStyle || 'high-impact commercial poster',
+      reason: `Best for making "${topic}" memorable at first glance.`,
+      promptFocus: 'Control headline hierarchy, whitespace, contrast, and subject silhouette for distance readability.',
+    },
+    {
+      id: 'poster-editorial-grid',
+      title: 'Editorial grid',
+      template: 'magazine grid with layered information',
+      style: 'editorial poster / typography system',
+      reason: 'Best for events, exhibitions, launches, and content-led posters.',
+      promptFocus: 'Use grids, numbering, short labels, and image blocks to organize hierarchy.',
+    },
+    {
+      id: 'poster-symbolic-collage',
+      title: 'Symbolic collage',
+      template: 'core symbol with expressive collage',
+      style: 'campaign collage / art direction',
+      reason: 'Best when the image needs stronger emotion, story, and brand recall.',
+      promptFocus: 'Unify subject, texture, background symbols, and supporting text into one visual metaphor.',
+    },
+    {
+      id: 'poster-minimal-premium',
+      title: 'Premium minimal',
+      template: 'large negative space with precise subject',
+      style: 'premium minimal poster',
+      reason: 'Best for restrained, high-end, brand-led expression.',
+      promptFocus: 'Reduce elements and tighten material, scale, spacing, and detail control.',
+    },
+  ];
+};
+
+const buildInfographicCreativeDirections = (
+  spec: CreatorPromptSpec,
+  topic: string
+): CreatorCreativeDirection[] => {
+  if (spec.language === 'zh') {
+    return [
+      {
+        id: 'info-step-system',
+        title: '步骤系统',
+        template: '分步流程 + 编号节点',
+        style: spec.visualStyle || '清晰信息图 / explainable diagram',
+        reason: `适合解释「${topic}」的流程、方法或操作步骤。`,
+        promptFocus: '明确起点、终点、箭头、编号和每步短标签。',
+      },
+      {
+        id: 'info-comparison',
+        title: '对比结构',
+        template: '左右/矩阵对比 + 关键差异',
+        style: 'comparison infographic',
+        reason: '适合呈现方案、版本、对象或指标之间的差异。',
+        promptFocus: '使用统一尺度、分区、图标和高亮色表达差异。',
+      },
+      {
+        id: 'info-map-network',
+        title: '关系地图',
+        template: '节点网络 + 关系说明',
+        style: 'knowledge map / system diagram',
+        reason: '适合复杂对象、概念、生态或系统架构。',
+        promptFocus: '控制节点层级、连线含义、分组边界和阅读顺序。',
+      },
+      {
+        id: 'info-editorial-explainer',
+        title: '编辑解释图',
+        template: '主图 + 标注 + 小型数据块',
+        style: 'editorial explainer',
+        reason: '适合把知识说明做得更有传播感。',
+        promptFocus: '结合主视觉、短注释、数据点和版面节奏。',
+      },
+    ];
+  }
+  return [
+    {
+      id: 'info-step-system',
+      title: 'Step system',
+      template: 'step-by-step flow with numbered nodes',
+      style: spec.visualStyle || 'clean infographic / explainable diagram',
+      reason: `Best for explaining the process, method, or steps behind "${topic}".`,
+      promptFocus: 'Specify start, end, arrows, numbers, and short labels for each step.',
+    },
+    {
+      id: 'info-comparison',
+      title: 'Comparison structure',
+      template: 'side-by-side or matrix comparison with key differences',
+      style: 'comparison infographic',
+      reason: 'Best for showing differences between options, versions, objects, or metrics.',
+      promptFocus: 'Use consistent scale, zones, icons, and highlight colors to express differences.',
+    },
+    {
+      id: 'info-map-network',
+      title: 'Relationship map',
+      template: 'node network with relationship explanations',
+      style: 'knowledge map / system diagram',
+      reason: 'Best for complex concepts, ecosystems, systems, or architectures.',
+      promptFocus: 'Control node hierarchy, line meaning, group boundaries, and reading order.',
+    },
+    {
+      id: 'info-editorial-explainer',
+      title: 'Editorial explainer',
+      template: 'hero visual with annotations and small data blocks',
+      style: 'editorial explainer',
+      reason: 'Best when educational content needs stronger shareability.',
+      promptFocus: 'Combine hero visual, short annotations, data points, and editorial rhythm.',
+    },
+  ];
+};
+
+const buildProductCreativeDirections = (
+  spec: CreatorPromptSpec,
+  topic: string
+): CreatorCreativeDirection[] => {
+  if (spec.language === 'zh') {
+    return [
+      {
+        id: 'product-hero-commerce',
+        title: '商品主图',
+        template: '产品主体 + 卖点层级',
+        style: spec.visualStyle || '高级电商主视觉',
+        reason: `适合把「${topic}」转成可销售的商品视觉。`,
+        promptFocus: '突出产品轮廓、材质、包装、卖点和购买理由。',
+      },
+      {
+        id: 'product-lifestyle-use',
+        title: '生活方式场景',
+        template: '产品使用情境 + 人物/环境线索',
+        style: 'lifestyle commerce photography',
+        reason: '适合让用户理解产品如何进入真实生活。',
+        promptFocus: '加入使用动作、场景道具、真实光线和情绪收益。',
+      },
+      {
+        id: 'product-detail-breakdown',
+        title: '细节拆解',
+        template: '局部特写 + 功能标注',
+        style: 'technical product breakdown',
+        reason: '适合解释材质、结构、功能和差异化卖点。',
+        promptFocus: '使用放大细节、箭头、标签和对比区块。',
+      },
+      {
+        id: 'product-offer-campaign',
+        title: '促销活动视觉',
+        template: '活动信息 + 产品组合',
+        style: 'retail campaign visual',
+        reason: '适合节日、上新、组合包和限时优惠。',
+        promptFocus: '平衡价格/权益文字、产品数量、节日元素和行动召唤。',
+      },
+    ];
+  }
+  return [
+    {
+      id: 'product-hero-commerce',
+      title: 'Commerce hero',
+      template: 'product hero with benefit hierarchy',
+      style: spec.visualStyle || 'premium e-commerce hero visual',
+      reason: `Best for turning "${topic}" into a sellable product visual.`,
+      promptFocus: 'Emphasize silhouette, materials, packaging, benefits, and purchase reason.',
+    },
+    {
+      id: 'product-lifestyle-use',
+      title: 'Lifestyle use',
+      template: 'product-in-use scene with human or environment cues',
+      style: 'lifestyle commerce photography',
+      reason: 'Best for showing how the product fits into real life.',
+      promptFocus: 'Add use actions, contextual props, realistic light, and emotional benefit.',
+    },
+    {
+      id: 'product-detail-breakdown',
+      title: 'Detail breakdown',
+      template: 'close-up details with feature callouts',
+      style: 'technical product breakdown',
+      reason: 'Best for explaining materials, structure, features, and differentiators.',
+      promptFocus: 'Use magnified details, arrows, labels, and comparison zones.',
+    },
+    {
+      id: 'product-offer-campaign',
+      title: 'Offer campaign',
+      template: 'offer message with product bundle',
+      style: 'retail campaign visual',
+      reason: 'Best for holidays, drops, bundles, and limited-time offers.',
+      promptFocus: 'Balance price or benefit copy, product count, seasonal cues, and call to action.',
+    },
+  ];
+};
+
+const buildDefaultCreativeDirections = (
+  spec: CreatorPromptSpec,
+  topic: string
+): CreatorCreativeDirection[] => {
   if (spec.language === 'zh') {
     return [
       {
@@ -464,6 +843,23 @@ const renderDirectionLines = (directions: CreatorCreativeDirection[]): string =>
     `   promptFocus: ${direction.promptFocus}`,
   ].join('\n')).join('\n')
 );
+
+const renderTemplateFieldLines = (spec: CreatorPromptSpec): string => {
+  const fieldSchema = spec.templateFieldSchema ?? [];
+  const values = fieldSchema
+    .map((field) => ({
+      label: field.label[spec.language],
+      value: spec.templateFieldValues[field.id]?.trim() ?? '',
+    }))
+    .filter((item) => item.value.length > 0);
+  if (values.length === 0) {
+    return '';
+  }
+  const body = values.map((item) => `- ${item.label}: ${item.value}`).join('\n');
+  return spec.language === 'zh'
+    ? `模板动态字段：\n${body}`
+    : `Template fields:\n${body}`;
+};
 
 const renderSelectedDirection = (
   direction: CreatorCreativeDirection,

@@ -69,6 +69,7 @@ export interface CreatorStudioTemplate {
   guidance: Record<'en' | 'zh', string[]>;
   pitfalls: Record<'en' | 'zh', string[]>;
   exampleCases: number[];
+  fieldSchema?: CreatorTemplateFieldSchema[];
 }
 
 export interface CreatorStudioStyleLibrary {
@@ -124,6 +125,15 @@ export const CreatorStudioSourceType = {
 
 export type CreatorStudioSourceType = typeof CreatorStudioSourceType[keyof typeof CreatorStudioSourceType];
 
+export const CreatorPromptSourceMode = {
+  Blank: 'blank',
+  CaseRemix: 'case-remix',
+  TemplateDraft: 'template-draft',
+  AssetVariant: 'asset-variant',
+} as const;
+
+export type CreatorPromptSourceMode = typeof CreatorPromptSourceMode[keyof typeof CreatorPromptSourceMode];
+
 export const CreatorMaterialRole = {
   Reference: 'reference',
   Style: 'style',
@@ -141,6 +151,29 @@ export const CreatorMaterialSource = {
 
 export type CreatorMaterialSource = typeof CreatorMaterialSource[keyof typeof CreatorMaterialSource];
 
+export const CreatorTemplateFieldKind = {
+  Text: 'text',
+  Textarea: 'textarea',
+  Select: 'select',
+} as const;
+
+export type CreatorTemplateFieldKind =
+  typeof CreatorTemplateFieldKind[keyof typeof CreatorTemplateFieldKind];
+
+export interface CreatorTemplateFieldOption {
+  value: string;
+  label: LocalizedText;
+}
+
+export interface CreatorTemplateFieldSchema {
+  id: string;
+  kind: CreatorTemplateFieldKind;
+  label: LocalizedText;
+  help?: LocalizedText;
+  placeholder?: LocalizedText;
+  options?: CreatorTemplateFieldOption[];
+}
+
 export interface CreatorBuilderMaterial {
   id: string;
   role: CreatorMaterialRole;
@@ -151,7 +184,14 @@ export interface CreatorBuilderMaterial {
   size: number;
   previewUrl: string;
   dataUrl?: string;
+  imageAnalysis?: CreatorMaterialImageAnalysis;
   addedAt: number;
+}
+
+export interface CreatorMaterialImageAnalysis {
+  width: number;
+  height: number;
+  dominantColors: string[];
 }
 
 export interface CreatorPromptMaterial {
@@ -163,6 +203,7 @@ export interface CreatorPromptMaterial {
   mimeType: string;
   hasImageAttachment: boolean;
   localPathAvailable: boolean;
+  imageAnalysis?: CreatorMaterialImageAnalysis;
 }
 
 export interface CreatorCreativeDirection {
@@ -174,8 +215,17 @@ export interface CreatorCreativeDirection {
   promptFocus: string;
 }
 
+export interface CreatorPromptReferenceAnalysis {
+  aspectRatio: string;
+  structure: string[];
+  styleNotes: string[];
+  textNotes: string[];
+  constraintNotes: string[];
+}
+
 export interface CreatorPromptSpec {
   sourceType: CreatorStudioSourceType;
+  sourceMode?: CreatorPromptSourceMode;
   sourceId: string;
   sourceTitle: string;
   language: 'zh' | 'en';
@@ -183,10 +233,14 @@ export interface CreatorPromptSpec {
   caseIds: string[];
   styles: string[];
   scenes: string[];
+  taskType: string;
   subject: string;
   platform: string;
+  audience: string;
   mainObject: string;
   visualStyle: string;
+  colorPreference: string;
+  outputCount: string;
   constraints: {
     aspectRatio?: string;
     requiredText?: string;
@@ -194,6 +248,9 @@ export interface CreatorPromptSpec {
   };
   templateGuidance: string[];
   templatePitfalls: string[];
+  templateFieldValues: Record<string, string>;
+  templateFieldSchema?: CreatorTemplateFieldSchema[];
+  referenceAnalysis?: CreatorPromptReferenceAnalysis;
   referencePrompt?: string;
   templateId?: string;
   materials?: CreatorPromptMaterial[];

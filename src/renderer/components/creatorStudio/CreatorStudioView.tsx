@@ -40,13 +40,21 @@ import { RootState } from '../../store';
 import { setActiveSkillIds, setSkills } from '../../store/slices/skillSlice';
 import type {
   CreatorBuilderMaterial,
+  CreatorMaterialImageAnalysis,
+  CreatorPromptReferenceAnalysis,
   CreatorPromptSpec,
   CreatorStudioCase,
   CreatorStudioManifest,
   CreatorStudioStyleLibrary,
   CreatorStudioTemplate,
+  CreatorTemplateFieldSchema,
 } from '../../types/creatorStudio';
-import { CreatorMaterialRole, CreatorMaterialSource, CreatorStudioSourceType } from '../../types/creatorStudio';
+import { CreatorMaterialRole, CreatorMaterialSource, CreatorPromptSourceMode, CreatorStudioSourceType, CreatorTemplateFieldKind } from '../../types/creatorStudio';
+import { applyCreatorBriefAutofill } from '../../utils/creatorBriefAutofill';
+import { compileCreatorPrompt, CreatorPromptCompileTarget } from '../../utils/creatorPromptCompiler';
+import { CreatorPromptLintSeverity, lintCreatorPromptSpec } from '../../utils/creatorPromptLint';
+import { reverseEngineerCreatorPrompt } from '../../utils/creatorPromptReverseEngineer';
+import { toCreatorPromptSpecSnapshot } from '../../utils/creatorPromptSpecAdapter';
 import {
   buildPromptSpec,
   CREATOR_MATERIAL_ROLE_LABELS,
@@ -56,10 +64,10 @@ import {
   CreatorStudioRecommendedSkillId,
   hasSeedreamApiConfig,
   normalizePromptLanguage,
-  renderCreatorCoworkDraft,
   renderCreatorPrompt,
   selectCreatorCreativeDirection,
 } from '../../utils/creatorStudio';
+import { getCreatorTemplateFieldSchema } from '../../utils/creatorTemplateFields';
 import { CreatorAssetGrid } from './CreatorAssetGrid';
 import { CreatorBatchPanel } from './CreatorBatchPanel';
 import { CreatorBoard } from './CreatorBoard';
@@ -109,6 +117,13 @@ const SeedreamStatus = {
 
 type SeedreamStatus = typeof SeedreamStatus[keyof typeof SeedreamStatus];
 
+const PromptBuilderPreviewTab = {
+  Prompt: 'prompt',
+  Spec: 'spec',
+} as const;
+
+type PromptBuilderPreviewTab = typeof PromptBuilderPreviewTab[keyof typeof PromptBuilderPreviewTab];
+
 const CASE_PAGE_SIZE = 80;
 const GALLERY_THUMBNAIL_SIZE_MIN = 180;
 const GALLERY_THUMBNAIL_SIZE_MAX = 360;
@@ -116,13 +131,18 @@ const GALLERY_THUMBNAIL_SIZE_STEP = 20;
 const GALLERY_THUMBNAIL_SIZE_DEFAULT = 260;
 
 const defaultBuilderForm: CreatorPromptForm = {
+  taskType: '',
   subject: '',
   platform: '',
+  audience: '',
   mainObject: '',
   requiredText: '',
   visualStyle: '',
+  colorPreference: '',
   aspectRatio: '1:1',
+  outputCount: '1',
   negativeRequirements: '',
+  templateFieldValues: {},
 };
 
 const dispatchToast = (message: string) => {
@@ -364,8 +384,10 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   }, [category, query, scene, style]);
 
   const startFromCase = (item: CreatorStudioCase) => {
+    const reverseEngineeredPrompt = reverseEngineerCreatorPrompt(item.prompt, item.title);
     setBuilderSeed({
       sourceType: CreatorStudioSourceType.Case,
+      sourceMode: CreatorPromptSourceMode.CaseRemix,
       sourceId: item.id,
       sourceTitle: item.title,
       referencePrompt: item.prompt,
@@ -373,11 +395,16 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       category: item.category,
       styles: item.styles,
       scenes: item.scenes,
+      referenceAnalysis: reverseEngineeredPrompt.analysis,
     });
     setBuilderForm({
       ...defaultBuilderForm,
-      subject: item.title,
-      visualStyle: [...item.styles, ...item.scenes].join(', '),
+      ...reverseEngineeredPrompt.formDraft,
+      visualStyle: [
+        ...item.styles,
+        ...item.scenes,
+        reverseEngineeredPrompt.formDraft.visualStyle,
+      ].filter(Boolean).join(', '),
     });
     setActiveTab(CreatorStudioTab.Builder);
   };
@@ -385,6 +412,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const startFromTemplate = (template: CreatorStudioTemplate) => {
     setBuilderSeed({
       sourceType: CreatorStudioSourceType.Template,
+      sourceMode: CreatorPromptSourceMode.TemplateDraft,
       sourceId: template.id,
       sourceTitle: getText(template.title),
       templateId: template.id,
@@ -394,6 +422,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       scenes: template.scenes,
       templateGuidance: template.guidance[i18nService.getLanguage()],
       templatePitfalls: template.pitfalls[i18nService.getLanguage()],
+      templateFieldSchema: getCreatorTemplateFieldSchema(template),
     });
     setBuilderForm({
       ...defaultBuilderForm,
@@ -413,6 +442,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const useAssetAsReference = (asset: CreatorProductionAssetRecord) => {
     setBuilderSeed({
       sourceType: CreatorStudioSourceType.Template,
+      sourceMode: CreatorPromptSourceMode.AssetVariant,
       sourceId: asset.id,
       sourceTitle: asset.fileName,
       referencePrompt: asset.promptText || (asset.promptSpec ? JSON.stringify(asset.promptSpec, null, 2) : undefined),
@@ -426,13 +456,23 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       variantOfAssetId: asset.id,
     });
     setBuilderForm({
+      taskType: typeof asset.promptSpec?.taskType === 'string' ? asset.promptSpec.taskType : '',
       subject: asset.promptSpec?.subject ?? asset.fileName,
       platform: asset.promptSpec?.platform ?? '',
+      audience: typeof asset.promptSpec?.audience === 'string' ? asset.promptSpec.audience : '',
       mainObject: asset.promptSpec?.mainObject ?? '',
       requiredText: asset.promptSpec?.constraints?.requiredText ?? '',
       visualStyle: asset.promptSpec?.visualStyle ?? '',
+      colorPreference: typeof asset.promptSpec?.colorPreference === 'string' ? asset.promptSpec.colorPreference : '',
       aspectRatio: asset.promptSpec?.constraints?.aspectRatio ?? '1:1',
+      outputCount: typeof asset.promptSpec?.outputCount === 'string' ? asset.promptSpec.outputCount : '1',
       negativeRequirements: asset.promptSpec?.constraints?.negativeRequirements ?? '',
+      templateFieldValues: typeof asset.promptSpec?.templateFieldValues === 'object' && asset.promptSpec.templateFieldValues
+        ? Object.fromEntries(
+          Object.entries(asset.promptSpec.templateFieldValues)
+            .filter(([, value]) => typeof value === 'string')
+        ) as Record<string, string>
+        : {},
     });
     if (asset.kind === CreatorProductionAssetKind.Image) {
       setBuilderMaterials((items) => [{
@@ -502,21 +542,20 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     setIsSendingToCowork(true);
     try {
       dispatch(setActiveSkillIds(installedRecommendedSkillIds));
-      await onSendToCowork(renderCreatorCoworkDraft({
-        promptSpec,
-        promptText,
-        installedSkillIds: installedRecommendedSkillIds,
-        missingSkillIds: missingRecommendedSkillIds,
-        requestImageGeneration,
-      }), {
+      const compiled = compileCreatorPrompt({
+        spec: promptSpec,
+        target: CreatorPromptCompileTarget.CoworkDraft,
+        materials,
+        runtime: {
+          installedSkillIds: installedRecommendedSkillIds,
+          missingSkillIds: missingRecommendedSkillIds,
+          requestImageGeneration,
+        },
+      });
+      await onSendToCowork(compiled.draftText ?? promptText, {
         activeSkillIds: installedRecommendedSkillIds,
         preferCreativeProducer: true,
-        attachments: materials.filter((material) => material.dataUrl?.startsWith('data:image/')).map((material) => ({
-          path: material.path,
-          name: material.name,
-          isImage: true,
-          dataUrl: material.dataUrl,
-        })),
+        attachments: compiled.attachments,
       });
     } catch {
       dispatchToast(i18nService.t('creatorSendToCoworkFailed'));
@@ -559,7 +598,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         projectId,
         title,
         promptText,
-        promptSpec: { ...promptSpec },
+        promptSpec: toCreatorPromptSpecSnapshot(promptSpec),
         templateId: promptSpec.templateId ?? null,
         caseIds: promptSpec.caseIds,
         tags: [
@@ -828,6 +867,12 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
             currentProjectId={currentProjectId}
             onProjectChange={(projectId) => void switchProject(projectId)}
             onCreateProject={createProject}
+            onClearSource={() => {
+              setBuilderSeed(null);
+              setBuilderForm(defaultBuilderForm);
+              setBuilderMaterials([]);
+              setBoardContextPack('');
+            }}
             onSendToCowork={sendToCowork}
             onSavePromptAsset={(promptSpec, promptText) => void savePromptAsset(promptSpec, promptText)}
             brandKit={boardWorkspace?.brandKit ?? null}
@@ -1173,6 +1218,50 @@ const TemplateLibrary: React.FC<{
   </section>
 );
 
+const getSourceModeLabel = (mode: CreatorPromptSourceMode): string => {
+  switch (mode) {
+    case CreatorPromptSourceMode.CaseRemix:
+      return i18nService.t('creatorSourceModeCaseRemix');
+    case CreatorPromptSourceMode.TemplateDraft:
+      return i18nService.t('creatorSourceModeTemplateDraft');
+    case CreatorPromptSourceMode.AssetVariant:
+      return i18nService.t('creatorSourceModeAssetVariant');
+    case CreatorPromptSourceMode.Blank:
+    default:
+      return i18nService.t('creatorSourceModeBlank');
+  }
+};
+
+const getSourceModeHint = (mode: CreatorPromptSourceMode): string => {
+  switch (mode) {
+    case CreatorPromptSourceMode.CaseRemix:
+      return i18nService.t('creatorSourceModeCaseRemixHint');
+    case CreatorPromptSourceMode.TemplateDraft:
+      return i18nService.t('creatorSourceModeTemplateDraftHint');
+    case CreatorPromptSourceMode.AssetVariant:
+      return i18nService.t('creatorSourceModeAssetVariantHint');
+    case CreatorPromptSourceMode.Blank:
+    default:
+      return i18nService.t('creatorSourceModeBlankHint');
+  }
+};
+
+const getLintSeverityClass = (severity: CreatorPromptLintSeverity): string => {
+  switch (severity) {
+    case CreatorPromptLintSeverity.Error:
+      return 'bg-red-500/10 text-red-600';
+    case CreatorPromptLintSeverity.Warning:
+      return 'bg-amber-500/10 text-amber-700 dark:text-amber-400';
+    case CreatorPromptLintSeverity.Info:
+    default:
+      return 'bg-surface-raised text-muted';
+  }
+};
+
+const capitalizeLintSeverity = (severity: CreatorPromptLintSeverity): string => (
+  severity.charAt(0).toUpperCase() + severity.slice(1)
+);
+
 const PromptBuilder: React.FC<{
   seed: CreatorPromptSeed | null;
   form: CreatorPromptForm;
@@ -1187,6 +1276,7 @@ const PromptBuilder: React.FC<{
   currentProjectId: string;
   onProjectChange: (projectId: string) => void;
   onCreateProject: (name: string) => Promise<void> | void;
+  onClearSource: () => void;
   brandKit: CreatorBrandKitRecord | null;
   boardContextPack: string;
   onSendToCowork: (
@@ -1210,22 +1300,38 @@ const PromptBuilder: React.FC<{
   currentProjectId,
   onProjectChange,
   onCreateProject,
+  onClearSource,
   brandKit,
   boardContextPack,
   onSendToCowork,
   onSavePromptAsset,
 }) => {
   const [selectedDirectionId, setSelectedDirectionId] = useState<string | null>(null);
+  const [previewTab, setPreviewTab] = useState<PromptBuilderPreviewTab>(PromptBuilderPreviewTab.Prompt);
   const [projectNameDraft, setProjectNameDraft] = useState('');
   const [isProjectFormOpen, setIsProjectFormOpen] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [briefAutofillText, setBriefAutofillText] = useState('');
+  const [briefAutofillMessage, setBriefAutofillMessage] = useState('');
   const promptLanguage = normalizePromptLanguage(i18nService.getLanguage(), form);
   const rawPromptSpec: CreatorPromptSpec = buildPromptSpec(seed, form, promptLanguage, i18nService.t('creatorBlankBuilder'), materials);
   const basePromptSpec = applyBoardAndBrandKit(rawPromptSpec, brandKit, boardContextPack);
   const promptSpec = selectCreatorCreativeDirection(basePromptSpec, selectedDirectionId);
-  const prompt = renderCreatorPrompt(promptSpec);
+  const compiledPrompt = compileCreatorPrompt({
+    spec: promptSpec,
+    target: CreatorPromptCompileTarget.CopyText,
+  });
+  const prompt = compiledPrompt.promptText;
+  const promptSpecJson = JSON.stringify(compiledPrompt.promptSpec, null, 2);
+  const lintResult = lintCreatorPromptSpec(promptSpec);
+  const lintErrorCount = lintResult.issues.filter((issue) => issue.severity === CreatorPromptLintSeverity.Error).length;
+  const lintWarningCount = lintResult.issues.filter((issue) => issue.severity === CreatorPromptLintSeverity.Warning).length;
+  const lintInfoCount = lintResult.issues.filter((issue) => issue.severity === CreatorPromptLintSeverity.Info).length;
+  const hasLintErrors = lintErrorCount > 0;
   const seedreamReady = seedreamStatus === SeedreamStatus.Configured;
   const seedreamHint = getSeedreamStatusHint(seedreamStatus);
+  const sourceMode = promptSpec.sourceMode ?? CreatorPromptSourceMode.Blank;
+  const templateFieldSchema = seed?.templateFieldSchema ?? [];
 
   useEffect(() => {
     setSelectedDirectionId(null);
@@ -1233,6 +1339,26 @@ const PromptBuilder: React.FC<{
 
   const updateField = (field: keyof CreatorPromptForm, value: string) => {
     onFormChange({ ...form, [field]: value });
+  };
+
+  const updateTemplateField = (fieldId: string, value: string) => {
+    onFormChange({
+      ...form,
+      templateFieldValues: {
+        ...form.templateFieldValues,
+        [fieldId]: value,
+      },
+    });
+  };
+
+  const applyBriefAutofill = () => {
+    const result = applyCreatorBriefAutofill(form, briefAutofillText);
+    onFormChange(result.form);
+    setBriefAutofillMessage(
+      result.changedFields.length > 0
+        ? i18nService.t('creatorBriefAutofillApplied').replace('{count}', String(result.changedFields.length))
+        : i18nService.t('creatorBriefAutofillNoEmptyFields')
+    );
   };
 
   const submitProject = async () => {
@@ -1250,9 +1376,40 @@ const PromptBuilder: React.FC<{
   return (
     <section className="grid min-w-0 gap-4 p-4 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
       <div className="min-w-0 space-y-3 rounded-lg border border-border bg-surface p-4">
-        <div>
-          <div className="text-xs font-medium uppercase text-muted">{i18nService.t('creatorBuilderSource')}</div>
-          <div className="mt-1 break-words text-sm font-semibold">{promptSpec.sourceTitle}</div>
+        <div className="rounded-lg border border-border bg-background p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-medium uppercase text-muted">{i18nService.t('creatorBuilderSource')}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
+                  {getSourceModeLabel(sourceMode)}
+                </span>
+                {promptSpec.templateId && <span className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-muted">template: {promptSpec.templateId}</span>}
+                {promptSpec.caseIds.length > 0 && <span className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-muted">cases: {promptSpec.caseIds.length}</span>}
+              </div>
+              <div className="mt-2 break-words text-sm font-semibold">{promptSpec.sourceTitle}</div>
+              <p className="mt-1 text-xs leading-5 text-muted">{getSourceModeHint(sourceMode)}</p>
+              {promptSpec.referenceAnalysis && (
+                <div className="mt-3 rounded-lg border border-border bg-surface p-3">
+                  <div className="text-[11px] font-semibold uppercase text-muted">
+                    {i18nService.t('creatorReferenceAnalysis')}
+                  </div>
+                  <ReferenceAnalysisSummary analysis={promptSpec.referenceAnalysis} />
+                </div>
+              )}
+            </div>
+            {sourceMode !== CreatorPromptSourceMode.Blank && (
+              <button
+                type="button"
+                onClick={onClearSource}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted transition-colors hover:bg-surface-raised hover:text-foreground"
+                aria-label={i18nService.t('creatorBuilderClearSource')}
+                title={i18nService.t('creatorBuilderClearSource')}
+              >
+                <XMarkIcon className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
         <div className="rounded-lg border border-border bg-background p-3">
           <div className="text-xs font-medium text-secondary">{i18nService.t('creatorBuilderProject')}</div>
@@ -1312,27 +1469,129 @@ const PromptBuilder: React.FC<{
             </div>
           )}
         </div>
-        <BuilderInput label={i18nService.t('creatorFieldSubject')} value={form.subject} onChange={(value) => updateField('subject', value)} />
-        <BuilderInput label={i18nService.t('creatorFieldPlatform')} value={form.platform} onChange={(value) => updateField('platform', value)} />
-        <BuilderInput label={i18nService.t('creatorFieldMainObject')} value={form.mainObject} onChange={(value) => updateField('mainObject', value)} />
-        <BuilderInput label={i18nService.t('creatorFieldRequiredText')} value={form.requiredText} onChange={(value) => updateField('requiredText', value)} />
-        <BuilderInput label={i18nService.t('creatorFieldVisualStyle')} value={form.visualStyle} onChange={(value) => updateField('visualStyle', value)} />
-        <BuilderInput label={i18nService.t('creatorFieldAspectRatio')} value={form.aspectRatio} onChange={(value) => updateField('aspectRatio', value)} />
-        <BuilderTextarea label={i18nService.t('creatorFieldNegative')} value={form.negativeRequirements} onChange={(value) => updateField('negativeRequirements', value)} />
-        <MaterialTray materials={materials} onMaterialsChange={onMaterialsChange} />
+        <BuilderSection title={i18nService.t('creatorBuilderSectionBrief')}>
+          <label className="block">
+            <span className="text-xs font-medium text-secondary">{i18nService.t('creatorBriefAutofill')}</span>
+            <textarea
+              value={briefAutofillText}
+              onChange={(event) => {
+                setBriefAutofillText(event.target.value);
+                setBriefAutofillMessage('');
+              }}
+              rows={3}
+              placeholder={i18nService.t('creatorBriefAutofillPlaceholder')}
+              className="mt-1 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={!briefAutofillText.trim()}
+              onClick={applyBriefAutofill}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {i18nService.t('creatorBriefAutofillApply')}
+            </button>
+            {briefAutofillMessage && <span className="text-xs text-muted">{briefAutofillMessage}</span>}
+          </div>
+          <BuilderInput label={i18nService.t('creatorFieldTaskType')} value={form.taskType} onChange={(value) => updateField('taskType', value)} />
+          <BuilderInput label={i18nService.t('creatorFieldSubject')} value={form.subject} onChange={(value) => updateField('subject', value)} />
+          <BuilderInput label={i18nService.t('creatorFieldPlatform')} value={form.platform} onChange={(value) => updateField('platform', value)} />
+          <BuilderInput label={i18nService.t('creatorFieldAudience')} value={form.audience} onChange={(value) => updateField('audience', value)} />
+        </BuilderSection>
+        {templateFieldSchema.length > 0 && (
+          <BuilderSection title={i18nService.t('creatorBuilderSectionTemplateFields')}>
+            <p className="text-xs leading-5 text-muted">{i18nService.t('creatorBuilderTemplateFieldsHint')}</p>
+            {templateFieldSchema.map((field) => (
+              <TemplateFieldInput
+                key={field.id}
+                field={field}
+                value={form.templateFieldValues[field.id] ?? ''}
+                onChange={(value) => updateTemplateField(field.id, value)}
+              />
+            ))}
+          </BuilderSection>
+        )}
+        <BuilderSection title={i18nService.t('creatorBuilderSectionComposition')}>
+          <BuilderInput label={i18nService.t('creatorFieldMainObject')} value={form.mainObject} onChange={(value) => updateField('mainObject', value)} />
+          <BuilderInput label={i18nService.t('creatorFieldAspectRatio')} value={form.aspectRatio} onChange={(value) => updateField('aspectRatio', value)} />
+          <BuilderInput label={i18nService.t('creatorFieldOutputCount')} value={form.outputCount} onChange={(value) => updateField('outputCount', value)} />
+        </BuilderSection>
+        <BuilderSection title={i18nService.t('creatorBuilderSectionStyle')}>
+          <BuilderInput label={i18nService.t('creatorFieldVisualStyle')} value={form.visualStyle} onChange={(value) => updateField('visualStyle', value)} />
+          <BuilderInput label={i18nService.t('creatorFieldColorPreference')} value={form.colorPreference} onChange={(value) => updateField('colorPreference', value)} />
+          <BuilderInput label={i18nService.t('creatorFieldRequiredText')} value={form.requiredText} onChange={(value) => updateField('requiredText', value)} />
+          <BuilderTextarea label={i18nService.t('creatorFieldNegative')} value={form.negativeRequirements} onChange={(value) => updateField('negativeRequirements', value)} />
+        </BuilderSection>
+        <BuilderSection title={i18nService.t('creatorBuilderSectionMaterials')}>
+          <MaterialTray materials={materials} onMaterialsChange={onMaterialsChange} />
+        </BuilderSection>
       </div>
       <div className="min-w-0 space-y-4">
+        <div className="min-w-0 rounded-lg border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">{i18nService.t('creatorPromptQuality')}</h2>
+              <p className="mt-1 text-xs leading-5 text-muted">
+                {i18nService.t('creatorPromptQualitySummary')
+                  .replace('{score}', String(lintResult.score))
+                  .replace('{errors}', String(lintErrorCount))
+                  .replace('{warnings}', String(lintWarningCount))
+                  .replace('{info}', String(lintInfoCount))}
+              </p>
+            </div>
+            <span className={`rounded-md px-2 py-1 text-xs font-medium ${hasLintErrors ? 'bg-red-500/10 text-red-600' : 'bg-primary/10 text-primary'}`}>
+              {lintResult.score}/100
+            </span>
+          </div>
+          {lintResult.issues.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {lintResult.issues.map((issue) => (
+                <div key={`${issue.code}-${issue.fieldPath}`} className="rounded-lg border border-border bg-background p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${getLintSeverityClass(issue.severity)}`}>
+                      {i18nService.t(`creatorPromptLintSeverity${capitalizeLintSeverity(issue.severity)}`)}
+                    </span>
+                    <span className="text-xs font-medium text-secondary">{issue.fieldPath}</span>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-secondary">{i18nService.t(issue.messageKey)}</p>
+                  {issue.suggestionKey && <p className="mt-1 text-xs leading-5 text-muted">{i18nService.t(issue.suggestionKey)}</p>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-xs leading-5 text-muted">{i18nService.t('creatorPromptQualityClean')}</p>
+          )}
+        </div>
         <div className="min-w-0 rounded-lg border border-border bg-surface">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold">{i18nService.t('creatorPromptPreview')}</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold">{i18nService.t('creatorPromptPreview')}</h2>
+              <div className="inline-flex rounded-lg border border-border bg-background p-1">
+                <button
+                  type="button"
+                  onClick={() => setPreviewTab(PromptBuilderPreviewTab.Prompt)}
+                  className={`rounded-md px-2 py-1 text-xs font-medium ${previewTab === PromptBuilderPreviewTab.Prompt ? 'bg-primary text-white' : 'text-secondary hover:bg-surface-raised hover:text-foreground'}`}
+                >
+                  {i18nService.t('creatorPromptPreviewFinal')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewTab(PromptBuilderPreviewTab.Spec)}
+                  className={`rounded-md px-2 py-1 text-xs font-medium ${previewTab === PromptBuilderPreviewTab.Spec ? 'bg-primary text-white' : 'text-secondary hover:bg-surface-raised hover:text-foreground'}`}
+                >
+                  {i18nService.t('creatorPromptPreviewSpec')}
+                </button>
+              </div>
+            </div>
             <div className="flex flex-wrap justify-end gap-2">
               <button
                 type="button"
-                onClick={() => void copyText(prompt)}
+                onClick={() => void copyText(previewTab === PromptBuilderPreviewTab.Prompt ? prompt : promptSpecJson)}
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover"
               >
                 <ClipboardDocumentIcon className="h-4 w-4" />
-                {i18nService.t('creatorCopyPrompt')}
+                {previewTab === PromptBuilderPreviewTab.Prompt ? i18nService.t('creatorCopyPrompt') : i18nService.t('copy')}
               </button>
               <button
                 type="button"
@@ -1345,7 +1604,8 @@ const PromptBuilder: React.FC<{
               </button>
               <button
                 type="button"
-                disabled={isSendingToCowork}
+                disabled={isSendingToCowork || hasLintErrors}
+                title={hasLintErrors ? i18nService.t('creatorPromptLintBlocksExecution') : undefined}
                 onClick={() => onSendToCowork(promptSpec, prompt, materials)}
                 className="inline-flex items-center gap-2 rounded-lg border border-primary bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -1354,8 +1614,8 @@ const PromptBuilder: React.FC<{
               </button>
               <button
                 type="button"
-                disabled={!seedreamReady || isSendingToCowork}
-                title={seedreamHint}
+                disabled={!seedreamReady || isSendingToCowork || hasLintErrors}
+                title={hasLintErrors ? i18nService.t('creatorPromptLintBlocksExecution') : seedreamHint}
                 onClick={() => onSendToCowork(promptSpec, prompt, materials, true)}
                 className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
               >
@@ -1364,7 +1624,9 @@ const PromptBuilder: React.FC<{
               </button>
             </div>
           </div>
-          <pre className="max-h-[420px] max-w-full whitespace-pre-wrap break-words overflow-auto p-4 text-sm leading-6 text-foreground">{prompt}</pre>
+          <pre className="max-h-[420px] max-w-full whitespace-pre-wrap break-words overflow-auto p-4 text-sm leading-6 text-foreground">
+            {previewTab === PromptBuilderPreviewTab.Prompt ? prompt : promptSpecJson}
+          </pre>
         </div>
         <div className="min-w-0 rounded-lg border border-border bg-surface">
           <div className="border-b border-border px-4 py-3">
@@ -1433,20 +1695,6 @@ const PromptBuilder: React.FC<{
             })}
           </div>
           <p className="mt-3 text-xs leading-5 text-muted">{seedreamHint}</p>
-        </div>
-        <div className="min-w-0 rounded-lg border border-border bg-surface">
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold">{i18nService.t('creatorPromptSpec')}</h2>
-            <button
-              type="button"
-              onClick={() => void copyText(JSON.stringify(promptSpec, null, 2))}
-              className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-            >
-              <DocumentDuplicateIcon className="h-4 w-4" />
-              {i18nService.t('copy')}
-            </button>
-          </div>
-          <pre className="max-h-64 max-w-full whitespace-pre-wrap break-words overflow-auto p-4 text-xs leading-5 text-secondary">{JSON.stringify(promptSpec, null, 2)}</pre>
         </div>
       </div>
     </section>
@@ -1552,12 +1800,61 @@ const encodeLocalFileSrc = (filePath: string): string => {
     .replace(/^file:\/\//i, 'localfile://');
 };
 
+const colorChannelToHex = (value: number): string => value.toString(16).padStart(2, '0');
+
+const rgbToHex = (red: number, green: number, blue: number): string => (
+  `#${colorChannelToHex(red)}${colorChannelToHex(green)}${colorChannelToHex(blue)}`
+);
+
+const analyzeImageDataUrl = (dataUrl: string): Promise<CreatorMaterialImageAnalysis | undefined> => new Promise((resolve) => {
+  if (typeof Image === 'undefined' || typeof document === 'undefined') {
+    resolve(undefined);
+    return;
+  }
+  const image = new Image();
+  image.onload = () => {
+    const canvas = document.createElement('canvas');
+    const sampleSize = 24;
+    canvas.width = sampleSize;
+    canvas.height = sampleSize;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      resolve(undefined);
+      return;
+    }
+    context.drawImage(image, 0, 0, sampleSize, sampleSize);
+    const pixels = context.getImageData(0, 0, sampleSize, sampleSize).data;
+    const colorBuckets = new Map<string, number>();
+    for (let index = 0; index < pixels.length; index += 4) {
+      const alpha = pixels[index + 3];
+      if (alpha < 180) continue;
+      const red = Math.round(pixels[index] / 32) * 32;
+      const green = Math.round(pixels[index + 1] / 32) * 32;
+      const blue = Math.round(pixels[index + 2] / 32) * 32;
+      const color = rgbToHex(Math.min(red, 255), Math.min(green, 255), Math.min(blue, 255));
+      colorBuckets.set(color, (colorBuckets.get(color) ?? 0) + 1);
+    }
+    const dominantColors = [...colorBuckets.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 4)
+      .map(([color]) => color);
+    resolve({
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      dominantColors,
+    });
+  };
+  image.onerror = () => resolve(undefined);
+  image.src = dataUrl;
+});
+
 const createMaterialFromFile = async (
   file: File,
   source: CreatorMaterialSource,
   role: CreatorMaterialRole = CreatorMaterialRole.Reference
 ): Promise<CreatorBuilderMaterial> => {
   const dataUrl = await readFileAsDataUrl(file);
+  const imageAnalysis = await analyzeImageDataUrl(dataUrl);
   return {
     id: createMaterialId(),
     role,
@@ -1568,6 +1865,7 @@ const createMaterialFromFile = async (
     size: file.size,
     previewUrl: dataUrl,
     dataUrl,
+    imageAnalysis,
     addedAt: Date.now(),
   };
 };
@@ -1645,6 +1943,19 @@ const MaterialTray: React.FC<{
               <div className="min-w-0">
                 <div className="truncate text-xs font-medium">{material.name}</div>
                 <div className="truncate text-[11px] text-muted">{material.path}</div>
+                {material.imageAnalysis && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                    <span>{material.imageAnalysis.width}x{material.imageAnalysis.height}</span>
+                    {material.imageAnalysis.dominantColors.map((color) => (
+                      <span
+                        key={color}
+                        className="h-3 w-3 rounded-sm border border-border"
+                        style={{ backgroundColor: color }}
+                        title={color}
+                      />
+                    ))}
+                  </div>
+                )}
                 <select
                   value={material.role}
                   onChange={(event) => updateRole(material.id, event.target.value as CreatorMaterialRole)}
@@ -1708,6 +2019,40 @@ const BuilderInput: React.FC<{
   </label>
 );
 
+const BuilderSection: React.FC<{
+  title: string;
+  children: React.ReactNode;
+}> = ({ title, children }) => (
+  <section className="space-y-3 rounded-lg border border-border bg-background p-3">
+    <h3 className="text-xs font-semibold uppercase text-muted">{title}</h3>
+    {children}
+  </section>
+);
+
+const ReferenceAnalysisSummary: React.FC<{
+  analysis: CreatorPromptReferenceAnalysis;
+}> = ({ analysis }) => {
+  const rows = [
+    analysis.aspectRatio ? `${i18nService.t('creatorReferenceAnalysisAspectRatio')}: ${analysis.aspectRatio}` : '',
+    ...analysis.structure.slice(0, 2),
+    ...analysis.styleNotes.slice(0, 2),
+    ...analysis.textNotes.slice(0, 1),
+    ...analysis.constraintNotes.slice(0, 1),
+  ].filter(Boolean);
+  if (rows.length === 0) {
+    return <p className="mt-2 text-xs leading-5 text-muted">{i18nService.t('creatorReferenceAnalysisEmpty')}</p>;
+  }
+  return (
+    <ul className="mt-2 space-y-1">
+      {rows.map((row, index) => (
+        <li key={`${index}-${row}`} className="break-words text-xs leading-5 text-secondary">
+          {row}
+        </li>
+      ))}
+    </ul>
+  );
+};
+
 const BuilderTextarea: React.FC<{
   label: string;
   value: string;
@@ -1723,6 +2068,64 @@ const BuilderTextarea: React.FC<{
     />
   </label>
 );
+
+const TemplateFieldInput: React.FC<{
+  field: CreatorTemplateFieldSchema;
+  value: string;
+  onChange: (value: string) => void;
+}> = ({ field, value, onChange }) => {
+  const language = i18nService.getLanguage();
+  const label = field.label[language];
+  const placeholder = field.placeholder?.[language] ?? '';
+  const help = field.help?.[language] ?? '';
+  if (field.kind === CreatorTemplateFieldKind.Textarea) {
+    return (
+      <label className="block">
+        <span className="text-xs font-medium text-secondary">{label}</span>
+        {help && <span className="mt-1 block text-[11px] leading-4 text-muted">{help}</span>}
+        <textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          rows={3}
+          className="mt-1 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+        />
+      </label>
+    );
+  }
+  if (field.kind === CreatorTemplateFieldKind.Select) {
+    return (
+      <label className="block">
+        <span className="text-xs font-medium text-secondary">{label}</span>
+        {help && <span className="mt-1 block text-[11px] leading-4 text-muted">{help}</span>}
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+        >
+          <option value="">{i18nService.t('creatorTemplateFieldEmpty')}</option>
+          {(field.options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label[language]}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+  return (
+    <label className="block">
+      <span className="text-xs font-medium text-secondary">{label}</span>
+      {help && <span className="mt-1 block text-[11px] leading-4 text-muted">{help}</span>}
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+      />
+    </label>
+  );
+};
 
 const CaseDrawer: React.FC<{
   item: CreatorStudioCase;

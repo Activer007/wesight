@@ -13,7 +13,9 @@ import type {
 } from './constants';
 
 export interface CreatorPromptSpecSnapshot {
+  schemaVersion?: 'creator.prompt.v1';
   sourceType?: string;
+  sourceMode?: string;
   sourceId?: string;
   sourceTitle?: string;
   language?: 'zh' | 'en';
@@ -21,13 +23,20 @@ export interface CreatorPromptSpecSnapshot {
   caseIds?: string[];
   styles?: string[];
   scenes?: string[];
+  taskType?: string;
   subject?: string;
   platform?: string;
+  audience?: string;
   mainObject?: string;
   visualStyle?: string;
+  colorPreference?: string;
+  outputCount?: string;
   constraints?: Record<string, string | undefined>;
   templateGuidance?: string[];
   templatePitfalls?: string[];
+  templateFieldValues?: Record<string, string>;
+  templateFields?: CreatorPromptSpecTemplateFieldSnapshot[];
+  referenceAnalysis?: CreatorPromptSpecReferenceAnalysis;
   referencePrompt?: string;
   templateId?: string;
   materials?: Array<{
@@ -39,6 +48,11 @@ export interface CreatorPromptSpecSnapshot {
     mimeType: string;
     hasImageAttachment?: boolean;
     localPathAvailable?: boolean;
+    imageAnalysis?: {
+      width: number;
+      height: number;
+      dominantColors: string[];
+    };
   }>;
   contextPack?: string;
   creativeDirections?: Array<{
@@ -59,7 +73,92 @@ export interface CreatorPromptSpecSnapshot {
     promptFocus: string;
   };
   variantOfAssetId?: string;
+  source?: CreatorPromptSpecSourceV1;
+  brief?: CreatorPromptSpecBriefV1;
+  composition?: CreatorPromptSpecCompositionV1;
+  style?: CreatorPromptSpecStyleV1;
+  text?: CreatorPromptSpecTextV1;
+  output?: CreatorPromptSpecOutputV1;
+  runtime?: CreatorPromptSpecRuntimeV1;
+  template?: CreatorPromptSpecTemplateV1;
+  provenance?: CreatorPromptSpecProvenanceV1;
   [key: string]: unknown;
+}
+
+export interface CreatorPromptSpecSourceV1 {
+  mode: string;
+  sourceType: string;
+  sourceId: string;
+  sourceTitle: string;
+  templateId: string | null;
+  caseIds: string[];
+  variantOfAssetId: string | null;
+  referencePrompt: string | null;
+  referenceAnalysis?: CreatorPromptSpecReferenceAnalysis;
+}
+
+export interface CreatorPromptSpecReferenceAnalysis {
+  aspectRatio: string;
+  structure: string[];
+  styleNotes: string[];
+  textNotes: string[];
+  constraintNotes: string[];
+}
+
+export interface CreatorPromptSpecBriefV1 {
+  taskType: string;
+  subject: string;
+  goal: string;
+  platform: string;
+  audience: string;
+  language: 'zh' | 'en';
+}
+
+export interface CreatorPromptSpecCompositionV1 {
+  aspectRatio: string;
+  mainObject: string;
+}
+
+export interface CreatorPromptSpecStyleV1 {
+  visualStyle: string;
+  styles: string[];
+  scenes: string[];
+  colorPreference: string;
+}
+
+export interface CreatorPromptSpecTextV1 {
+  requiredText: string;
+  negativeRequirements: string;
+}
+
+export interface CreatorPromptSpecOutputV1 {
+  count: string;
+}
+
+export interface CreatorPromptSpecRuntimeV1 {
+  activeSkillIds?: string[];
+  missingSkillIds?: string[];
+  requestImageGeneration?: boolean;
+}
+
+export interface CreatorPromptSpecTemplateFieldSnapshot {
+  id: string;
+  label: {
+    zh: string;
+    en: string;
+  };
+  value: string;
+}
+
+export interface CreatorPromptSpecTemplateV1 {
+  templateId: string | null;
+  fields: CreatorPromptSpecTemplateFieldSnapshot[];
+}
+
+export interface CreatorPromptSpecProvenanceV1 {
+  templateId: string | null;
+  caseIds: string[];
+  variantOfAssetId: string | null;
 }
 
 export interface CreatorStudioSourceContext {
