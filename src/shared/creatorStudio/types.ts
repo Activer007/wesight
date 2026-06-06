@@ -1,4 +1,5 @@
 import type {
+  CreatorAssetAdoptionStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
@@ -82,6 +83,7 @@ export interface CreatorProductionRunRecord {
 
 export interface CreatorProductionAssetRecord {
   id: string;
+  projectId: string;
   kind: CreatorProductionAssetKind;
   status: CreatorProductionAssetStatus;
   source: CreatorProductionAssetSource;
@@ -97,6 +99,12 @@ export interface CreatorProductionAssetRecord {
   fileName: string;
   mimeType: string | null;
   favorite: boolean;
+  adoptionStatus: CreatorAssetAdoptionStatus;
+  tags: string[];
+  collectionIds: string[];
+  selected: boolean;
+  licenseNote: string | null;
+  usageNote: string | null;
   createdAt: number;
   updatedAt: number;
   sourceSessionAvailable: boolean;
@@ -114,6 +122,13 @@ export interface CreatorProductionAssetSourceLookup {
 }
 
 export interface CreatorProductionAssetListInput {
+  projectId?: string;
+  collectionId?: string;
+  source?: CreatorProductionAssetSource;
+  templateId?: string;
+  tag?: string;
+  adoptionStatus?: CreatorAssetAdoptionStatus;
+  favorite?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -121,4 +136,79 @@ export interface CreatorProductionAssetListInput {
 export interface CreatorProductionAssetListResult {
   assets: CreatorProductionAssetRecord[];
   total: number;
+}
+
+export interface CreatorProjectRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreatorAssetCollectionRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string | null;
+  createdAt: number;
+  updatedAt: number;
+  assetCount: number;
+}
+
+export interface CreatorWorkspaceSnapshot {
+  currentProjectId: string;
+  projects: CreatorProjectRecord[];
+  collections: CreatorAssetCollectionRecord[];
+}
+
+export interface CreatorProjectCreateInput {
+  name: string;
+  description?: string;
+}
+
+export interface CreatorAssetCollectionCreateInput {
+  projectId: string;
+  name: string;
+  description?: string;
+}
+
+export interface CreatorAssetUpdateInput {
+  assetId: string;
+  projectId?: string;
+  favorite?: boolean;
+  adoptionStatus?: CreatorAssetAdoptionStatus;
+  tags?: string[];
+  licenseNote?: string | null;
+  usageNote?: string | null;
+  selected?: boolean;
+}
+
+export interface CreatorAssetCollectionAddInput {
+  assetId: string;
+  collectionId: string;
+}
+
+export interface CreatorPromptAssetCreateInput {
+  projectId: string;
+  title: string;
+  promptText: string;
+  promptSpec: CreatorPromptSpecSnapshot;
+  templateId?: string | null;
+  caseIds?: string[];
+  tags?: string[];
+}
+
+export interface CreatorCaseAssetCreateInput {
+  projectId: string;
+  caseId: string;
+  title: string;
+  promptText: string;
+  sourceLabel?: string | null;
+  sourceUrl?: string | null;
+  githubUrl?: string | null;
+  category?: string | null;
+  styles?: string[];
+  scenes?: string[];
+  tags?: string[];
 }

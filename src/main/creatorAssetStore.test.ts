@@ -1,7 +1,14 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 
-import { CreatorProductionAssetStatus, CreatorProductionRunStatus } from '../shared/creatorStudio/constants';
+import {
+  CreatorAssetAdoptionStatus,
+  CreatorProductionAssetKind,
+  CreatorProductionAssetSource,
+  CreatorProductionAssetStatus,
+  CreatorProductionRunStatus,
+  CreatorStudioDefaultProjectId,
+} from '../shared/creatorStudio/constants';
 import { CreatorAssetStore, parseCreatorStudioSourceContext } from './creatorAssetStore';
 import { ensureCreatorProductionSchema } from './creatorProductionSchema';
 
@@ -243,5 +250,110 @@ describe('CreatorAssetStore', () => {
 
     expect(asset.sourceSessionAvailable).toBe(false);
     expect(source?.session).toBeNull();
+  });
+
+  test('keeps project asset collections isolated by current project', () => {
+    db.prepare('INSERT INTO cowork_sessions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('session-1', 'Creative Producer', 'running', 1, 1);
+
+    const workspace = store.createProject({ name: 'Launch Campaign' });
+    const projectId = workspace.currentProjectId;
+    expect(projectId).not.toBe(CreatorStudioDefaultProjectId);
+
+    store.handleCoworkMessageInserted({
+      sessionId: 'session-1',
+      message: {
+        id: 'message-user',
+        type: 'user',
+        content: creatorDraft,
+        timestamp: 10,
+        sequence: 1,
+      },
+    });
+    store.handleCoworkMessageInserted({
+      sessionId: 'session-1',
+      message: {
+        id: 'message-assistant',
+        type: 'assistant',
+        content: 'Generated image',
+        timestamp: 20,
+        sequence: 2,
+        metadata: {
+          generatedImages: [{ path: '/tmp/generated-project.png' }],
+        },
+      },
+    });
+
+    expect(store.listAssets({ projectId }).total).toBe(1);
+    expect(store.listAssets({ projectId: CreatorStudioDefaultProjectId }).total).toBe(0);
+
+    const collectionWorkspace = store.createCollection({ projectId, name: 'Shortlist' });
+    const collection = collectionWorkspace.collections.find((item) => item.name === 'Shortlist')!;
+    const asset = store.listAssets({ projectId }).assets[0];
+    const updated = store.updateAsset({
+      assetId: asset.id,
+      adoptionStatus: CreatorAssetAdoptionStatus.Shortlisted,
+      tags: ['hero', 'launch'],
+      licenseNote: 'Internal generated asset.',
+      selected: true,
+    });
+    expect(updated?.adoptionStatus).toBe(CreatorAssetAdoptionStatus.Shortlisted);
+    expect(updated?.tags).toEqual(['hero', 'launch']);
+    expect(updated?.licenseNote).toBe('Internal generated asset.');
+    expect(updated?.selected).toBe(true);
+
+    const collected = store.addAssetToCollection({ assetId: asset.id, collectionId: collection.id });
+    expect(collected?.collectionIds).toContain(collection.id);
+    expect(store.listAssets({ projectId, collectionId: collection.id }).total).toBe(1);
+    expect(store.listAssets({ projectId, tag: 'hero' }).total).toBe(1);
+    expect(store.listAssets({ projectId, adoptionStatus: CreatorAssetAdoptionStatus.Shortlisted }).total).toBe(1);
+  });
+
+  test('stores prompt and case assets in the current project without local file backing', () => {
+    const workspace = store.createProject({ name: 'Prompt Library' });
+    const projectId = workspace.currentProjectId;
+
+    const promptAsset = store.createPromptAsset({
+      projectId,
+      title: 'Hero Prompt',
+      promptText: 'Generate a launch poster.',
+      promptSpec: {
+        sourceType: 'template',
+        sourceId: 'poster-system',
+        sourceTitle: 'Poster System',
+        templateId: 'poster-system',
+        caseIds: ['case-1'],
+      },
+      templateId: 'poster-system',
+      caseIds: ['case-1'],
+      tags: ['poster'],
+    });
+
+    const caseAsset = store.createCaseAsset({
+      projectId,
+      caseId: 'case-2',
+      title: 'Reference Case',
+      promptText: 'Generate a reference composition.',
+      sourceLabel: 'awesome-gpt-image-2',
+      sourceUrl: 'https://example.com/case',
+      githubUrl: 'https://github.com/example/repo',
+      category: 'poster',
+      styles: ['typography'],
+      scenes: ['campaign'],
+    });
+
+    expect(promptAsset.kind).toBe(CreatorProductionAssetKind.Prompt);
+    expect(promptAsset.status).toBe(CreatorProductionAssetStatus.Ready);
+    expect(promptAsset.source).toBe(CreatorProductionAssetSource.CreatorPrompt);
+    expect(promptAsset.filePath).toMatch(/^creator:\/\/prompt\//);
+
+    expect(caseAsset.kind).toBe(CreatorProductionAssetKind.Case);
+    expect(caseAsset.status).toBe(CreatorProductionAssetStatus.Ready);
+    expect(caseAsset.source).toBe(CreatorProductionAssetSource.CreatorCase);
+    expect(caseAsset.caseIds).toEqual(['case-2']);
+
+    expect(store.listAssets({ projectId }).total).toBe(2);
+    expect(store.listAssets({ projectId, source: CreatorProductionAssetSource.CreatorPrompt }).total).toBe(1);
+    expect(store.listAssets({ projectId, tag: 'typography' }).total).toBe(1);
   });
 });
