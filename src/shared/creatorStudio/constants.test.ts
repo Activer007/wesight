@@ -64,13 +64,16 @@ test('rejects non-string image processing constants', () => {
 });
 
 test('resolves creator feature flags with defaults and boolean overrides', () => {
-  expect(CreatorFeatureFlagDefaults[CreatorFeatureFlag.ImageProcessingEnabled]).toBe(false);
-  expect(resolveCreatorFeatureFlag(null, CreatorFeatureFlag.ImageProcessingEnabled)).toBe(false);
-  expect(resolveCreatorFeatureFlag([], CreatorFeatureFlag.ImageProcessingEnabled)).toBe(false);
+  expect(CreatorFeatureFlagDefaults[CreatorFeatureFlag.ImageProcessingEnabled]).toBe(true);
+  expect(resolveCreatorFeatureFlag(null, CreatorFeatureFlag.ImageProcessingEnabled)).toBe(true);
+  expect(resolveCreatorFeatureFlag([], CreatorFeatureFlag.ImageProcessingEnabled)).toBe(true);
+  expect(resolveCreatorFeatureFlag({
+    [CreatorFeatureFlag.ImageProcessingEnabled]: false,
+  }, CreatorFeatureFlag.ImageProcessingEnabled)).toBe(false);
   expect(resolveCreatorFeatureFlag({
     [CreatorFeatureFlag.ImageProcessingEnabled]: true,
   }, CreatorFeatureFlag.ImageProcessingEnabled)).toBe(true);
   expect(resolveCreatorFeatureFlag({
     [CreatorFeatureFlag.ImageProcessingEnabled]: 'true',
-  }, CreatorFeatureFlag.ImageProcessingEnabled)).toBe(false);
+  }, CreatorFeatureFlag.ImageProcessingEnabled)).toBe(true);
 });

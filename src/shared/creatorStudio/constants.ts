@@ -71,7 +71,7 @@ export const CreatorFeatureFlagValues = [
 ] as const;
 
 export const CreatorFeatureFlagDefaults: Record<CreatorFeatureFlag, boolean> = {
-  [CreatorFeatureFlag.ImageProcessingEnabled]: false,
+  [CreatorFeatureFlag.ImageProcessingEnabled]: true,
 };
 
 export type CreatorFeatureFlagConfig = Partial<Record<CreatorFeatureFlag, boolean>>;
