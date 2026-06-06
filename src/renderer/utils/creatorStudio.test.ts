@@ -4,6 +4,7 @@ import {
   type CreatorBuilderMaterial,
   CreatorMaterialRole,
   CreatorMaterialSource,
+  CreatorPromptSourceMode,
   CreatorStudioSourceType,
   CreatorTemplateFieldKind,
 } from '../types/creatorStudio';
@@ -92,6 +93,26 @@ describe('creator studio prompt utilities', () => {
     expect(prompt).toContain('Avoid generic layouts.');
   });
 
+  test('preserves recipe draft source mode', () => {
+    const spec = buildPromptSpec({
+      sourceType: CreatorStudioSourceType.Template,
+      sourceMode: CreatorPromptSourceMode.RecipeDraft,
+      sourceId: 'recipe-weekly-launch',
+      sourceTitle: 'Weekly Launch Recipe',
+      templateId: 'poster-system',
+      caseIds: ['case-1'],
+      templateGuidance: ['Reuse the saved launch structure.'],
+    }, createPromptForm({
+      subject: 'Spring launch',
+      aspectRatio: '1:1',
+    }), 'en', 'Blank builder');
+
+    expect(spec.sourceMode).toBe(CreatorPromptSourceMode.RecipeDraft);
+    expect(spec.sourceId).toBe('recipe-weekly-launch');
+    expect(spec.templateId).toBe('poster-system');
+    expect(spec.templateGuidance).toEqual(['Reuse the saved launch structure.']);
+  });
+
   test('renders cowork draft with creator studio context block', () => {
     const spec = buildPromptSpec({
       sourceType: CreatorStudioSourceType.Template,
@@ -150,6 +171,17 @@ describe('creator studio prompt utilities', () => {
       previewUrl: 'data:image/jpeg;base64,BBBB',
       dataUrl: 'data:image/jpeg;base64,BBBB',
       addedAt: 2,
+    }, {
+      id: 'material-3',
+      role: CreatorMaterialRole.Style,
+      source: CreatorMaterialSource.File,
+      name: 'mood.jpg',
+      path: '/Users/demo/mood.jpg',
+      mimeType: 'image/jpeg',
+      size: 3456,
+      previewUrl: 'data:image/jpeg;base64,CCCC',
+      dataUrl: 'data:image/jpeg;base64,CCCC',
+      addedAt: 3,
     }];
     const spec = buildPromptSpec(null, createPromptForm({
       subject: 'Launch poster',
@@ -159,14 +191,24 @@ describe('creator studio prompt utilities', () => {
       aspectRatio: '4:5',
     }), 'en', 'Blank builder', materials);
 
-    expect(spec.materials).toHaveLength(2);
+    expect(spec.materials).toHaveLength(3);
     expect(spec.contextPack).toContain('role=brand');
+    expect(spec.contextPack).toContain('priority=primary');
+    expect(spec.contextPack).toContain('usage=Prioritize brand colors, logo, tone, and identity cues');
     expect(spec.contextPack).toContain('/Users/demo/brand/logo.png');
     expect(spec.contextPack).toContain('attachment=base64');
     expect(spec.contextPack).toContain('localPath=available');
     expect(spec.contextPack).toContain('image=1200x800');
     expect(spec.contextPack).toContain('colors=#202020, #e0e0e0');
     expect(spec.contextPack).toContain('role=negative');
+    expect(spec.contextPack).toContain('priority=avoid');
+    expect(spec.contextPack).toContain('never treat it as a positive visual reference');
+    expect(spec.contextPack).toContain('negative materials are avoidance constraints');
+    expect(spec.contextPack).toContain('brand materials override style materials');
+    expect(spec.materials?.[0].priority).toBe('primary');
+    expect(spec.materials?.[0].usageInstruction).toContain('Prioritize brand colors');
+    expect(spec.materials?.[1].priority).toBe('avoid');
+    expect(spec.materials?.[2].priority).toBe('secondary');
     expect(spec.creativeDirections).toHaveLength(4);
     expect(new Set(spec.creativeDirections?.map((direction) => direction.id)).size).toBe(4);
 

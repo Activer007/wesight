@@ -6,6 +6,13 @@ export const CreatorStudioIpcChannel = {
   AssetCreatePrompt: 'creatorStudio:asset:createPrompt',
   AssetCreateCase: 'creatorStudio:asset:createCase',
   AssetRevealInFolder: 'creatorStudio:asset:revealInFolder',
+  RecipeCreate: 'creatorStudio:recipe:create',
+  RecipeList: 'creatorStudio:recipe:list',
+  RecipeImport: 'creatorStudio:recipe:import',
+  PromptVersionCreate: 'creatorStudio:promptVersion:create',
+  PromptVersionList: 'creatorStudio:promptVersion:list',
+  PromptVersionFork: 'creatorStudio:promptVersion:fork',
+  PromptVersionDiff: 'creatorStudio:promptVersion:diff',
   WorkspaceGet: 'creatorStudio:workspace:get',
   ProjectCreate: 'creatorStudio:project:create',
   ProjectSetCurrent: 'creatorStudio:project:setCurrent',
@@ -32,6 +39,13 @@ export const CreatorStudioIpcChannel = {
 
 export type CreatorStudioIpcChannel =
   typeof CreatorStudioIpcChannel[keyof typeof CreatorStudioIpcChannel];
+
+export const CreatorPromptSpecSchemaVersion = {
+  V1: 'creator.prompt.v1',
+} as const;
+
+export type CreatorPromptSpecSchemaVersion =
+  typeof CreatorPromptSpecSchemaVersion[keyof typeof CreatorPromptSpecSchemaVersion];
 
 export const CreatorProductionAssetKind = {
   Image: 'image',

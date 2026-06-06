@@ -15,6 +15,7 @@ import {
   CreatorProductionAssetStatus,
   CreatorProductionRunSource,
   CreatorProductionRunStatus,
+  CreatorPromptSpecSchemaVersion,
   CreatorStudioDefaultProjectId,
 } from '../shared/creatorStudio/constants';
 import { CREATOR_CREATIVE_MODEL_CAPABILITIES } from '../shared/creatorStudio/modelCapabilities';
@@ -53,6 +54,18 @@ import type {
   CreatorProjectCreateInput,
   CreatorPromptAssetCreateInput,
   CreatorPromptSpecSnapshot,
+  CreatorPromptVersionCreateInput,
+  CreatorPromptVersionDiffInput,
+  CreatorPromptVersionDiffResult,
+  CreatorPromptVersionForkInput,
+  CreatorPromptVersionListInput,
+  CreatorPromptVersionListResult,
+  CreatorPromptVersionRecord,
+  CreatorRecipeCreateInput,
+  CreatorRecipeImportInput,
+  CreatorRecipeListInput,
+  CreatorRecipeListResult,
+  CreatorRecipeRecord,
   CreatorStudioSourceContext,
   CreatorWorkspaceSnapshot,
 } from '../shared/creatorStudio/types';
@@ -78,6 +91,10 @@ interface ProductionAssetRow {
   prompt_spec: string | null;
   prompt_spec_json: string | null;
   prompt_text: string;
+  parent_prompt_asset_id: string | null;
+  prompt_version_id: string | null;
+  recipe_id: string | null;
+  selected_direction_id: string | null;
   file_path: string;
   file_name: string;
   mime_type: string | null;
@@ -100,6 +117,9 @@ interface ProductionRunRow {
   session_id: string | null;
   template_id: string | null;
   variant_of_asset_id: string | null;
+  prompt_version_id: string | null;
+  recipe_id: string | null;
+  selected_direction_id: string | null;
   case_ids: string;
   prompt_spec: string | null;
   prompt_text: string;
@@ -207,6 +227,30 @@ interface BatchTaskRow {
   completed_at: number | null;
 }
 
+interface RecipeRow {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string | null;
+  source_prompt_asset_id: string | null;
+  prompt_spec_json: string;
+  default_runtime_json: string | null;
+  default_output_json: string | null;
+  tags_json: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface PromptVersionRow {
+  id: string;
+  prompt_asset_id: string;
+  version: number;
+  prompt_text: string;
+  prompt_spec_json: string;
+  change_note: string | null;
+  created_at: number;
+}
+
 const CREATOR_STUDIO_MARKER = '[Creator Studio]';
 const CreatorWorkspaceStateKey = {
   CurrentProjectId: 'current_project_id',
@@ -222,6 +266,18 @@ const parseJsonArray = (value: string | null | undefined): string[] => {
       : [];
   } catch {
     return [];
+  }
+};
+
+const parseJsonObject = (value: string | null | undefined): Record<string, unknown> => {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
   }
 };
 
@@ -256,6 +312,118 @@ const parsePromptSpec = (value: string | null | undefined): CreatorPromptSpecSna
   } catch {
     return null;
   }
+};
+
+const normalizePromptSpecCaseIds = (spec: CreatorPromptSpecSnapshot): string[] => (
+  Array.isArray(spec.caseIds)
+    ? spec.caseIds.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+);
+
+const normalizePromptSpecStringArray = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+);
+
+const ensurePromptSpecV1Snapshot = (
+  input: CreatorPromptSpecSnapshot,
+  fallbackTitle: string
+): CreatorPromptSpecSnapshot => {
+  const constraints = input.constraints && typeof input.constraints === 'object' && !Array.isArray(input.constraints)
+    ? input.constraints
+    : {};
+  const caseIds = normalizePromptSpecCaseIds(input);
+  const language = input.language === 'en' ? 'en' : 'zh';
+  const sourceMode = typeof input.sourceMode === 'string' && input.sourceMode.trim()
+    ? input.sourceMode
+    : typeof input.source?.mode === 'string' && input.source.mode.trim()
+      ? input.source.mode
+      : 'blank';
+  const sourceType = typeof input.sourceType === 'string' && input.sourceType.trim()
+    ? input.sourceType
+    : typeof input.source?.sourceType === 'string' && input.source.sourceType.trim()
+      ? input.source.sourceType
+      : 'template';
+  const sourceId = typeof input.sourceId === 'string' && input.sourceId.trim()
+    ? input.sourceId
+    : typeof input.source?.sourceId === 'string' && input.source.sourceId.trim()
+      ? input.source.sourceId
+      : '';
+  const sourceTitle = typeof input.sourceTitle === 'string' && input.sourceTitle.trim()
+    ? input.sourceTitle
+    : typeof input.source?.sourceTitle === 'string' && input.source.sourceTitle.trim()
+      ? input.source.sourceTitle
+      : fallbackTitle;
+  const templateId = typeof input.templateId === 'string' && input.templateId.trim()
+    ? input.templateId
+    : typeof input.source?.templateId === 'string' && input.source.templateId.trim()
+      ? input.source.templateId
+      : null;
+  const aspectRatio = typeof constraints.aspectRatio === 'string' ? constraints.aspectRatio : '';
+  const requiredText = typeof constraints.requiredText === 'string' ? constraints.requiredText : '';
+  const negativeRequirements = typeof constraints.negativeRequirements === 'string' ? constraints.negativeRequirements : '';
+  const templateFields = Array.isArray(input.templateFields)
+    ? input.templateFields
+    : [];
+  const sourceDefaults = {
+    mode: sourceMode,
+    sourceType,
+    sourceId,
+    sourceTitle,
+    templateId,
+    caseIds,
+    variantOfAssetId: typeof input.variantOfAssetId === 'string' ? input.variantOfAssetId : null,
+    referencePrompt: typeof input.referencePrompt === 'string' ? input.referencePrompt : null,
+    referenceAnalysis: input.referenceAnalysis,
+  };
+  const briefDefaults = {
+    taskType: typeof input.taskType === 'string' ? input.taskType : '',
+    subject: typeof input.subject === 'string' ? input.subject : '',
+    goal: typeof input.subject === 'string' && input.subject.trim() ? input.subject : sourceTitle,
+    platform: typeof input.platform === 'string' ? input.platform : '',
+    audience: typeof input.audience === 'string' ? input.audience : '',
+    language,
+  };
+  const compositionDefaults = {
+    aspectRatio,
+    mainObject: typeof input.mainObject === 'string' ? input.mainObject : '',
+  };
+  const styleDefaults = {
+    visualStyle: typeof input.visualStyle === 'string' ? input.visualStyle : '',
+    styles: normalizePromptSpecStringArray(input.styles),
+    scenes: normalizePromptSpecStringArray(input.scenes),
+    colorPreference: typeof input.colorPreference === 'string' ? input.colorPreference : '',
+  };
+  const textDefaults = {
+    requiredText,
+    negativeRequirements,
+  };
+  const outputDefaults = {
+    count: typeof input.outputCount === 'string' ? input.outputCount : '',
+  };
+  const templateDefaults = {
+    templateId,
+    fields: templateFields,
+  };
+  const provenanceDefaults = {
+    templateId,
+    caseIds,
+    variantOfAssetId: typeof input.variantOfAssetId === 'string' ? input.variantOfAssetId : null,
+  };
+
+  return {
+    ...input,
+    schemaVersion: CreatorPromptSpecSchemaVersion.V1,
+    source: { ...sourceDefaults, ...(input.source ?? {}) },
+    brief: { ...briefDefaults, ...(input.brief ?? {}) },
+    composition: { ...compositionDefaults, ...(input.composition ?? {}) },
+    style: { ...styleDefaults, ...(input.style ?? {}) },
+    text: { ...textDefaults, ...(input.text ?? {}) },
+    output: { ...outputDefaults, ...(input.output ?? {}) },
+    template: { ...templateDefaults, ...(input.template ?? {}) },
+    provenance: { ...provenanceDefaults, ...(input.provenance ?? {}) },
+  };
 };
 
 const parseBatchSummary = (value: string | null | undefined): CreatorBatchRunSummary => {
@@ -360,6 +528,20 @@ export const parseCreatorStudioSourceContext = (text: string): CreatorStudioSour
     promptText: promptTextMatch?.[1]?.trim() || '',
     sourceTitle: firstNonEmptyString(promptSpec?.sourceTitle),
     variantOfAssetId: firstNonEmptyString(promptSpec?.variantOfAssetId),
+    promptVersionId: firstNonEmptyString(
+      typeof promptSpec?.promptVersionId === 'string' ? promptSpec.promptVersionId : null,
+      text.match(/promptVersionId\s*[:：]\s*([^\n]+)/i)?.[1]
+    ),
+    recipeId: firstNonEmptyString(
+      typeof promptSpec?.recipeId === 'string' ? promptSpec.recipeId : null,
+      text.match(/recipeId\s*[:：]\s*([^\n]+)/i)?.[1]
+    ),
+    selectedDirectionId: firstNonEmptyString(
+      promptSpec?.selectedCreativeDirectionId,
+      typeof promptSpec?.selectedDirectionId === 'string' ? promptSpec.selectedDirectionId : null,
+      text.match(/selectedDirectionId\s*[:：]\s*([^\n]+)/i)?.[1],
+      text.match(/directionId\s*[:：]\s*([^\n]+)/i)?.[1]
+    ),
     batchRunId: firstNonEmptyString(
       getPromptSpecBatchString(promptSpec, 'batchRunId'),
       text.match(/batchRunId\s*[:：]\s*([^\n]+)/i)?.[1]
@@ -502,16 +684,26 @@ export class CreatorAssetStore {
     const id = uuidv4();
     const caseIds = normalizeTags(input.caseIds ?? []);
     const tags = normalizeTags(input.tags ?? []);
-    const promptSpecJson = JSON.stringify(input.promptSpec);
+    const selectedDirectionId = normalizeOptionalText(input.selectedDirectionId)
+      ?? (typeof input.promptSpec.selectedCreativeDirectionId === 'string' ? input.promptSpec.selectedCreativeDirectionId : null);
+    const promptSpec = ensurePromptSpecV1Snapshot({
+      ...input.promptSpec,
+      ...(input.parentPromptAssetId ? { parentPromptAssetId: input.parentPromptAssetId } : {}),
+      ...(input.recipeId ? { recipeId: input.recipeId } : {}),
+      ...(selectedDirectionId ? { selectedDirectionId } : {}),
+    }, title);
+    const promptSpecJson = JSON.stringify(promptSpec);
     const caseIdsJson = JSON.stringify(caseIds);
     this.db.prepare(`
       INSERT INTO production_assets (
         id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id, session_id,
         source_session_id, message_id, source_message_id, template_id,
-        case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text, file_path, file_name, mime_type,
+        case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text,
+        parent_prompt_asset_id, prompt_version_id, recipe_id, selected_direction_id,
+        file_path, file_name, mime_type,
         favorite, adoption_status, tags_json, license_note, usage_note, metadata, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, NULL, NULL, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, 0, ?, ?, NULL, NULL, ?, ?, ?)
     `).run(
       id,
       projectId,
@@ -519,20 +711,30 @@ export class CreatorAssetStore {
       title,
       CreatorProductionAssetStatus.Ready,
       CreatorProductionAssetSource.CreatorPrompt,
+      input.parentPromptAssetId ?? null,
       input.templateId ?? null,
       caseIdsJson,
       caseIdsJson,
       promptSpecJson,
       promptSpecJson,
       promptText,
+      input.parentPromptAssetId ?? null,
+      input.recipeId ?? null,
+      selectedDirectionId,
       `creator://prompt/${id}`,
       `${title}.prompt.txt`,
       CreatorAssetAdoptionStatus.Unset,
       JSON.stringify(tags),
-      JSON.stringify({ sourceTitle: input.promptSpec.sourceTitle ?? title }),
+      JSON.stringify({ sourceTitle: promptSpec.sourceTitle ?? title }),
       now,
       now
     );
+    this.createPromptVersion({
+      promptAssetId: id,
+      promptText,
+      promptSpec,
+      changeNote: input.changeNote ?? 'Initial prompt version',
+    });
     return this.getAsset(id)!;
   }
 
@@ -602,6 +804,217 @@ export class CreatorAssetStore {
       now
     );
     return this.getAsset(id)!;
+  }
+
+  createRecipe(input: CreatorRecipeCreateInput): CreatorRecipeRecord {
+    const projectId = input.projectId.trim() || this.getCurrentProjectId();
+    this.ensureProjectExists(projectId);
+    const title = input.title.trim().slice(0, 120);
+    if (!title) {
+      throw new Error('Recipe title is required');
+    }
+    if (!input.promptSpec || typeof input.promptSpec !== 'object') {
+      throw new Error('Prompt spec is required');
+    }
+    const now = Date.now();
+    const id = uuidv4();
+    this.db.prepare(`
+      INSERT INTO creator_recipes (
+        id, project_id, title, description, source_prompt_asset_id,
+        prompt_spec_json, default_runtime_json, default_output_json, tags_json,
+        created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      projectId,
+      title,
+      normalizeOptionalText(input.description),
+      normalizeOptionalText(input.sourcePromptAssetId),
+      JSON.stringify(input.promptSpec),
+      JSON.stringify(input.defaultRuntime ?? {}),
+      JSON.stringify(input.defaultOutput ?? {}),
+      JSON.stringify(normalizeTags(input.tags ?? [])),
+      now,
+      now
+    );
+    return this.getRecipe(id)!;
+  }
+
+  importRecipe(input: CreatorRecipeImportInput): CreatorRecipeRecord {
+    return this.createRecipe({
+      ...input.recipe,
+      projectId: input.projectId,
+    });
+  }
+
+  listRecipes(input: CreatorRecipeListInput = {}): CreatorRecipeListResult {
+    const projectId = input.projectId?.trim() || this.getCurrentProjectId();
+    const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 50), 200));
+    const offset = Math.max(0, Math.floor(input.offset ?? 0));
+    const clauses = ['project_id = ?'];
+    const params: unknown[] = [projectId];
+    if (input.tag?.trim()) {
+      clauses.push('tags_json LIKE ?');
+      params.push(`%"${input.tag.trim().replace(/"/g, '\\"')}"%`);
+    }
+    const whereSql = `WHERE ${clauses.join(' AND ')}`;
+    const rows = this.db.prepare(`
+      SELECT id, project_id, title, description, source_prompt_asset_id,
+        prompt_spec_json, default_runtime_json, default_output_json, tags_json,
+        created_at, updated_at
+      FROM creator_recipes
+      ${whereSql}
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset) as RecipeRow[];
+    const totalRow = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM creator_recipes
+      ${whereSql}
+    `).get(...params) as { count: number };
+    return {
+      recipes: rows.map((row) => this.mapRecipeRow(row)),
+      total: totalRow.count,
+    };
+  }
+
+  getRecipe(id: string): CreatorRecipeRecord | null {
+    const row = this.db.prepare(`
+      SELECT id, project_id, title, description, source_prompt_asset_id,
+        prompt_spec_json, default_runtime_json, default_output_json, tags_json,
+        created_at, updated_at
+      FROM creator_recipes
+      WHERE id = ?
+    `).get(id) as RecipeRow | undefined;
+    return row ? this.mapRecipeRow(row) : null;
+  }
+
+  createPromptVersion(input: CreatorPromptVersionCreateInput): CreatorPromptVersionRecord {
+    const asset = this.getAsset(input.promptAssetId);
+    if (!asset || asset.kind !== CreatorProductionAssetKind.Prompt) {
+      throw new Error('Prompt asset not found');
+    }
+    const promptText = input.promptText.trim();
+    if (!promptText) {
+      throw new Error('Prompt text is required');
+    }
+    const current = this.db.prepare(`
+      SELECT COALESCE(MAX(version), 0) AS version
+      FROM creator_prompt_versions
+      WHERE prompt_asset_id = ?
+    `).get(asset.id) as { version: number };
+    const now = Date.now();
+    const id = uuidv4();
+    const nextVersion = current.version + 1;
+    const promptSpecJson = JSON.stringify(ensurePromptSpecV1Snapshot({
+      ...input.promptSpec,
+      promptAssetId: asset.id,
+      promptVersion: nextVersion,
+    }, asset.fileName));
+    this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO creator_prompt_versions (
+          id, prompt_asset_id, version, prompt_text, prompt_spec_json, change_note, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        asset.id,
+        nextVersion,
+        promptText,
+        promptSpecJson,
+        normalizeOptionalText(input.changeNote),
+        now
+      );
+      this.db.prepare(`
+        UPDATE production_assets
+        SET prompt_text = ?,
+          prompt_spec = ?,
+          prompt_spec_json = ?,
+          prompt_version_id = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(promptText, promptSpecJson, promptSpecJson, id, now, asset.id);
+    })();
+    return this.getPromptVersion(id)!;
+  }
+
+  listPromptVersions(input: CreatorPromptVersionListInput): CreatorPromptVersionListResult {
+    const promptAssetId = input.promptAssetId.trim();
+    const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 50), 200));
+    const offset = Math.max(0, Math.floor(input.offset ?? 0));
+    const rows = this.db.prepare(`
+      SELECT id, prompt_asset_id, version, prompt_text, prompt_spec_json, change_note, created_at
+      FROM creator_prompt_versions
+      WHERE prompt_asset_id = ?
+      ORDER BY version DESC
+      LIMIT ? OFFSET ?
+    `).all(promptAssetId, limit, offset) as PromptVersionRow[];
+    const totalRow = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM creator_prompt_versions
+      WHERE prompt_asset_id = ?
+    `).get(promptAssetId) as { count: number };
+    return {
+      versions: rows.map((row) => this.mapPromptVersionRow(row)),
+      total: totalRow.count,
+    };
+  }
+
+  getPromptVersion(id: string): CreatorPromptVersionRecord | null {
+    const row = this.db.prepare(`
+      SELECT id, prompt_asset_id, version, prompt_text, prompt_spec_json, change_note, created_at
+      FROM creator_prompt_versions
+      WHERE id = ?
+    `).get(id) as PromptVersionRow | undefined;
+    return row ? this.mapPromptVersionRow(row) : null;
+  }
+
+  forkPromptVersion(input: CreatorPromptVersionForkInput): CreatorProductionAssetRecord {
+    const version = this.getPromptVersion(input.promptVersionId);
+    if (!version) {
+      throw new Error('Prompt version not found');
+    }
+    const sourceAsset = this.getAsset(version.promptAssetId);
+    if (!sourceAsset) {
+      throw new Error('Prompt asset not found');
+    }
+    return this.createPromptAsset({
+      projectId: input.projectId?.trim() || sourceAsset.projectId,
+      title: input.title?.trim() || `${sourceAsset.fileName.replace(/\.prompt\.txt$/i, '')} v${version.version}`,
+      promptText: version.promptText,
+      promptSpec: {
+        ...version.promptSpec,
+        parentPromptAssetId: sourceAsset.id,
+        forkedFromPromptVersionId: version.id,
+      },
+      templateId: sourceAsset.templateId,
+      caseIds: sourceAsset.caseIds,
+      tags: sourceAsset.tags,
+      parentPromptAssetId: sourceAsset.id,
+      recipeId: sourceAsset.recipeId,
+      selectedDirectionId: sourceAsset.selectedDirectionId,
+      changeNote: input.changeNote ?? `Forked from v${version.version}`,
+    });
+  }
+
+  diffPromptVersions(input: CreatorPromptVersionDiffInput): CreatorPromptVersionDiffResult {
+    const fromVersion = this.getPromptVersion(input.fromVersionId);
+    const toVersion = this.getPromptVersion(input.toVersionId);
+    if (!fromVersion || !toVersion) {
+      throw new Error('Prompt version not found');
+    }
+    return {
+      fromVersion,
+      toVersion,
+      promptTextChanged: fromVersion.promptText !== toVersion.promptText,
+      promptSpecChanged: JSON.stringify(fromVersion.promptSpec) !== JSON.stringify(toVersion.promptSpec),
+      promptTextBefore: fromVersion.promptText,
+      promptTextAfter: toVersion.promptText,
+      promptSpecBefore: fromVersion.promptSpec,
+      promptSpecAfter: toVersion.promptSpec,
+    };
   }
 
   listAssets(input: CreatorProductionAssetListInput = {}): CreatorProductionAssetListResult {
@@ -1045,6 +1458,7 @@ export class CreatorAssetStore {
       estimatedCostUnits,
       costUnitLabel: 'estimated units',
     };
+    const rootPromptSpec = ensurePromptSpecV1Snapshot(input.promptSpec, briefTitle);
     const insertTask = this.db.prepare(`
       INSERT INTO creator_batch_tasks (
         id, batch_run_id, project_id, status, direction_id, direction_title,
@@ -1065,7 +1479,7 @@ export class CreatorAssetStore {
         projectId,
         CreatorBatchRunStatus.Running,
         briefTitle,
-        JSON.stringify(input.promptSpec),
+        JSON.stringify(rootPromptSpec),
         input.promptText.trim(),
         JSON.stringify(summary),
         now,
@@ -1076,7 +1490,7 @@ export class CreatorAssetStore {
           for (const templateId of templateIds) {
             for (const size of sizes) {
               const taskId = uuidv4();
-              const promptSpec = {
+              const promptSpec = ensurePromptSpecV1Snapshot({
                 ...direction.promptSpec,
                 selectedCreativeDirectionId: direction.id,
                 selectedCreativeDirection: {
@@ -1099,7 +1513,7 @@ export class CreatorAssetStore {
                   modelName: model.displayName,
                   outputKinds: model.outputKinds,
                 },
-              };
+              }, direction.title);
               insertTask.run(
                 taskId,
                 id,
@@ -1112,7 +1526,16 @@ export class CreatorAssetStore {
                 templateId,
                 size,
                 JSON.stringify(promptSpec),
-                this.renderBatchTaskPrompt(direction.promptText, model.displayName, templateId, size),
+                this.renderBatchTaskPrompt({
+                  promptText: direction.promptText,
+                  promptSpec,
+                  batchRunId: id,
+                  batchTaskId: taskId,
+                  directionId: direction.id,
+                  modelName: model.displayName,
+                  templateId,
+                  size,
+                }),
                 '[]',
                 `${model.costUnitEstimate} ${model.costUnitLabel}`,
                 now,
@@ -1223,6 +1646,9 @@ export class CreatorAssetStore {
         promptSpec: run.promptSpec,
         promptText: run.promptText,
         variantOfAssetId: run.variantOfAssetId,
+        promptVersionId: run.promptVersionId,
+        recipeId: run.recipeId,
+        selectedDirectionId: run.selectedDirectionId,
       }
       : {
         templateId: null,
@@ -1230,16 +1656,21 @@ export class CreatorAssetStore {
         promptSpec: null,
         promptText: '',
         variantOfAssetId: null,
+        promptVersionId: null,
+        recipeId: null,
+        selectedDirectionId: null,
       };
     const now = message.timestamp || Date.now();
     const insertAsset = this.db.prepare(`
       INSERT INTO production_assets (
         id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id, session_id,
         source_session_id, message_id, source_message_id, template_id,
-        case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text, file_path, file_name, mime_type,
+        case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text,
+        parent_prompt_asset_id, prompt_version_id, recipe_id, selected_direction_id,
+        file_path, file_name, mime_type,
         favorite, adoption_status, tags_json, license_note, usage_note, metadata, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id, message_id, file_path) DO UPDATE SET
         status = excluded.status,
         run_id = COALESCE(production_assets.run_id, excluded.run_id),
@@ -1253,6 +1684,10 @@ export class CreatorAssetStore {
         prompt_spec = excluded.prompt_spec,
         prompt_spec_json = excluded.prompt_spec_json,
         prompt_text = excluded.prompt_text,
+        parent_prompt_asset_id = COALESCE(production_assets.parent_prompt_asset_id, excluded.parent_prompt_asset_id),
+        prompt_version_id = COALESCE(production_assets.prompt_version_id, excluded.prompt_version_id),
+        recipe_id = COALESCE(production_assets.recipe_id, excluded.recipe_id),
+        selected_direction_id = COALESCE(production_assets.selected_direction_id, excluded.selected_direction_id),
         title = excluded.title,
         file_name = excluded.file_name,
         mime_type = excluded.mime_type,
@@ -1292,6 +1727,10 @@ export class CreatorAssetStore {
           promptSpecJson,
           promptSpecJson,
           context.promptText,
+          context.variantOfAssetId,
+          context.promptVersionId,
+          context.recipeId,
+          context.selectedDirectionId,
           filePath,
           getImageName(image),
           image.mimeType || null,
@@ -1380,10 +1819,11 @@ export class CreatorAssetStore {
       INSERT INTO production_runs (
         id, source, domain, status, session_id, provider, model, agent_id,
         skill_ids_json, runtime_call_id, input_asset_ids_json, output_asset_ids_json,
-        template_id, variant_of_asset_id, case_ids, prompt_spec, prompt_text, metadata,
+        template_id, variant_of_asset_id, prompt_version_id, recipe_id, selected_direction_id,
+        case_ids, prompt_spec, prompt_text, metadata,
         created_at, updated_at, completed_at
       )
-      VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
     `).run(
       id,
       CreatorProductionRunSource.CreatorStudio,
@@ -1395,6 +1835,9 @@ export class CreatorAssetStore {
       '[]',
       context.templateId,
       context.variantOfAssetId,
+      context.promptVersionId,
+      context.recipeId,
+      context.selectedDirectionId,
       caseIdsJson,
       promptSpecJson,
       context.promptText,
@@ -1412,7 +1855,7 @@ export class CreatorAssetStore {
   private getLatestPendingRunForSession(sessionId: string): CreatorProductionRunRecord | null {
     const row = this.db.prepare(`
       SELECT id, source, status, session_id, template_id, variant_of_asset_id, case_ids, prompt_spec,
-        prompt_text, created_at, updated_at, completed_at
+        prompt_version_id, recipe_id, selected_direction_id, prompt_text, created_at, updated_at, completed_at
       FROM production_runs
       WHERE session_id = ?
         AND status = ?
@@ -1425,7 +1868,7 @@ export class CreatorAssetStore {
   private getRun(id: string): CreatorProductionRunRecord | null {
     const row = this.db.prepare(`
       SELECT id, source, status, session_id, template_id, variant_of_asset_id, case_ids, prompt_spec,
-        prompt_text, created_at, updated_at, completed_at
+        prompt_version_id, recipe_id, selected_direction_id, prompt_text, created_at, updated_at, completed_at
       FROM production_runs
       WHERE id = ?
     `).get(id) as ProductionRunRow | undefined;
@@ -1741,19 +2184,42 @@ export class CreatorAssetStore {
     return normalized.slice(0, 6);
   }
 
-  private renderBatchTaskPrompt(
-    promptText: string,
-    modelName: string,
-    templateId: string,
-    size: string
-  ): string {
+  private renderBatchTaskPrompt(input: {
+    promptText: string;
+    promptSpec: CreatorPromptSpecSnapshot;
+    batchRunId: string;
+    batchTaskId: string;
+    directionId: string;
+    modelName: string;
+    templateId: string;
+    size: string;
+  }): string {
     return [
-      promptText.trim(),
+      CREATOR_STUDIO_MARKER,
       '',
-      'Batch execution constraints:',
-      `model=${modelName}`,
-      `templateId=${templateId}`,
-      `size=${size}`,
+      `batchRunId: ${input.batchRunId}`,
+      `batchTaskId: ${input.batchTaskId}`,
+      `directionId: ${input.directionId}`,
+      `templateId: ${input.templateId}`,
+      `size: ${input.size}`,
+      `model: ${input.modelName}`,
+      '',
+      'PromptSpec:',
+      '```json',
+      JSON.stringify(input.promptSpec, null, 2),
+      '```',
+      '',
+      'Prompt:',
+      '```text',
+      [
+        input.promptText.trim(),
+        '',
+        'Batch execution constraints:',
+        `model=${input.modelName}`,
+        `templateId=${input.templateId}`,
+        `size=${input.size}`,
+      ].join('\n'),
+      '```',
     ].join('\n');
   }
 
@@ -1846,6 +2312,34 @@ export class CreatorAssetStore {
     };
   }
 
+  private mapRecipeRow(row: RecipeRow): CreatorRecipeRecord {
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      title: row.title,
+      description: row.description,
+      sourcePromptAssetId: row.source_prompt_asset_id,
+      promptSpec: parsePromptSpec(row.prompt_spec_json) ?? {},
+      defaultRuntime: parseJsonObject(row.default_runtime_json),
+      defaultOutput: parseJsonObject(row.default_output_json),
+      tags: parseJsonArray(row.tags_json),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapPromptVersionRow(row: PromptVersionRow): CreatorPromptVersionRecord {
+    return {
+      id: row.id,
+      promptAssetId: row.prompt_asset_id,
+      version: row.version,
+      promptText: row.prompt_text,
+      promptSpec: parsePromptSpec(row.prompt_spec_json) ?? {},
+      changeNote: row.change_note,
+      createdAt: row.created_at,
+    };
+  }
+
   private mapRunRow(row: ProductionRunRow): CreatorProductionRunRecord {
     return {
       id: row.id,
@@ -1857,6 +2351,9 @@ export class CreatorAssetStore {
       promptSpec: parsePromptSpec(row.prompt_spec),
       promptText: row.prompt_text,
       variantOfAssetId: row.variant_of_asset_id,
+      promptVersionId: row.prompt_version_id,
+      recipeId: row.recipe_id,
+      selectedDirectionId: row.selected_direction_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       completedAt: row.completed_at,
@@ -1918,6 +2415,10 @@ export class CreatorAssetStore {
       caseIds: parseJsonArray(row.case_ids_json ?? row.case_ids),
       promptSpec: parsePromptSpec(row.prompt_spec_json ?? row.prompt_spec),
       promptText: row.prompt_text,
+      parentPromptAssetId: row.parent_prompt_asset_id,
+      promptVersionId: row.prompt_version_id,
+      recipeId: row.recipe_id,
+      selectedDirectionId: row.selected_direction_id,
       filePath: row.file_path,
       fileName: row.file_name,
       mimeType: row.mime_type,
