@@ -61,5 +61,15 @@ describe('nano prompt spec adapter', () => {
       needReferenceImages: true,
     });
     expect(conversion.promptSpec.templateFieldSchema?.[0].id).toBe('headline');
+    expect(conversion.promptSpec.creativeDirections).toHaveLength(4);
+    expect(conversion.promptSpec.creativeDirections?.map((direction) => direction.id)).toEqual([
+      'nano-hero-variant',
+      'nano-editorial-variant',
+      'nano-product-variant',
+      'nano-experimental-variant',
+    ]);
+    expect(conversion.promptSpec.creativeDirections?.every((direction) => (
+      direction.promptFocus !== conversion.promptText
+    ))).toBe(true);
   });
 });

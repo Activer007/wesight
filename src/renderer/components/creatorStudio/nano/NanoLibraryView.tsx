@@ -28,6 +28,7 @@ export interface NanoLibraryCreatorActions {
   onSaveAsPromptAsset: (prompt: NanoBananaPrompt) => void | Promise<void>;
   onAddToBoard: (prompt: NanoBananaPrompt) => void | Promise<void>;
   onSendToCowork: (prompt: NanoBananaPrompt) => void | Promise<void>;
+  onCreateBatch: (prompt: NanoBananaPrompt) => void | Promise<void>;
 }
 
 interface NanoLibraryViewProps {

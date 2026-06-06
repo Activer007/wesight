@@ -240,6 +240,10 @@ const getNanoPromptMetadata = (prompt: NanoBananaPrompt): Record<string, unknown
   },
 });
 
+const getNanoBatchSizes = (aspectRatio?: string): string[] => (
+  [...new Set([aspectRatio || '1:1', '16:9', '9:16'])].slice(0, 2)
+);
+
 const encodeTextBase64 = (text: string): string => {
   const bytes = new TextEncoder().encode(text);
   let binary = '';
@@ -1114,6 +1118,49 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     });
   };
 
+  const createNanoPromptBatchRun = async (prompt: NanoBananaPrompt) => {
+    const projectId = currentProjectId || workspace?.currentProjectId;
+    if (!projectId) {
+      dispatchToast(i18nService.t('creatorWorkspaceLoadFailed'));
+      return;
+    }
+    const conversion = getNanoConversion(prompt);
+    const models = modelCapabilities.filter((model) => model.supportsBatch).slice(0, 2);
+    if (models.length === 0) {
+      dispatchToast(i18nService.t('creatorBatchModelLoadFailed'));
+      return;
+    }
+    const templateIds = styleLibrary.templates.slice(0, 2).map((template) => template.id);
+    const sizes = getNanoBatchSizes(conversion.promptSpec.constraints.aspectRatio);
+    const directions = (conversion.promptSpec.creativeDirections ?? []).slice(0, 6).map((direction) => {
+      const directionSpec = selectCreatorCreativeDirection(conversion.promptSpec, direction.id);
+      return {
+        ...direction,
+        promptSpec: toCreatorPromptSpecSnapshot(directionSpec),
+        promptText: renderCreatorPrompt(directionSpec),
+      };
+    });
+    if (directions.length === 0) {
+      dispatchToast(i18nService.t('creatorBatchCreateFailed'));
+      return;
+    }
+    const batchRunInput: CreatorBatchRunCreateInput = {
+      projectId,
+      briefTitle: prompt.title,
+      promptSpec: toCreatorPromptSpecSnapshot(conversion.promptSpec),
+      promptText: renderCreatorPrompt(conversion.promptSpec),
+      directions,
+      modelIds: models.map((model) => model.id),
+      templateIds: templateIds.length > 0 ? templateIds : ['default-template'],
+      sizes,
+    };
+    setActiveTab(CreatorStudioTab.Batch);
+    setBatchSubview(CreatorBatchSubview.Generation);
+    const batchRun = await createBatchRun(batchRunInput);
+    if (!batchRun) return;
+    dispatchToast(i18nService.t('nanoLibraryBatchCreated'));
+  };
+
   const savePromptAsset = async (promptSpec: CreatorPromptSpec, promptText: string) => {
     const projectId = currentProjectId || workspace?.currentProjectId;
     if (!projectId) {
@@ -1314,8 +1361,42 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       setActiveBatchRun(batchRun);
       await loadBatchRuns(input.projectId);
       dispatchToast(i18nService.t('creatorBatchCreated'));
+      const nano = input.promptSpec.provenance?.nano;
+      if (nano) {
+        const metadata = {
+          taskMatrix: {
+            directions: input.directions.length,
+            models: input.modelIds.length,
+            templates: input.templateIds.length,
+            sizes: input.sizes.length,
+          },
+        };
+        await Promise.allSettled([
+          nanoBananaService.recordImport({
+            sourceId: nano.sourceId,
+            promptId: nano.promptId,
+            sourcePromptId: nano.sourcePromptId,
+            importType: NanoBananaPromptImportType.Batch,
+            projectId: input.projectId,
+            targetId: batchRun.id,
+            metadata,
+          }),
+          nanoBananaService.recordUsage({
+            sourceId: nano.sourceId,
+            promptId: nano.promptId,
+            sourcePromptId: nano.sourcePromptId,
+            eventType: NanoBananaUsageEventType.CreateBatch,
+            importType: NanoBananaPromptImportType.Batch,
+            projectId: input.projectId,
+            targetId: batchRun.id,
+            metadata,
+          }),
+        ]);
+      }
+      return batchRun;
     } catch (error) {
       dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorBatchCreateFailed'));
+      return null;
     } finally {
       setIsCreatingBatchRun(false);
     }
@@ -1658,6 +1739,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
               onSaveAsPromptAsset: saveNanoPromptAsPromptAsset,
               onAddToBoard: addNanoPromptToBoard,
               onSendToCowork: sendNanoPromptToCowork,
+              onCreateBatch: createNanoPromptBatchRun,
             }}
           />
         )}

@@ -1,6 +1,7 @@
 import {
   NanoBananaDefaultSourceId,
   NanoBananaSearchSort,
+  NanoBananaUsageEventType,
 } from '../../shared/nanoBanana/constants';
 import type { NanoBananaPromptIndexItem, NanoBananaSearchInput, NanoBananaSearchResult } from '../../shared/nanoBanana/types';
 import { NanoPromptStore } from './nanoPromptStore';
@@ -30,6 +31,9 @@ interface IndexRow {
   prompt_tags_json?: string | null;
   prompt_tags_zh_json?: string | null;
   prompt_categories_json?: string | null;
+  usage_count?: number;
+  last_used_at?: number | null;
+  adopted_count?: number;
 }
 
 const parseJson = <T>(value: string | null | undefined, fallback: T): T => {
@@ -89,12 +93,19 @@ export class NanoPromptSearch {
           p.need_reference_images AS prompt_need_reference_images,
           p.tags_json AS prompt_tags_json,
           p.tags_zh_json AS prompt_tags_zh_json,
-          p.prompt_categories_json AS prompt_categories_json
+          p.prompt_categories_json AS prompt_categories_json,
+          COUNT(u.id) AS usage_count,
+          MAX(u.created_at) AS last_used_at,
+          SUM(CASE WHEN u.event_type = ? THEN 1 ELSE 0 END) AS adopted_count
         FROM nano_prompt_index_items i
         LEFT JOIN nano_prompts p ON p.id = i.id
+        LEFT JOIN nano_prompt_usage_events u
+          ON u.source_id = i.source_id
+          AND (u.prompt_id = i.id OR u.source_prompt_id = i.source_prompt_id)
         WHERE i.source_id = ?
+        GROUP BY i.id
       `)
-      .all(normalized.sourceId) as IndexRow[];
+      .all(NanoBananaUsageEventType.AdoptAsset, normalized.sourceId) as IndexRow[];
 
     const query = normalizeText(normalized.query);
     const filtered = rows
@@ -167,6 +178,21 @@ export class NanoPromptSearch {
     }
     if (sort === NanoBananaSearchSort.ResultsDesc) {
       return right.results_count - left.results_count || right.likes - left.likes;
+    }
+    if (sort === NanoBananaSearchSort.MostUsed) {
+      return (right.usage_count ?? 0) - (left.usage_count ?? 0)
+        || (right.last_used_at ?? 0) - (left.last_used_at ?? 0)
+        || right.likes - left.likes;
+    }
+    if (sort === NanoBananaSearchSort.RecentlyUsed) {
+      return (right.last_used_at ?? 0) - (left.last_used_at ?? 0)
+        || (right.usage_count ?? 0) - (left.usage_count ?? 0)
+        || right.likes - left.likes;
+    }
+    if (sort === NanoBananaSearchSort.AdoptedBoost) {
+      return (right.adopted_count ?? 0) - (left.adopted_count ?? 0)
+        || (right.usage_count ?? 0) - (left.usage_count ?? 0)
+        || right.likes - left.likes;
     }
     return String(right.published_at ?? '').localeCompare(String(left.published_at ?? ''))
       || right.likes - left.likes

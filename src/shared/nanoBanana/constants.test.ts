@@ -33,6 +33,9 @@ test('exposes values and type guards for Nano Banana constants', () => {
   expect(NanoBananaUsageEventTypeValues).toContain(NanoBananaUsageEventType.Copy);
   expect(NanoBananaSyncStatusValues).toContain(NanoBananaSyncStatus.Completed);
   expect(NanoBananaSearchSortValues).toContain(NanoBananaSearchSort.Relevance);
+  expect(NanoBananaSearchSortValues).toContain(NanoBananaSearchSort.MostUsed);
+  expect(NanoBananaSearchSortValues).toContain(NanoBananaSearchSort.RecentlyUsed);
+  expect(NanoBananaSearchSortValues).toContain(NanoBananaSearchSort.AdoptedBoost);
 
   expect(isNanoBananaSourceType(NanoBananaSourceType.StaticJson)).toBe(true);
   expect(isNanoBananaSourceStatus(NanoBananaSourceStatus.Ready)).toBe(true);
@@ -41,6 +44,7 @@ test('exposes values and type guards for Nano Banana constants', () => {
   expect(isNanoBananaUsageEventType(NanoBananaUsageEventType.UseInBuilder)).toBe(true);
   expect(isNanoBananaSyncStatus(NanoBananaSyncStatus.Failed)).toBe(true);
   expect(isNanoBananaSearchSort(NanoBananaSearchSort.PublishedDesc)).toBe(true);
+  expect(isNanoBananaSearchSort(NanoBananaSearchSort.AdoptedBoost)).toBe(true);
 
   expect(isNanoBananaSourceType('static-json')).toBe(false);
   expect(isNanoBananaUsageEventType('open')).toBe(false);

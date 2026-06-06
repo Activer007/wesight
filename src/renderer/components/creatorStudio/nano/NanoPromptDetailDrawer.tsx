@@ -200,6 +200,9 @@ export const NanoPromptDetailDrawer: React.FC<NanoPromptDetailDrawerProps> = ({
               <ActionButton onClick={() => creatorActions.onSendToCowork(prompt)}>
                 {i18nService.t('nanoLibrarySendToCowork')}
               </ActionButton>
+              <ActionButton onClick={() => creatorActions.onCreateBatch(prompt)}>
+                {i18nService.t('nanoLibraryCreateBatch')}
+              </ActionButton>
             </>
           )}
           <button

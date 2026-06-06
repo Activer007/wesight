@@ -1,7 +1,11 @@
 import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, expect, test } from 'vitest';
 
-import { DefaultNanoBananaPromptSource, NanoBananaSearchSort } from '../../shared/nanoBanana/constants';
+import {
+  DefaultNanoBananaPromptSource,
+  NanoBananaSearchSort,
+  NanoBananaUsageEventType,
+} from '../../shared/nanoBanana/constants';
 import { NanoPromptSearch, normalizeNanoSearchInput } from './nanoPromptSearch';
 import { createNanoPromptId, NanoPromptStore } from './nanoPromptStore';
 
@@ -77,7 +81,7 @@ const createSearch = () => {
     page: 1,
     raw: {},
   }], 1200);
-  return new NanoPromptSearch(store);
+  return { search: new NanoPromptSearch(store), store };
 };
 
 test('clamps search input bounds', () => {
@@ -88,10 +92,36 @@ test('clamps search input bounds', () => {
 });
 
 test('searches by query, category, tags, reference image flag, and sort', () => {
-  const search = createSearch();
+  const { search } = createSearch();
 
   expect(search.search({ query: 'portrait' }).items[0].sourcePromptId).toBe('1');
   expect(search.search({ categories: ['ui'] }).items[0].sourcePromptId).toBe('2');
   expect(search.search({ tags: ['lighting'], needReferenceImages: true }).items[0].sourcePromptId).toBe('1');
   expect(search.search({ sort: NanoBananaSearchSort.ResultsDesc }).items[0].sourcePromptId).toBe('2');
+});
+
+test('sorts by Nano prompt usage and adoption feedback', () => {
+  const { search, store } = createSearch();
+  store.recordUsageEvent({
+    sourceId: DefaultNanoBananaPromptSource.id,
+    promptId: createNanoPromptId(DefaultNanoBananaPromptSource.id, '1'),
+    sourcePromptId: '1',
+    eventType: NanoBananaUsageEventType.Copy,
+  }, 2000);
+  store.recordUsageEvent({
+    sourceId: DefaultNanoBananaPromptSource.id,
+    promptId: createNanoPromptId(DefaultNanoBananaPromptSource.id, '2'),
+    sourcePromptId: '2',
+    eventType: NanoBananaUsageEventType.Copy,
+  }, 3000);
+  store.recordUsageEvent({
+    sourceId: DefaultNanoBananaPromptSource.id,
+    promptId: createNanoPromptId(DefaultNanoBananaPromptSource.id, '2'),
+    sourcePromptId: '2',
+    eventType: NanoBananaUsageEventType.AdoptAsset,
+  }, 4000);
+
+  expect(search.search({ sort: NanoBananaSearchSort.MostUsed }).items[0].sourcePromptId).toBe('2');
+  expect(search.search({ sort: NanoBananaSearchSort.RecentlyUsed }).items[0].sourcePromptId).toBe('2');
+  expect(search.search({ sort: NanoBananaSearchSort.AdoptedBoost }).items[0].sourcePromptId).toBe('2');
 });

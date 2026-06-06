@@ -598,6 +598,22 @@ const getGeneratedImageSourceMetadata = (image: GeneratedImageInput): Record<str
   };
 };
 
+const getNanoAssetMetadata = (promptSpec: CreatorPromptSpecSnapshot | null): Record<string, unknown> => {
+  const nano = promptSpec?.provenance?.nano;
+  if (!nano) return {};
+  return {
+    nano: {
+      sourceId: nano.sourceId,
+      promptId: nano.promptId,
+      sourcePromptId: nano.sourcePromptId,
+      sourceUrl: nano.sourceUrl,
+      sourcePlatform: nano.sourcePlatform,
+      authorName: nano.authorName,
+      needReferenceImages: nano.needReferenceImages,
+    },
+  };
+};
+
 const parseImageProcessingMetadata = (metadata: Record<string, unknown>): CreatorImageProcessingAssetMetadata | null => {
   const value = metadata.processing;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -3857,7 +3873,10 @@ export class CreatorAssetStore {
           '[]',
           null,
           null,
-          JSON.stringify(getGeneratedImageSourceMetadata(image)),
+          JSON.stringify({
+            ...getGeneratedImageSourceMetadata(image),
+            ...getNanoAssetMetadata(context.promptSpec),
+          }),
           now,
           now,
         );

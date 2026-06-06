@@ -127,6 +127,9 @@ export const NanoBananaSearchSort = {
   PublishedDesc: 'published_desc',
   LikesDesc: 'likes_desc',
   ResultsDesc: 'results_desc',
+  MostUsed: 'most_used',
+  RecentlyUsed: 'recently_used',
+  AdoptedBoost: 'adopted_boost',
 } as const;
 
 export type NanoBananaSearchSort =
@@ -137,6 +140,9 @@ export const NanoBananaSearchSortValues = [
   NanoBananaSearchSort.PublishedDesc,
   NanoBananaSearchSort.LikesDesc,
   NanoBananaSearchSort.ResultsDesc,
+  NanoBananaSearchSort.MostUsed,
+  NanoBananaSearchSort.RecentlyUsed,
+  NanoBananaSearchSort.AdoptedBoost,
 ] as const;
 
 export const NanoBananaDefaultSourceId = 'nano-supai';

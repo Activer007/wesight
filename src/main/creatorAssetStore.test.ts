@@ -1299,6 +1299,29 @@ describe('CreatorAssetStore', () => {
         templateId: 'poster-system',
         caseIds: ['case-1'],
         constraints: { aspectRatio: '1:1' },
+        provenance: {
+          templateId: 'poster-system',
+          caseIds: ['case-1'],
+          variantOfAssetId: null,
+          nano: {
+            sourceId: 'nano-supai',
+            promptId: 'nano-supai:6845',
+            sourcePromptId: '6845',
+            sourceUrl: 'https://example.com/source',
+            sourcePlatform: 'x',
+            sourcePublishedAt: null,
+            authorName: 'Nano Author',
+            title: 'Nano prompt',
+            media: [],
+            mediaThumbnails: [],
+            tags: ['editorial'],
+            tagsZh: ['编辑感'],
+            promptCategories: ['portrait'],
+            needReferenceImages: true,
+            licenseNote: 'external',
+            usageNote: 'keep source',
+          },
+        },
       },
       promptText: 'Generate a launch visual.',
       directions: [
@@ -1310,7 +1333,33 @@ describe('CreatorAssetStore', () => {
           reason: 'Awareness',
           promptFocus: 'Use a large headline.',
           promptText: 'Generate a bold launch visual.',
-          promptSpec: { sourceTitle: 'Bold route', constraints: { aspectRatio: '1:1' } },
+          promptSpec: {
+            sourceTitle: 'Bold route',
+            constraints: { aspectRatio: '1:1' },
+            provenance: {
+              templateId: null,
+              caseIds: [],
+              variantOfAssetId: null,
+              nano: {
+                sourceId: 'nano-supai',
+                promptId: 'nano-supai:6845',
+                sourcePromptId: '6845',
+                sourceUrl: 'https://example.com/source',
+                sourcePlatform: 'x',
+                sourcePublishedAt: null,
+                authorName: 'Nano Author',
+                title: 'Nano prompt',
+                media: [],
+                mediaThumbnails: [],
+                tags: ['editorial'],
+                tagsZh: ['编辑感'],
+                promptCategories: ['portrait'],
+                needReferenceImages: true,
+                licenseNote: 'external',
+                usageNote: 'keep source',
+              },
+            },
+          },
         },
         {
           id: 'detail',
@@ -1346,6 +1395,8 @@ describe('CreatorAssetStore', () => {
       batchTaskId: batchRun.tasks[0].id,
       modelId: batchRun.tasks[0].modelId,
     });
+    expect(batchRun.promptSpec.provenance?.nano?.sourcePromptId).toBe('6845');
+    expect(batchRun.tasks[0].promptSpec.provenance?.nano?.sourcePromptId).toBe('6845');
     expect(batchRun.tasks[0].promptSpec.schemaVersion).toBe(CreatorPromptSpecSchemaVersion.V1);
 
     const context = parseCreatorStudioSourceContext(batchRun.tasks[0].promptText);
@@ -1445,7 +1496,33 @@ describe('CreatorAssetStore', () => {
     const batchRun = store.createBatchRun({
       projectId: workspace.currentProjectId,
       briefTitle: 'Completion batch',
-      promptSpec: { sourceTitle: 'Completion batch', constraints: { aspectRatio: '1:1' } },
+      promptSpec: {
+        sourceTitle: 'Completion batch',
+        constraints: { aspectRatio: '1:1' },
+        provenance: {
+          templateId: null,
+          caseIds: [],
+          variantOfAssetId: null,
+          nano: {
+            sourceId: 'nano-supai',
+            promptId: 'nano-supai:9000',
+            sourcePromptId: '9000',
+            sourceUrl: 'https://example.com/nano',
+            sourcePlatform: 'x',
+            sourcePublishedAt: null,
+            authorName: 'Nano Author',
+            title: 'Nano completion prompt',
+            media: [],
+            mediaThumbnails: [],
+            tags: [],
+            tagsZh: [],
+            promptCategories: ['poster'],
+            needReferenceImages: false,
+            licenseNote: 'external',
+            usageNote: 'batch test',
+          },
+        },
+      },
       promptText: 'Generate a completion visual.',
       directions: [{
         id: 'route-a',
@@ -1455,7 +1532,33 @@ describe('CreatorAssetStore', () => {
         reason: 'Baseline',
         promptFocus: 'Simple layout.',
         promptText: 'Generate route A.',
-        promptSpec: { sourceTitle: 'Route A', constraints: { aspectRatio: '1:1' } },
+        promptSpec: {
+          sourceTitle: 'Route A',
+          constraints: { aspectRatio: '1:1' },
+          provenance: {
+            templateId: null,
+            caseIds: [],
+            variantOfAssetId: null,
+            nano: {
+              sourceId: 'nano-supai',
+              promptId: 'nano-supai:9000',
+              sourcePromptId: '9000',
+              sourceUrl: 'https://example.com/nano',
+              sourcePlatform: 'x',
+              sourcePublishedAt: null,
+              authorName: 'Nano Author',
+              title: 'Nano completion prompt',
+              media: [],
+              mediaThumbnails: [],
+              tags: [],
+              tagsZh: [],
+              promptCategories: ['poster'],
+              needReferenceImages: false,
+              licenseNote: 'external',
+              usageNote: 'batch test',
+            },
+          },
+        },
       }],
       modelIds: ['seedream-image'],
       templateIds: ['poster-system'],
@@ -1507,6 +1610,9 @@ describe('CreatorAssetStore', () => {
     const completedTask = completed?.tasks.find((task) => task.id === firstTask.id);
     expect(completedTask?.status).toBe(CreatorBatchTaskStatus.Completed);
     expect(completedTask?.assetIds).toHaveLength(1);
+    const outputAsset = completedTask?.assetIds[0] ? store.getAsset(completedTask.assetIds[0]) : null;
+    expect(outputAsset?.promptSpec?.provenance?.nano?.sourcePromptId).toBe('9000');
+    expect(outputAsset?.imageSource?.provider).toBeNull();
     expect(completed?.status).toBe(CreatorBatchRunStatus.Running);
 
     const failed = store.failBatchTask({ taskId: secondTask.id, error: 'Provider timeout' });

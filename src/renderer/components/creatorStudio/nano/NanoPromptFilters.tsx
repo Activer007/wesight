@@ -65,6 +65,9 @@ export const NanoPromptFilters: React.FC<NanoPromptFiltersProps> = ({
           <option value={NanoBananaSearchSort.PublishedDesc}>{i18nService.t('nanoLibrarySortNewest')}</option>
           <option value={NanoBananaSearchSort.LikesDesc}>{i18nService.t('nanoLibrarySortLikes')}</option>
           <option value={NanoBananaSearchSort.ResultsDesc}>{i18nService.t('nanoLibrarySortResults')}</option>
+          <option value={NanoBananaSearchSort.MostUsed}>{i18nService.t('nanoLibrarySortMostUsed')}</option>
+          <option value={NanoBananaSearchSort.RecentlyUsed}>{i18nService.t('nanoLibrarySortRecentlyUsed')}</option>
+          <option value={NanoBananaSearchSort.AdoptedBoost}>{i18nService.t('nanoLibrarySortAdoptedBoost')}</option>
         </select>
         <label className="flex h-10 items-center gap-2 rounded-lg border border-border bg-surface-raised px-3 text-sm text-secondary">
           <input

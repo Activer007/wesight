@@ -2,6 +2,7 @@ import type { NanoBananaPrompt } from '@shared/nanoBanana/types';
 
 import { i18nService } from '../services/i18n';
 import type {
+  CreatorCreativeDirection,
   CreatorPromptReferenceAnalysis,
   CreatorPromptSpec,
   CreatorTemplateFieldSchema,
@@ -118,6 +119,84 @@ const createReferenceAnalysis = (
   ].filter(Boolean),
 });
 
+const buildNanoCreativeDirections = (
+  prompt: NanoBananaPrompt,
+  spec: CreatorPromptSpec,
+): CreatorCreativeDirection[] => {
+  const topic = prompt.title || spec.subject || spec.sourceTitle;
+  const styleText = [...prompt.tags, ...prompt.tagsZh, ...prompt.promptCategories].slice(0, 5).join(', ');
+  if (spec.language === 'zh') {
+    return [
+      {
+        id: 'nano-hero-variant',
+        title: '主视觉强化',
+        template: '单一强主角 + 高识别度构图',
+        style: styleText || spec.visualStyle || '高质量视觉主图',
+        reason: `把「${topic}」重构为可直接用于项目主视觉的版本。`,
+        promptFocus: '保留 Nano 的视觉张力，但重新定义主体、前后景层次、光线方向和画面留白。',
+      },
+      {
+        id: 'nano-editorial-variant',
+        title: '编辑叙事版',
+        template: '杂志式场景 + 叙事细节',
+        style: 'editorial, cinematic, crafted details',
+        reason: '适合探索更强的故事感和内容传播语境。',
+        promptFocus: '加入场景线索、人物或物件关系、环境材质和情绪转折，不复述原 prompt 文本。',
+      },
+      {
+        id: 'nano-product-variant',
+        title: '产品落地版',
+        template: '商业产品图 + 可执行版式',
+        style: 'commercial visual, clean composition, production-ready',
+        reason: '适合把灵感转换成可复用的品牌、商品或活动素材。',
+        promptFocus: '强调品牌可替换区域、产品呈现、清晰背景和可裁切构图。',
+      },
+      {
+        id: 'nano-experimental-variant',
+        title: '实验风格版',
+        template: '反差材质 + 非常规镜头',
+        style: 'experimental art direction, bold texture, unexpected camera angle',
+        reason: '用于测试模型对风格、材质和构图边界的表现力。',
+        promptFocus: '改变镜头距离、材质组合和色彩关系，产出与原 prompt 明显不同的探索稿。',
+      },
+    ];
+  }
+  return [
+    {
+      id: 'nano-hero-variant',
+      title: 'Hero visual variant',
+      template: 'single strong subject with recognizable composition',
+      style: styleText || spec.visualStyle || 'high-quality hero visual',
+      reason: `Reframes "${topic}" as a project-ready hero visual.`,
+      promptFocus: 'Keep the Nano visual energy while redefining subject hierarchy, foreground/background depth, lighting direction, and negative space.',
+    },
+    {
+      id: 'nano-editorial-variant',
+      title: 'Editorial narrative',
+      template: 'magazine-like scene with narrative details',
+      style: 'editorial, cinematic, crafted details',
+      reason: 'Explores story, context, and shareable editorial mood.',
+      promptFocus: 'Add scene cues, object or character relationships, material detail, and mood shifts instead of restating the original prompt.',
+    },
+    {
+      id: 'nano-product-variant',
+      title: 'Commercial adaptation',
+      template: 'commercial product visual with executable layout',
+      style: 'commercial visual, clean composition, production-ready',
+      reason: 'Turns the inspiration into a reusable brand, product, or campaign asset.',
+      promptFocus: 'Emphasize replaceable brand zones, product presentation, clean backgrounds, and crop-safe composition.',
+    },
+    {
+      id: 'nano-experimental-variant',
+      title: 'Experimental style',
+      template: 'contrasting materials with an unconventional camera angle',
+      style: 'experimental art direction, bold texture, unexpected camera angle',
+      reason: 'Tests the model boundary for style, material, and composition.',
+      promptFocus: 'Change lens distance, material pairing, and color relationships to produce a clearly different exploration.',
+    },
+  ];
+};
+
 export const nanoPromptToCreatorPromptSpec = (
   prompt: NanoBananaPrompt,
   blankSourceTitle = i18nService.t('creatorBlankBuilder'),
@@ -199,7 +278,11 @@ export const nanoPromptToCreatorPromptSpec = (
     negativeRequirements: prompt.needReferenceImages ? i18nService.t('nanoCreatorNeedReferenceLint') : '',
     templateFieldValues: Object.fromEntries(variables.map((variable) => [variable.id, variable.defaultValue])),
   };
-  const promptSpec = buildPromptSpec(seed, form, language, blankSourceTitle);
+  const basePromptSpec = buildPromptSpec(seed, form, language, blankSourceTitle);
+  const promptSpec = {
+    ...basePromptSpec,
+    creativeDirections: buildNanoCreativeDirections(prompt, basePromptSpec),
+  };
 
   return {
     seed,
