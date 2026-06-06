@@ -110,6 +110,10 @@ const SeedreamStatus = {
 type SeedreamStatus = typeof SeedreamStatus[keyof typeof SeedreamStatus];
 
 const CASE_PAGE_SIZE = 80;
+const GALLERY_THUMBNAIL_SIZE_MIN = 180;
+const GALLERY_THUMBNAIL_SIZE_MAX = 360;
+const GALLERY_THUMBNAIL_SIZE_STEP = 20;
+const GALLERY_THUMBNAIL_SIZE_DEFAULT = 260;
 
 const defaultBuilderForm: CreatorPromptForm = {
   subject: '',
@@ -140,7 +144,8 @@ const PlaceholderImage: React.FC<{
   src: string | null;
   alt: string;
   className?: string;
-}> = ({ src, alt, className = '' }) => {
+  fit?: 'cover' | 'contain';
+}> = ({ src, alt, className = '', fit = 'cover' }) => {
   const [failed, setFailed] = useState(false);
   if (!src || failed) {
     return (
@@ -156,9 +161,24 @@ const PlaceholderImage: React.FC<{
       alt={alt}
       loading="lazy"
       onError={() => setFailed(true)}
-      className={`object-cover ${className}`}
+      className={`${fit === 'cover' ? 'object-cover' : 'object-contain'} ${className}`}
     />
   );
+};
+
+const formatImageDimensions = (image: CreatorStudioCase['imageOriginal']): string => (
+  image ? `${image.width} x ${image.height}` : i18nService.t('creatorImageUnknown')
+);
+
+const formatImageAspectRatio = (image: CreatorStudioCase['imageOriginal']): string => (
+  image ? `${image.aspectRatio.toFixed(2)}:1` : i18nService.t('creatorImageUnknown')
+);
+
+const formatImageFileSize = (image: CreatorStudioCase['imageOriginal']): string => {
+  if (!image) return i18nService.t('creatorImageUnknown');
+  if (image.byteSize < 1024) return `${image.byteSize} B`;
+  if (image.byteSize < 1024 * 1024) return `${(image.byteSize / 1024).toFixed(1)} KB`;
+  return `${(image.byteSize / 1024 / 1024).toFixed(1)} MB`;
 };
 
 const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
@@ -505,15 +525,15 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     }
   };
 
-  const createProject = async () => {
-    const name = window.prompt(i18nService.t('creatorProjectNamePrompt'));
-    if (!name?.trim()) return;
+  const createProject = async (name: string) => {
+    if (!name.trim()) return;
     try {
       const nextWorkspace = await creatorStudioAssetService.createProject({ name: name.trim() });
       setWorkspace(nextWorkspace);
       setCurrentProjectId(nextWorkspace.currentProjectId);
     } catch (error) {
       dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorProjectCreateFailed'));
+      throw error;
     }
   };
 
@@ -807,7 +827,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
             workspace={workspace}
             currentProjectId={currentProjectId}
             onProjectChange={(projectId) => void switchProject(projectId)}
-            onCreateProject={() => void createProject()}
+            onCreateProject={createProject}
             onSendToCowork={sendToCowork}
             onSavePromptAsset={(promptSpec, promptText) => void savePromptAsset(promptSpec, promptText)}
             brandKit={boardWorkspace?.brandKit ?? null}
@@ -939,84 +959,112 @@ const Gallery: React.FC<{
   onSelectCase,
   onUseCase,
   onLoadMore,
-}) => (
-  <section className="space-y-4 p-4">
-    <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_160px_160px_auto]">
-      <label className="relative block">
-        <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-        <input
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder={i18nService.t('creatorSearchPlaceholder')}
-          className="h-10 w-full rounded-lg border border-border bg-surface px-9 text-sm outline-none focus:border-primary"
-        />
-      </label>
-      <FilterSelect value={category} onChange={onCategoryChange} label={i18nService.t('creatorFilterCategory')}>
-        {styleLibrary.categories.map((item) => (
-          <option key={item.id} value={item.value}>{getText(item.title)}</option>
-        ))}
-      </FilterSelect>
-      <FilterSelect value={style} onChange={onStyleChange} label={i18nService.t('creatorFilterStyle')}>
-        {styleLibrary.styles.map((item) => (
-          <option key={item.id} value={item.value}>{getText(item.title)}</option>
-        ))}
-      </FilterSelect>
-      <FilterSelect value={scene} onChange={onSceneChange} label={i18nService.t('creatorFilterScene')}>
-        {styleLibrary.scenes.map((item) => (
-          <option key={item.id} value={item.value}>{getText(item.title)}</option>
-        ))}
-      </FilterSelect>
-      <button
-        type="button"
-        onClick={onClearFilters}
-        className="h-10 rounded-lg border border-border px-3 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-      >
-        {i18nService.t('creatorClearFilters')}
-      </button>
-    </div>
-    <div className="text-xs text-muted">
-      {i18nService.t('creatorResultCount').replace('{count}', String(totalCount))}
-    </div>
-    {totalCount === 0 ? (
-      <div className="flex min-h-[220px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-surface text-center">
-        <PhotoIcon className="h-10 w-10 text-muted" />
-        <div className="mt-3 text-sm font-medium">{i18nService.t('creatorEmptyTitle')}</div>
-        <div className="mt-1 text-xs text-muted">{i18nService.t('creatorEmptyHint')}</div>
-      </div>
-    ) : (
-      <>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {filteredCases.map((item) => (
-            <CaseCard key={item.id} item={item} onSelect={onSelectCase} onUseCase={onUseCase} />
+}) => {
+  const [thumbnailSize, setThumbnailSize] = useState(GALLERY_THUMBNAIL_SIZE_DEFAULT);
+  return (
+    <section className="space-y-4 p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="relative block w-full sm:w-80">
+          <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder={i18nService.t('creatorSearchPlaceholder')}
+            className="h-10 w-full rounded-lg border border-border bg-surface px-9 text-sm outline-none focus:border-primary"
+          />
+        </label>
+        <FilterSelect className="w-full sm:w-44" value={category} onChange={onCategoryChange} label={i18nService.t('creatorFilterCategory')}>
+          {styleLibrary.categories.map((item) => (
+            <option key={item.id} value={item.value}>{getText(item.title)}</option>
           ))}
+        </FilterSelect>
+        <FilterSelect className="w-full sm:w-40" value={style} onChange={onStyleChange} label={i18nService.t('creatorFilterStyle')}>
+          {styleLibrary.styles.map((item) => (
+            <option key={item.id} value={item.value}>{getText(item.title)}</option>
+          ))}
+        </FilterSelect>
+        <FilterSelect className="w-full sm:w-40" value={scene} onChange={onSceneChange} label={i18nService.t('creatorFilterScene')}>
+          {styleLibrary.scenes.map((item) => (
+            <option key={item.id} value={item.value}>{getText(item.title)}</option>
+          ))}
+        </FilterSelect>
+        <label className="flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-xs text-secondary">
+          <span>{i18nService.t('creatorThumbnailSize')}</span>
+          <input
+            type="range"
+            min={GALLERY_THUMBNAIL_SIZE_MIN}
+            max={GALLERY_THUMBNAIL_SIZE_MAX}
+            step={GALLERY_THUMBNAIL_SIZE_STEP}
+            value={thumbnailSize}
+            onChange={(event) => setThumbnailSize(Number(event.target.value))}
+            aria-label={i18nService.t('creatorThumbnailSize')}
+            className="w-28 accent-primary"
+          />
+          <span className="w-12 text-right tabular-nums">{thumbnailSize}px</span>
+        </label>
+        <button
+          type="button"
+          onClick={onClearFilters}
+          className="h-10 rounded-lg border border-border px-3 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+        >
+          {i18nService.t('creatorClearFilters')}
+        </button>
+      </div>
+      <div className="text-xs text-muted">
+        {i18nService.t('creatorResultCount').replace('{count}', String(totalCount))}
+      </div>
+      {totalCount === 0 ? (
+        <div className="flex min-h-[220px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-surface text-center">
+          <PhotoIcon className="h-10 w-10 text-muted" />
+          <div className="mt-3 text-sm font-medium">{i18nService.t('creatorEmptyTitle')}</div>
+          <div className="mt-1 text-xs text-muted">{i18nService.t('creatorEmptyHint')}</div>
         </div>
-        {hasMore && (
-          <div className="flex justify-center pt-2">
-            <button
-              type="button"
-              onClick={onLoadMore}
-              className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-            >
-              {i18nService.t('creatorLoadMore')}
-            </button>
+      ) : (
+        <>
+          <div
+            style={{
+              columnWidth: `${thumbnailSize}px`,
+              columnGap: '0.75rem',
+            }}
+          >
+            {filteredCases.map((item) => (
+              <CaseCard
+                key={item.id}
+                item={item}
+                onSelect={onSelectCase}
+                onUseCase={onUseCase}
+              />
+            ))}
           </div>
-        )}
-      </>
-    )}
-  </section>
-);
+          {hasMore && (
+            <div className="flex justify-center pt-2">
+              <button
+                type="button"
+                onClick={onLoadMore}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+              >
+                {i18nService.t('creatorLoadMore')}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+};
 
 const FilterSelect: React.FC<{
   value: string;
   onChange: (value: string) => void;
   label: string;
   children: React.ReactNode;
-}> = ({ value, onChange, label, children }) => (
+  className?: string;
+}> = ({ value, onChange, label, children, className = '' }) => (
   <select
     value={value}
     onChange={(event) => onChange(event.target.value)}
     aria-label={label}
-    className="h-10 rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-primary"
+    className={`h-10 rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-primary ${className}`}
   >
     <option value="">{label}</option>
     {children}
@@ -1028,29 +1076,39 @@ const CaseCard: React.FC<{
   onSelect: (item: CreatorStudioCase) => void;
   onUseCase: (item: CreatorStudioCase) => void;
 }> = ({ item, onSelect, onUseCase }) => (
-  <article className="overflow-hidden rounded-lg border border-border bg-surface">
+  <article className="mb-3 inline-block w-full break-inside-avoid overflow-hidden rounded-lg border border-border bg-surface align-top">
     <button type="button" className="block w-full text-left" onClick={() => onSelect(item)}>
-      <PlaceholderImage src={item.image} alt={item.imageAlt} className="aspect-[4/3] w-full" />
-      <div className="space-y-2 p-3">
-        <div className="line-clamp-2 min-h-[40px] text-sm font-semibold">{item.title}</div>
-        <div className="flex flex-wrap gap-1.5">
-          {[item.category, ...item.styles.slice(0, 2), ...item.scenes.slice(0, 1)].map((tag) => (
-            <span key={tag} className="rounded-md bg-surface-raised px-2 py-0.5 text-[11px] text-secondary">
-              {tag}
-            </span>
-          ))}
+      <div
+        className="relative flex w-full items-center justify-center overflow-hidden bg-surface-raised"
+        style={{
+          aspectRatio: item.imageOriginal
+            ? `${item.imageOriginal.width} / ${item.imageOriginal.height}`
+            : '4 / 3',
+        }}
+      >
+        <PlaceholderImage src={item.image} alt={item.imageAlt} fit="contain" className="h-full w-full" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 via-black/25 to-transparent p-2">
+          <div className="flex flex-wrap gap-1">
+            {[item.category, ...item.styles.slice(0, 2), ...item.scenes.slice(0, 1)].map((tag) => (
+              <span key={tag} className="rounded-md bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 shadow-sm">
+                {tag}
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="truncate text-xs text-muted">{item.sourceLabel || i18nService.t('creatorUnknownSource')}</div>
+      </div>
+      <div className="px-3 pb-2 pt-2">
+        <div className="line-clamp-2 text-sm font-semibold leading-5">{item.title}</div>
       </div>
     </button>
-    <div className="border-t border-border p-2">
+    <div className="px-3 pb-3">
       <button
         type="button"
         onClick={() => onUseCase(item)}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover"
+        className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md bg-primary px-2.5 text-xs font-medium text-white transition-colors hover:bg-primary-hover"
       >
-        <SparklesIcon className="h-4 w-4" />
-        {i18nService.t('creatorUseCase')}
+        <SparklesIcon className="h-3.5 w-3.5" />
+        {i18nService.t('creatorUseCaseShort')}
       </button>
     </div>
   </article>
@@ -1062,45 +1120,52 @@ const TemplateLibrary: React.FC<{
   onSelectTemplate: (template: CreatorStudioTemplate) => void;
   onUseTemplate: (template: CreatorStudioTemplate) => void;
 }> = ({ templates, templateCasesById, onSelectTemplate, onUseTemplate }) => (
-  <section className="grid grid-cols-1 gap-3 p-4 lg:grid-cols-2 2xl:grid-cols-3">
+  <section
+    className="grid gap-3 p-4"
+    style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 250px), 1fr))' }}
+  >
     {templates.map((template) => {
       const exampleCases = template.exampleCases
         .map((sourceCaseId) => templateCasesById.get(sourceCaseId))
         .filter((item): item is CreatorStudioCase => Boolean(item));
       return (
-        <article key={template.id} className="rounded-lg border border-border bg-surface p-4">
-          <div className="flex gap-3">
-            <PlaceholderImage src={template.cover} alt={getText(template.title)} className="h-20 w-20 shrink-0 rounded-lg" />
-            <div className="min-w-0 flex-1">
-              <h2 className="line-clamp-2 text-sm font-semibold">{getText(template.title)}</h2>
-              <p className="mt-1 line-clamp-2 text-xs text-secondary">{getText(template.description)}</p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {template.tags.slice(0, 4).map((tag) => (
-                  <span key={tag} className="rounded-md bg-surface-raised px-2 py-0.5 text-[11px] text-secondary">
+        <article key={template.id} className="flex h-[34rem] max-h-[34rem] flex-col overflow-hidden rounded-lg border border-border bg-surface">
+          <div className="relative h-[22rem] w-full shrink-0 overflow-hidden bg-surface-raised">
+            <PlaceholderImage src={template.cover} alt={getText(template.title)} className="h-full w-full" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 via-black/25 to-transparent p-2">
+              <div className="flex flex-wrap gap-1">
+                {template.tags.slice(0, 3).map((tag) => (
+                  <span key={tag} className="rounded-md bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 shadow-sm">
                     {tag}
                   </span>
                 ))}
               </div>
             </div>
           </div>
-          <div className="mt-3 text-xs text-muted">
-            {i18nService.t('creatorExampleCases').replace('{count}', String(exampleCases.length))}
-          </div>
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={() => onSelectTemplate(template)}
-              className="flex-1 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-            >
-              {i18nService.t('creatorDetails')}
-            </button>
-            <button
-              type="button"
-              onClick={() => onUseTemplate(template)}
-              className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover"
-            >
-              {i18nService.t('creatorUseTemplate')}
-            </button>
+          <div className="flex min-h-0 flex-1 flex-col p-3">
+            <h2 className="line-clamp-1 text-base font-semibold">{getText(template.title)}</h2>
+            <p className="mt-2 line-clamp-2 text-sm leading-5 text-secondary">{getText(template.description)}</p>
+            <div className="mt-auto shrink-0 pt-2">
+              <div className="text-xs text-muted">
+                {i18nService.t('creatorExampleCases').replace('{count}', String(exampleCases.length))}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => onSelectTemplate(template)}
+                  className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-border px-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                >
+                  {i18nService.t('creatorDetails')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUseTemplate(template)}
+                  className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md bg-primary px-2 text-xs font-medium text-white transition-colors hover:bg-primary-hover"
+                >
+                  {i18nService.t('creatorUseTemplate')}
+                </button>
+              </div>
+            </div>
           </div>
         </article>
       );
@@ -1121,7 +1186,7 @@ const PromptBuilder: React.FC<{
   workspace: CreatorWorkspaceSnapshot | null;
   currentProjectId: string;
   onProjectChange: (projectId: string) => void;
-  onCreateProject: () => void;
+  onCreateProject: (name: string) => Promise<void> | void;
   brandKit: CreatorBrandKitRecord | null;
   boardContextPack: string;
   onSendToCowork: (
@@ -1151,6 +1216,9 @@ const PromptBuilder: React.FC<{
   onSavePromptAsset,
 }) => {
   const [selectedDirectionId, setSelectedDirectionId] = useState<string | null>(null);
+  const [projectNameDraft, setProjectNameDraft] = useState('');
+  const [isProjectFormOpen, setIsProjectFormOpen] = useState(false);
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
   const promptLanguage = normalizePromptLanguage(i18nService.getLanguage(), form);
   const rawPromptSpec: CreatorPromptSpec = buildPromptSpec(seed, form, promptLanguage, i18nService.t('creatorBlankBuilder'), materials);
   const basePromptSpec = applyBoardAndBrandKit(rawPromptSpec, brandKit, boardContextPack);
@@ -1167,12 +1235,24 @@ const PromptBuilder: React.FC<{
     onFormChange({ ...form, [field]: value });
   };
 
+  const submitProject = async () => {
+    if (!projectNameDraft.trim()) return;
+    setIsCreatingProject(true);
+    try {
+      await onCreateProject(projectNameDraft);
+      setProjectNameDraft('');
+      setIsProjectFormOpen(false);
+    } finally {
+      setIsCreatingProject(false);
+    }
+  };
+
   return (
-    <section className="grid gap-4 p-4 xl:grid-cols-[minmax(320px,420px)_1fr]">
-      <div className="space-y-3 rounded-lg border border-border bg-surface p-4">
+    <section className="grid min-w-0 gap-4 p-4 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
+      <div className="min-w-0 space-y-3 rounded-lg border border-border bg-surface p-4">
         <div>
           <div className="text-xs font-medium uppercase text-muted">{i18nService.t('creatorBuilderSource')}</div>
-          <div className="mt-1 text-sm font-semibold">{promptSpec.sourceTitle}</div>
+          <div className="mt-1 break-words text-sm font-semibold">{promptSpec.sourceTitle}</div>
         </div>
         <div className="rounded-lg border border-border bg-background p-3">
           <div className="text-xs font-medium text-secondary">{i18nService.t('creatorBuilderProject')}</div>
@@ -1192,12 +1272,45 @@ const PromptBuilder: React.FC<{
             </select>
             <button
               type="button"
-              onClick={onCreateProject}
+              onClick={() => setIsProjectFormOpen(true)}
               className="rounded-lg border border-border px-3 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
             >
               {i18nService.t('creatorProjectCreate')}
             </button>
           </div>
+          {isProjectFormOpen && (
+            <div className="mt-2 flex gap-2">
+              <input
+                value={projectNameDraft}
+                onChange={(event) => setProjectNameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void submitProject();
+                  if (event.key === 'Escape') setIsProjectFormOpen(false);
+                }}
+                autoFocus
+                placeholder={i18nService.t('projectNamePlaceholder')}
+                className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 text-xs outline-none focus:border-primary"
+              />
+              <button
+                type="button"
+                disabled={!projectNameDraft.trim() || isCreatingProject}
+                onClick={() => void submitProject()}
+                className="rounded-lg bg-primary px-3 text-xs font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {i18nService.t('create')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectNameDraft('');
+                  setIsProjectFormOpen(false);
+                }}
+                className="rounded-lg border border-border px-3 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+              >
+                {i18nService.t('cancel')}
+              </button>
+            </div>
+          )}
         </div>
         <BuilderInput label={i18nService.t('creatorFieldSubject')} value={form.subject} onChange={(value) => updateField('subject', value)} />
         <BuilderInput label={i18nService.t('creatorFieldPlatform')} value={form.platform} onChange={(value) => updateField('platform', value)} />
@@ -1208,8 +1321,8 @@ const PromptBuilder: React.FC<{
         <BuilderTextarea label={i18nService.t('creatorFieldNegative')} value={form.negativeRequirements} onChange={(value) => updateField('negativeRequirements', value)} />
         <MaterialTray materials={materials} onMaterialsChange={onMaterialsChange} />
       </div>
-      <div className="space-y-4">
-        <div className="rounded-lg border border-border bg-surface">
+      <div className="min-w-0 space-y-4">
+        <div className="min-w-0 rounded-lg border border-border bg-surface">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">{i18nService.t('creatorPromptPreview')}</h2>
             <div className="flex flex-wrap justify-end gap-2">
@@ -1251,17 +1364,17 @@ const PromptBuilder: React.FC<{
               </button>
             </div>
           </div>
-          <pre className="max-h-[420px] whitespace-pre-wrap overflow-auto p-4 text-sm leading-6 text-foreground">{prompt}</pre>
+          <pre className="max-h-[420px] max-w-full whitespace-pre-wrap break-words overflow-auto p-4 text-sm leading-6 text-foreground">{prompt}</pre>
         </div>
-        <div className="rounded-lg border border-border bg-surface">
+        <div className="min-w-0 rounded-lg border border-border bg-surface">
           <div className="border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">{i18nService.t('creatorContextPack')}</h2>
           </div>
-          <pre className="max-h-56 whitespace-pre-wrap overflow-auto p-4 text-xs leading-5 text-secondary">
+          <pre className="max-h-56 max-w-full whitespace-pre-wrap break-words overflow-auto p-4 text-xs leading-5 text-secondary">
             {promptSpec.contextPack || i18nService.t('creatorContextPackEmpty')}
           </pre>
         </div>
-        <div className="rounded-lg border border-border bg-surface">
+        <div className="min-w-0 rounded-lg border border-border bg-surface">
           <div className="border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">{i18nService.t('creatorCreativeDirections')}</h2>
           </div>
@@ -1291,15 +1404,15 @@ const PromptBuilder: React.FC<{
                       {selected ? i18nService.t('creatorDirectionSelected') : i18nService.t('creatorUseDirection')}
                     </button>
                   </div>
-                  <p className="mt-1 text-xs text-secondary">{direction.template}</p>
-                  <p className="mt-2 text-xs text-muted">{direction.reason}</p>
-                  <p className="mt-2 text-xs text-secondary">{direction.promptFocus}</p>
+                  <p className="mt-1 break-words text-xs text-secondary">{direction.template}</p>
+                  <p className="mt-2 break-words text-xs text-muted">{direction.reason}</p>
+                  <p className="mt-2 break-words text-xs text-secondary">{direction.promptFocus}</p>
                 </div>
               );
             })}
           </div>
         </div>
-        <div className="rounded-lg border border-border bg-surface p-4">
+        <div className="min-w-0 rounded-lg border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold">{i18nService.t('creatorRecommendedRuntime')}</h2>
           <p className="mt-1 text-xs leading-5 text-muted">{i18nService.t('creatorRecommendedRuntimeHint')}</p>
           <div className="mt-3 flex flex-wrap gap-1.5">
@@ -1321,7 +1434,7 @@ const PromptBuilder: React.FC<{
           </div>
           <p className="mt-3 text-xs leading-5 text-muted">{seedreamHint}</p>
         </div>
-        <div className="rounded-lg border border-border bg-surface">
+        <div className="min-w-0 rounded-lg border border-border bg-surface">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">{i18nService.t('creatorPromptSpec')}</h2>
             <button
@@ -1333,7 +1446,7 @@ const PromptBuilder: React.FC<{
               {i18nService.t('copy')}
             </button>
           </div>
-          <pre className="max-h-64 overflow-auto p-4 text-xs leading-5 text-secondary">{JSON.stringify(promptSpec, null, 2)}</pre>
+          <pre className="max-h-64 max-w-full whitespace-pre-wrap break-words overflow-auto p-4 text-xs leading-5 text-secondary">{JSON.stringify(promptSpec, null, 2)}</pre>
         </div>
       </div>
     </section>
@@ -1618,7 +1731,10 @@ const CaseDrawer: React.FC<{
   onSaveCase: (item: CreatorStudioCase) => void;
 }> = ({ item, onClose, onUseCase, onSaveCase }) => (
   <Drawer onClose={onClose} title={item.title}>
-    <PlaceholderImage src={item.image} alt={item.imageAlt} className="aspect-[4/3] w-full rounded-lg" />
+    <div className="rounded-lg bg-surface-raised p-2">
+      <PlaceholderImage src={item.image} alt={item.imageAlt} fit="contain" className="max-h-[70vh] w-full rounded-md" />
+    </div>
+    <ImageMetadataPanel item={item} />
     <div className="mt-4 flex flex-wrap gap-1.5">
       {[item.category, ...item.styles, ...item.scenes].map((tag) => (
         <span key={tag} className="rounded-md bg-surface-raised px-2 py-0.5 text-xs text-secondary">{tag}</span>
@@ -1642,6 +1758,29 @@ const CaseDrawer: React.FC<{
     </section>
     <p className="mt-4 text-xs leading-5 text-muted">{i18nService.t('creatorDisclaimer')}</p>
   </Drawer>
+);
+
+const ImageMetadataPanel: React.FC<{
+  item: CreatorStudioCase;
+}> = ({ item }) => (
+  <section className="mt-4 grid grid-cols-2 gap-2">
+    <ImageMetadataItem label={i18nService.t('creatorOriginalImage')} value={formatImageDimensions(item.imageOriginal)} />
+    <ImageMetadataItem label={i18nService.t('creatorThumbnailImage')} value={formatImageDimensions(item.imageThumbnail)} />
+    <ImageMetadataItem label={i18nService.t('creatorImageAspectRatio')} value={formatImageAspectRatio(item.imageOriginal)} />
+    <ImageMetadataItem label={i18nService.t('creatorImageCropStatus')} value={i18nService.t('creatorImageNotCropped')} />
+    <ImageMetadataItem label={i18nService.t('creatorImageFileSize')} value={formatImageFileSize(item.imageOriginal)} />
+    <ImageMetadataItem label={i18nService.t('creatorImageMimeType')} value={item.imageOriginal?.mimeType ?? i18nService.t('creatorImageUnknown')} />
+  </section>
+);
+
+const ImageMetadataItem: React.FC<{
+  label: string;
+  value: string;
+}> = ({ label, value }) => (
+  <div className="rounded-lg border border-border bg-surface p-3">
+    <div className="text-[11px] font-medium uppercase text-muted">{label}</div>
+    <div className="mt-1 text-sm tabular-nums text-foreground">{value}</div>
+  </div>
 );
 
 const TemplateDrawer: React.FC<{
@@ -1727,8 +1866,11 @@ const Drawer: React.FC<{
   onClose: () => void;
   children: React.ReactNode;
 }> = ({ title, onClose, children }) => (
-  <div className="absolute inset-0 z-30 flex justify-end bg-black/30">
-    <aside className="h-full w-full max-w-xl overflow-y-auto border-l border-border bg-background shadow-xl">
+  <div className="absolute inset-0 z-30 flex justify-end bg-black/30" onMouseDown={onClose}>
+    <aside
+      className="h-full w-full max-w-xl overflow-y-auto border-l border-border bg-background shadow-xl"
+      onMouseDown={(event) => event.stopPropagation()}
+    >
       <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-background px-4 py-3">
         <h2 className="min-w-0 flex-1 truncate text-base font-semibold">{title}</h2>
         <button

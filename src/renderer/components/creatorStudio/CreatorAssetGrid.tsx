@@ -24,7 +24,7 @@ import type {
   CreatorProductionAssetRecord,
   CreatorWorkspaceSnapshot,
 } from '@shared/creatorStudio/types';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import casesData from '../../data/creatorStudio/cases.json';
 import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
@@ -67,6 +67,57 @@ const PlaceholderImage: React.FC<{
     <PhotoIcon className="h-10 w-10" />
   </div>
 );
+
+const PreviewImage: React.FC<{
+  src: string | null;
+  filePath?: string | null;
+  alt: string;
+  className?: string;
+}> = ({ src, filePath, alt, className = '' }) => {
+  const [activeSrc, setActiveSrc] = useState(src);
+  const [failed, setFailed] = useState(false);
+  const [triedDataUrlFallback, setTriedDataUrlFallback] = useState(false);
+
+  useEffect(() => {
+    setActiveSrc(src);
+    setFailed(false);
+    setTriedDataUrlFallback(false);
+  }, [filePath, src]);
+
+  const handleError = () => {
+    if (filePath && !triedDataUrlFallback) {
+      setTriedDataUrlFallback(true);
+      void window.electron.dialog.readFileAsDataUrl(filePath)
+        .then((result) => {
+          if (result.success && result.dataUrl) {
+            setActiveSrc(result.dataUrl);
+            setFailed(false);
+            return;
+          }
+          setFailed(true);
+        })
+        .catch(() => {
+          setFailed(true);
+        });
+      return;
+    }
+    setFailed(true);
+  };
+
+  if (!activeSrc || failed) {
+    return <PlaceholderImage className={className} />;
+  }
+
+  return (
+    <img
+      src={activeSrc}
+      alt={alt}
+      loading="lazy"
+      onError={handleError}
+      className={className}
+    />
+  );
+};
 
 const adoptionStatusOptions = [
   CreatorAssetAdoptionStatus.Unset,
@@ -111,6 +162,61 @@ const isRenderableImage = (asset: CreatorProductionAssetRecord): boolean => (
   isFileBackedImage(asset) && asset.status === CreatorProductionAssetStatus.Ready
 );
 
+const getCasePreview = (asset: CreatorProductionAssetRecord): CreatorStudioCase | null => {
+  if (asset.kind !== CreatorProductionAssetKind.Case && asset.source !== CreatorProductionAssetSource.CreatorCase) {
+    return null;
+  }
+  for (const caseId of asset.caseIds) {
+    const item = creatorCaseMap.get(caseId);
+    if (item?.image) return item;
+  }
+  return null;
+};
+
+const getAssetPreview = (asset: CreatorProductionAssetRecord): {
+  src: string | null;
+  filePath: string | null;
+  alt: string;
+} => {
+  if (isRenderableImage(asset)) {
+    return {
+      src: encodeLocalFileSrc(asset.filePath),
+      filePath: asset.filePath,
+      alt: asset.fileName,
+    };
+  }
+
+  const casePreview = getCasePreview(asset);
+  if (casePreview?.image) {
+    return {
+      src: casePreview.image,
+      filePath: null,
+      alt: casePreview.imageAlt || casePreview.title,
+    };
+  }
+
+  return {
+    src: null,
+    filePath: null,
+    alt: asset.fileName,
+  };
+};
+
+const AssetPreviewImage: React.FC<{
+  asset: CreatorProductionAssetRecord;
+  className?: string;
+}> = ({ asset, className = '' }) => {
+  const preview = getAssetPreview(asset);
+  return (
+    <PreviewImage
+      src={preview.src}
+      filePath={preview.filePath}
+      alt={preview.alt}
+      className={className}
+    />
+  );
+};
+
 const getAssetSourceLabel = (source: CreatorProductionAssetSource): string => {
   switch (source) {
     case CreatorProductionAssetSource.CreatorPrompt:
@@ -149,6 +255,9 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const [licenseNoteDraft, setLicenseNoteDraft] = useState('');
   const [usageNoteDraft, setUsageNoteDraft] = useState('');
   const [collectionTargetId, setCollectionTargetId] = useState('');
+  const [projectNameDraft, setProjectNameDraft] = useState('');
+  const [isProjectFormOpen, setIsProjectFormOpen] = useState(false);
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -157,13 +266,13 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
     [currentProjectId, workspace?.collections]
   );
 
-  const loadWorkspace = async () => {
+  const loadWorkspace = useCallback(async () => {
     const nextWorkspace = await creatorStudioAssetService.getWorkspace();
     setWorkspace(nextWorkspace);
     setCurrentProjectId((value) => value || nextWorkspace.currentProjectId);
-  };
+  }, []);
 
-  const loadAssets = async () => {
+  const loadAssets = useCallback(async () => {
     const projectId = currentProjectId || workspace?.currentProjectId;
     if (!projectId) return;
     setIsLoading(true);
@@ -190,17 +299,17 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [adoptionStatus, collectionId, currentProjectId, favoriteOnly, source, tag, templateId, workspace?.currentProjectId]);
 
   useEffect(() => {
     void loadWorkspace().catch((loadError) => {
       setError(loadError instanceof Error ? loadError.message : i18nService.t('creatorWorkspaceLoadFailed'));
     });
-  }, []);
+  }, [loadWorkspace]);
 
   useEffect(() => {
     void loadAssets();
-  }, [adoptionStatus, collectionId, currentProjectId, favoriteOnly, source, tag, templateId, workspace?.currentProjectId]);
+  }, [loadAssets]);
 
   useEffect(() => {
     if (!selectedAsset) {
@@ -217,15 +326,19 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   }, [selectedAsset]);
 
   const handleCreateProject = async () => {
-    const name = window.prompt(i18nService.t('creatorProjectNamePrompt'));
-    if (!name?.trim()) return;
+    if (!projectNameDraft.trim()) return;
+    setIsCreatingProject(true);
     try {
-      const nextWorkspace = await creatorStudioAssetService.createProject({ name: name.trim() });
+      const nextWorkspace = await creatorStudioAssetService.createProject({ name: projectNameDraft.trim() });
       setWorkspace(nextWorkspace);
       setCurrentProjectId(nextWorkspace.currentProjectId);
       setCollectionId('');
+      setProjectNameDraft('');
+      setIsProjectFormOpen(false);
     } catch (createError) {
       dispatchToast(createError instanceof Error ? createError.message : i18nService.t('creatorProjectCreateFailed'));
+    } finally {
+      setIsCreatingProject(false);
     }
   };
 
@@ -396,7 +509,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => void handleCreateProject()}
+                onClick={() => setIsProjectFormOpen(true)}
                 className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
               >
                 <PlusIcon className="h-4 w-4" />
@@ -419,6 +532,39 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
               </button>
             </div>
           </div>
+          {isProjectFormOpen && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <input
+                value={projectNameDraft}
+                onChange={(event) => setProjectNameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void handleCreateProject();
+                  if (event.key === 'Escape') setIsProjectFormOpen(false);
+                }}
+                autoFocus
+                placeholder={i18nService.t('projectNamePlaceholder')}
+                className="h-10 min-w-[220px] flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+              />
+              <button
+                type="button"
+                disabled={!projectNameDraft.trim() || isCreatingProject}
+                onClick={() => void handleCreateProject()}
+                className="h-10 rounded-lg bg-primary px-3 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {i18nService.t('create')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectNameDraft('');
+                  setIsProjectFormOpen(false);
+                }}
+                className="h-10 rounded-lg border border-border px-3 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+              >
+                {i18nService.t('cancel')}
+              </button>
+            </div>
+          )}
 
           <div className="mt-4 grid gap-2 lg:grid-cols-[180px_170px_160px_1fr_1fr_150px_auto]">
             <select
@@ -521,16 +667,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
             {assets.map((asset) => (
               <article key={asset.id} className="overflow-hidden rounded-lg border border-border bg-surface">
                 <div className="relative aspect-[4/3] bg-surface-raised">
-                  {isRenderableImage(asset) ? (
-                    <img
-                      src={encodeLocalFileSrc(asset.filePath)}
-                      alt={asset.fileName}
-                      loading="lazy"
-                      className="h-full w-full object-contain"
-                    />
-                  ) : (
-                    <PlaceholderImage className="h-full w-full" />
-                  )}
+                  <AssetPreviewImage asset={asset} className="h-full w-full object-contain" />
                   <button
                     type="button"
                     onClick={() => void handleToggleSelected(asset)}
@@ -632,15 +769,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
               </button>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-              {isRenderableImage(selectedAsset) ? (
-                <img
-                  src={encodeLocalFileSrc(selectedAsset.filePath)}
-                  alt={selectedAsset.fileName}
-                  className="aspect-[4/3] w-full rounded-lg bg-surface-raised object-contain"
-                />
-              ) : (
-                <PlaceholderImage className="aspect-[4/3] w-full rounded-lg" />
-              )}
+              <AssetPreviewImage asset={selectedAsset} className="aspect-[4/3] w-full rounded-lg bg-surface-raised object-contain" />
               <ProvenanceRow label={i18nService.t('creatorAssetFileName')} value={selectedAsset.fileName} />
               <ProvenanceRow label={i18nService.t('creatorAssetLocalPath')} value={selectedAsset.filePath} />
               <ProvenanceRow label={i18nService.t('creatorAssetSource')} value={getAssetSourceLabel(selectedAsset.source)} />
