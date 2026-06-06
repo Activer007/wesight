@@ -8,12 +8,14 @@ import type { NanoBananaPrompt, NanoBananaPromptIndexItem } from '@shared/nanoBa
 import React, { useMemo, useState } from 'react';
 
 import { i18nService } from '../../../services/i18n';
+import type { NanoLibraryCreatorActions } from './NanoLibraryView';
 
 interface NanoPromptDetailDrawerProps {
   prompt: NanoBananaPrompt | null;
   indexItem: NanoBananaPromptIndexItem | null;
   isLoading: boolean;
   error: string | null;
+  creatorActions?: NanoLibraryCreatorActions;
   onClose: () => void;
   onCopyPrompt: (text: string) => void;
   onOpenSource: (url: string) => void;
@@ -54,6 +56,7 @@ export const NanoPromptDetailDrawer: React.FC<NanoPromptDetailDrawerProps> = ({
   indexItem,
   isLoading,
   error,
+  creatorActions,
   onClose,
   onCopyPrompt,
   onOpenSource,
@@ -179,18 +182,52 @@ export const NanoPromptDetailDrawer: React.FC<NanoPromptDetailDrawerProps> = ({
         <div className="min-w-0 truncate text-xs text-muted">
           {prompt?.sourcePublishedAt || indexItem?.publishedAt || ''}
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            if (canOpenSource && sourceUrl) onOpenSource(sourceUrl);
-          }}
-          disabled={!canOpenSource}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted"
-        >
-          <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-          {i18nService.t('nanoLibraryOpenSource')}
-        </button>
+        <div className="flex flex-wrap justify-end gap-2">
+          {prompt && creatorActions && (
+            <>
+              <ActionButton onClick={() => creatorActions.onUseInBuilder(prompt)}>
+                {i18nService.t('nanoLibraryUseInBuilder')}
+              </ActionButton>
+              <ActionButton onClick={() => creatorActions.onSaveAsRecipe(prompt)}>
+                {i18nService.t('nanoLibrarySaveAsRecipe')}
+              </ActionButton>
+              <ActionButton onClick={() => creatorActions.onSaveAsPromptAsset(prompt)}>
+                {i18nService.t('nanoLibrarySaveAsPromptAsset')}
+              </ActionButton>
+              <ActionButton onClick={() => creatorActions.onAddToBoard(prompt)}>
+                {i18nService.t('nanoLibraryAddToBoard')}
+              </ActionButton>
+              <ActionButton onClick={() => creatorActions.onSendToCowork(prompt)}>
+                {i18nService.t('nanoLibrarySendToCowork')}
+              </ActionButton>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              if (canOpenSource && sourceUrl) onOpenSource(sourceUrl);
+            }}
+            disabled={!canOpenSource}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted"
+          >
+            <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+            {i18nService.t('nanoLibraryOpenSource')}
+          </button>
+        </div>
       </footer>
     </aside>
   );
 };
+
+const ActionButton: React.FC<{
+  children: React.ReactNode;
+  onClick: () => void | Promise<void>;
+}> = ({ children, onClick }) => (
+  <button
+    type="button"
+    onClick={() => void onClick()}
+    className="inline-flex items-center rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-raised"
+  >
+    {children}
+  </button>
+);

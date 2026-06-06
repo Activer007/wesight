@@ -37,6 +37,7 @@ export const NanoBananaIpcChannel = {
   Search: 'nanoBanana:search',
   PromptGet: 'nanoBanana:prompt:get',
   PromptConvert: 'nanoBanana:prompt:convert',
+  ImportRecord: 'nanoBanana:import:record',
   UsageRecord: 'nanoBanana:usage:record',
 } as const;
 
@@ -50,6 +51,7 @@ export const NanoBananaIpcChannelValues = [
   NanoBananaIpcChannel.Search,
   NanoBananaIpcChannel.PromptGet,
   NanoBananaIpcChannel.PromptConvert,
+  NanoBananaIpcChannel.ImportRecord,
   NanoBananaIpcChannel.UsageRecord,
 ] as const;
 

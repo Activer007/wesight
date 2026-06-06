@@ -22,6 +22,18 @@ import { NanoPromptFilters } from './NanoPromptFilters';
 
 const PageSize = 30;
 
+export interface NanoLibraryCreatorActions {
+  onUseInBuilder: (prompt: NanoBananaPrompt) => void | Promise<void>;
+  onSaveAsRecipe: (prompt: NanoBananaPrompt) => void | Promise<void>;
+  onSaveAsPromptAsset: (prompt: NanoBananaPrompt) => void | Promise<void>;
+  onAddToBoard: (prompt: NanoBananaPrompt) => void | Promise<void>;
+  onSendToCowork: (prompt: NanoBananaPrompt) => void | Promise<void>;
+}
+
+interface NanoLibraryViewProps {
+  creatorActions?: NanoLibraryCreatorActions;
+}
+
 const defaultFilters: NanoBananaSearchInput = {
   sourceId: NanoBananaDefaultSourceId,
   query: '',
@@ -65,7 +77,7 @@ const isHttpUrl = (value: string): boolean => {
   }
 };
 
-export const NanoLibraryView: React.FC = () => {
+export const NanoLibraryView: React.FC<NanoLibraryViewProps> = ({ creatorActions }) => {
   const [filters, setFilters] = useState<NanoBananaSearchInput>(defaultFilters);
   const [status, setStatus] = useState<NanoBananaSourceStatusSnapshot | null>(null);
   const [items, setItems] = useState<NanoBananaPromptIndexItem[]>([]);
@@ -313,6 +325,7 @@ export const NanoLibraryView: React.FC = () => {
           indexItem={selectedIndexItem}
           isLoading={isDetailLoading}
           error={detailError}
+          creatorActions={creatorActions}
           onClose={() => {
             setSelectedIndexItem(null);
             setSelectedPrompt(null);

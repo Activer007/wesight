@@ -88,9 +88,11 @@ import type {
 } from '@shared/creatorStudio/types';
 import type { FeishuEngineKeyType, FeishuManagementModeType, FeishuRuntimeOwnershipType, WeixinOwnershipType } from '@shared/im/constants';
 import type {
+  NanoBananaImportRecordInput,
   NanoBananaPrompt,
   NanoBananaPromptConvertResult,
   NanoBananaPromptGetInput,
+  NanoBananaPromptImportRecord,
   NanoBananaPromptIndexItem,
   NanoBananaPromptSource,
   NanoBananaSearchInput,
@@ -1173,6 +1175,11 @@ interface IElectronAPI {
       sourcePromptId?: NanoBananaPromptConvertResult['sourcePromptId'];
       promptSpec?: NanoBananaPromptConvertResult['promptSpec'];
       warnings?: string[];
+      error?: string;
+    }>;
+    recordImport: (input: NanoBananaImportRecordInput) => Promise<{
+      success: boolean;
+      record?: NanoBananaPromptImportRecord;
       error?: string;
     }>;
     recordUsage: (input: NanoBananaUsageRecordInput) => Promise<{

@@ -655,6 +655,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(NanoBananaIpcChannel.PromptGet, input),
     convertPrompt: (input: Record<string, unknown>) =>
       ipcRenderer.invoke(NanoBananaIpcChannel.PromptConvert, input),
+    recordImport: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(NanoBananaIpcChannel.ImportRecord, input),
     recordUsage: (input: Record<string, unknown>) =>
       ipcRenderer.invoke(NanoBananaIpcChannel.UsageRecord, input),
   },

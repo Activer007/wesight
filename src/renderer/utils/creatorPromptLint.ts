@@ -138,6 +138,16 @@ export const lintCreatorPromptSpec = (spec: CreatorPromptSpec): CreatorPromptLin
     ));
   }
 
+  if (spec.provenance?.nano?.needReferenceImages && (spec.materials ?? []).length === 0) {
+    issues.push(createIssue(
+      CreatorPromptLintSeverity.Info,
+      'nano_reference_images_missing',
+      'materials',
+      'creatorPromptLintNanoReferenceMissing',
+      'creatorPromptLintNanoReferenceMissingSuggestion'
+    ));
+  }
+
   const errorCount = issues.filter((issue) => issue.severity === CreatorPromptLintSeverity.Error).length;
   const warningCount = issues.filter((issue) => issue.severity === CreatorPromptLintSeverity.Warning).length;
   const infoCount = issues.filter((issue) => issue.severity === CreatorPromptLintSeverity.Info).length;

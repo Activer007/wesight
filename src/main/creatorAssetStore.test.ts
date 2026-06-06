@@ -623,6 +623,62 @@ describe('CreatorAssetStore', () => {
     expect(store.listAssets({ projectId, tag: 'typography' }).total).toBe(1);
   });
 
+  test('stores Nano prompt asset provenance, license, usage, and board metadata', () => {
+    const workspace = store.createProject({ name: 'Nano Project' });
+    const projectId = workspace.currentProjectId;
+    const nanoPromptSpec = {
+      sourceType: 'nano_prompt',
+      sourceMode: 'nano-remix',
+      sourceId: 'nano-supai:6845',
+      sourceTitle: 'Nano prompt',
+      caseIds: [],
+      provenance: {
+        nano: {
+          sourceId: 'nano-supai',
+          promptId: 'nano-supai:6845',
+          sourcePromptId: '6845',
+          sourceUrl: 'https://example.com/source',
+          needReferenceImages: true,
+        },
+      },
+    };
+
+    const asset = store.createPromptAsset({
+      projectId,
+      title: 'Nano prompt',
+      promptText: 'Generate a Nano-inspired image.',
+      promptSpec: nanoPromptSpec,
+      source: CreatorProductionAssetSource.NanoPrompt,
+      licenseNote: 'Keep source attribution.',
+      usageNote: 'Needs reference images.',
+      metadata: {
+        nano: {
+          sourcePromptId: '6845',
+        },
+      },
+    });
+
+    expect(asset.source).toBe(CreatorProductionAssetSource.NanoPrompt);
+    expect(asset.licenseNote).toBe('Keep source attribution.');
+    expect(asset.usageNote).toBe('Needs reference images.');
+    expect(asset.promptSpec?.provenance).toMatchObject(nanoPromptSpec.provenance);
+
+    const board = store.getBoardWorkspace(projectId);
+    const card = store.addBoardCard({
+      boardId: board.currentBoardId,
+      kind: CreatorBoardCardKind.Prompt,
+      title: 'Nano board card',
+      promptText: asset.promptText,
+      promptSpec: asset.promptSpec,
+      metadata: {
+        nanoPromptId: 'nano-supai:6845',
+      },
+    });
+
+    expect(card.metadata).toMatchObject({ nanoPromptId: 'nano-supai:6845' });
+    expect(card.promptSpec?.provenance).toMatchObject(nanoPromptSpec.provenance);
+  });
+
   test('creates reusable creator case image assets for processing', () => {
     const workspace = store.createProject({ name: 'Case Image Project' });
     const projectId = workspace.currentProjectId;

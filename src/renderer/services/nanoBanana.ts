@@ -1,7 +1,9 @@
 import type {
+  NanoBananaImportRecordInput,
   NanoBananaPrompt,
   NanoBananaPromptConvertResult,
   NanoBananaPromptGetInput,
+  NanoBananaPromptImportRecord,
   NanoBananaPromptIndexItem,
   NanoBananaPromptSource,
   NanoBananaSearchInput,
@@ -85,6 +87,14 @@ class NanoBananaService {
     const result = await window.electron.nanoBanana.recordUsage(input);
     if (!result.success || !result.record) {
       throw new Error(result.error || 'Failed to record Nano usage');
+    }
+    return result.record;
+  }
+
+  async recordImport(input: NanoBananaImportRecordInput): Promise<NanoBananaPromptImportRecord> {
+    const result = await window.electron.nanoBanana.recordImport(input);
+    if (!result.success || !result.record) {
+      throw new Error(result.error || 'Failed to record Nano import');
     }
     return result.record;
   }

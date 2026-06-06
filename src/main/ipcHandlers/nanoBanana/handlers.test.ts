@@ -39,6 +39,7 @@ const syncService = {
     },
     warnings: [],
   })),
+  recordImport: vi.fn((input) => ({ id: 'import-1', ...input, createdAt: 1 })),
   recordUsageEvent: vi.fn((input) => ({ id: 'usage-1', ...input, createdAt: 1 })),
 };
 
@@ -60,6 +61,7 @@ test('registers Nano IPC handlers with constant channels', () => {
   expect(ipcMain.handle).toHaveBeenCalledWith(NanoBananaIpcChannel.Search, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(NanoBananaIpcChannel.PromptGet, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(NanoBananaIpcChannel.PromptConvert, expect.any(Function));
+  expect(ipcMain.handle).toHaveBeenCalledWith(NanoBananaIpcChannel.ImportRecord, expect.any(Function));
   expect(ipcMain.handle).toHaveBeenCalledWith(NanoBananaIpcChannel.UsageRecord, expect.any(Function));
 });
 
@@ -82,6 +84,14 @@ test('handles search, prompt get, convert, and usage record requests', async () 
 
   const convertResult = await handlers.get(NanoBananaIpcChannel.PromptConvert)?.({}, { sourcePromptId: '1' });
   expect(convertResult).toMatchObject({ success: true, promptId: 'nano-supai:1' });
+
+  const importResult = await handlers.get(NanoBananaIpcChannel.ImportRecord)?.({}, {
+    sourceId: NanoBananaDefaultSourceId,
+    promptId: 'nano-supai:1',
+    sourcePromptId: '1',
+    importType: NanoBananaPromptImportType.Builder,
+  });
+  expect(importResult).toMatchObject({ success: true, record: expect.objectContaining({ id: 'import-1' }) });
 
   const usageResult = await handlers.get(NanoBananaIpcChannel.UsageRecord)?.({}, {
     sourceId: NanoBananaDefaultSourceId,

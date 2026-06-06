@@ -3,9 +3,11 @@ import {
   NanoBananaSyncStatus,
 } from '../../shared/nanoBanana/constants';
 import type {
+  NanoBananaImportRecordInput,
   NanoBananaPrompt,
   NanoBananaPromptGetInput,
   NanoBananaPromptGetResult,
+  NanoBananaPromptImportRecord,
   NanoBananaPromptSource,
   NanoBananaSyncInput,
   NanoBananaSyncResult,
@@ -215,6 +217,11 @@ export class NanoPromptSyncService {
   recordUsageEvent(input: NanoBananaUsageRecordInput): NanoBananaUsageEventRecord {
     this.store.ensureDefaultSource();
     return this.store.recordUsageEvent(input);
+  }
+
+  recordImport(input: NanoBananaImportRecordInput): NanoBananaPromptImportRecord {
+    this.store.ensureDefaultSource();
+    return this.store.recordImport(input);
   }
 
   async fetchAndCachePage(

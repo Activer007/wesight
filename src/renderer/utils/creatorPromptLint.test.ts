@@ -80,4 +80,35 @@ describe('creator prompt lint', () => {
 
     expect(result.issues.map((issue) => issue.code)).toContain('material_unavailable');
   });
+
+  test('adds an info issue when Nano reference images are needed but absent', () => {
+    const result = lintCreatorPromptSpec(createPromptSpec({
+      provenance: {
+        templateId: null,
+        caseIds: [],
+        variantOfAssetId: null,
+        nano: {
+          sourceId: 'nano-supai',
+          promptId: 'nano-supai:6845',
+          sourcePromptId: '6845',
+          sourceUrl: 'https://example.com/source',
+          sourcePlatform: 'x',
+          sourcePublishedAt: null,
+          authorName: 'Nano Author',
+          title: 'Nano prompt',
+          media: [],
+          mediaThumbnails: [],
+          tags: [],
+          tagsZh: [],
+          promptCategories: [],
+          needReferenceImages: true,
+          licenseNote: null,
+          usageNote: null,
+        },
+      },
+    }));
+
+    expect(result.issues.map((issue) => issue.code)).toContain('nano_reference_images_missing');
+    expect(result.issues.find((issue) => issue.code === 'nano_reference_images_missing')?.severity).toBe(CreatorPromptLintSeverity.Info);
+  });
 });

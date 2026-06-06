@@ -114,6 +114,7 @@ export const CreatorProductionAssetStatusValues = [
 export const CreatorProductionAssetSource = {
   CoworkGeneratedImage: 'cowork_generated_image',
   CreatorPrompt: 'creator_prompt',
+  NanoPrompt: 'nano_prompt',
   CreatorCase: 'creator_case',
   LocalImageImport: 'local_image_import',
   LocalImageProcessing: 'local_image_processing',
@@ -127,6 +128,7 @@ export type CreatorProductionAssetSource =
 export const CreatorProductionAssetSourceValues = [
   CreatorProductionAssetSource.CoworkGeneratedImage,
   CreatorProductionAssetSource.CreatorPrompt,
+  CreatorProductionAssetSource.NanoPrompt,
   CreatorProductionAssetSource.CreatorCase,
   CreatorProductionAssetSource.LocalImageImport,
   CreatorProductionAssetSource.LocalImageProcessing,

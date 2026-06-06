@@ -125,6 +125,7 @@ export interface CreatorStudioManifest {
 export const CreatorStudioSourceType = {
   Case: 'case',
   Template: 'template',
+  NanoPrompt: 'nano_prompt',
 } as const;
 
 export type CreatorStudioSourceType = typeof CreatorStudioSourceType[keyof typeof CreatorStudioSourceType];
@@ -135,6 +136,7 @@ export const CreatorPromptSourceMode = {
   TemplateDraft: 'template-draft',
   RecipeDraft: 'recipe-draft',
   AssetVariant: 'asset-variant',
+  NanoRemix: 'nano-remix',
 } as const;
 
 export type CreatorPromptSourceMode = typeof CreatorPromptSourceMode[keyof typeof CreatorPromptSourceMode];
@@ -243,6 +245,33 @@ export interface CreatorPromptReferenceAnalysis {
   constraintNotes: string[];
 }
 
+export interface CreatorPromptNanoProvenance {
+  sourceId: string;
+  promptId: string;
+  sourcePromptId: string;
+  sourceUrl: string | null;
+  sourcePlatform: string | null;
+  sourcePublishedAt: string | null;
+  authorName: string | null;
+  authorLink?: string | null;
+  title: string;
+  media: string[];
+  mediaThumbnails: string[];
+  tags: string[];
+  tagsZh: string[];
+  promptCategories: string[];
+  needReferenceImages: boolean;
+  licenseNote: string | null;
+  usageNote: string | null;
+}
+
+export interface CreatorPromptProvenance {
+  templateId: string | null;
+  caseIds: string[];
+  variantOfAssetId: string | null;
+  nano?: CreatorPromptNanoProvenance;
+}
+
 export interface CreatorPromptSpec {
   sourceType: CreatorStudioSourceType;
   sourceMode?: CreatorPromptSourceMode;
@@ -279,4 +308,5 @@ export interface CreatorPromptSpec {
   selectedCreativeDirectionId?: string;
   selectedCreativeDirection?: CreatorCreativeDirection;
   variantOfAssetId?: string;
+  provenance?: CreatorPromptProvenance;
 }

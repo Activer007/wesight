@@ -53,6 +53,7 @@ export interface CreatorPromptSeed {
   templateFieldSchema?: CreatorTemplateFieldSchema[];
   referenceAnalysis?: CreatorPromptReferenceAnalysis;
   variantOfAssetId?: string;
+  provenance?: CreatorPromptSpec['provenance'];
 }
 
 export interface CreatorCoworkDraftInput {
@@ -149,6 +150,7 @@ export const buildPromptSpec = (
     referencePrompt: seed?.referencePrompt,
     templateId: seed?.templateId,
     variantOfAssetId: seed?.variantOfAssetId,
+    provenance: seed?.provenance,
   };
   const contextPack = renderCreatorContextPack(promptMaterials, language);
   const creativeDirections = buildCreatorCreativeDirections(baseSpec);

@@ -28,6 +28,7 @@ test('exposes values and type guards for Nano Banana constants', () => {
   expect(NanoBananaSourceTypeValues).toContain(NanoBananaSourceType.StaticJson);
   expect(NanoBananaSourceStatusValues).toContain(NanoBananaSourceStatus.Ready);
   expect(NanoBananaIpcChannelValues).toContain(NanoBananaIpcChannel.Search);
+  expect(NanoBananaIpcChannelValues).toContain(NanoBananaIpcChannel.ImportRecord);
   expect(NanoBananaPromptImportTypeValues).toContain(NanoBananaPromptImportType.Recipe);
   expect(NanoBananaUsageEventTypeValues).toContain(NanoBananaUsageEventType.Copy);
   expect(NanoBananaSyncStatusValues).toContain(NanoBananaSyncStatus.Completed);

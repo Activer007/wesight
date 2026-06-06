@@ -11,6 +11,7 @@ import {
   NanoBananaUsageEventType,
 } from '../../../shared/nanoBanana/constants';
 import type {
+  NanoBananaImportRecordInput,
   NanoBananaPromptGetInput,
   NanoBananaSearchInput,
   NanoBananaSyncInput,
@@ -105,6 +106,23 @@ const normalizeUsageInput = (input: unknown): NanoBananaUsageRecordInput | null 
   };
 };
 
+const normalizeImportInput = (input: unknown): NanoBananaImportRecordInput | null => {
+  const record = toRecord(input);
+  const sourceId = toTrimmedString(record.sourceId) ?? NanoBananaDefaultSourceId;
+  const promptId = toTrimmedString(record.promptId);
+  const sourcePromptId = toTrimmedString(record.sourcePromptId);
+  if (!promptId || !sourcePromptId || !isNanoBananaPromptImportType(record.importType)) return null;
+  return {
+    sourceId,
+    promptId,
+    sourcePromptId,
+    importType: record.importType,
+    projectId: toTrimmedString(record.projectId),
+    targetId: toTrimmedString(record.targetId),
+    metadata: toRecord(record.metadata),
+  };
+};
+
 export const registerNanoBananaIpcHandlers = (
   ipcMain: IpcMain,
   getSyncService: () => NanoPromptSyncService,
@@ -187,6 +205,17 @@ export const registerNanoBananaIpcHandlers = (
       };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to convert Nano prompt' };
+    }
+  });
+
+  ipcMain.handle(NanoBananaIpcChannel.ImportRecord, async (_event, input: unknown) => {
+    try {
+      const normalized = normalizeImportInput(input);
+      if (!normalized) return { success: false, error: 'valid prompt import input is required' };
+      const record = getSyncService().recordImport(normalized);
+      return { success: true, record };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to record Nano import' };
     }
   });
 

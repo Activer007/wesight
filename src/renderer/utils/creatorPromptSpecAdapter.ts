@@ -74,6 +74,7 @@ export const toCreatorPromptSpecSnapshot = (
       templateId: spec.templateId ?? null,
       caseIds: spec.caseIds,
       variantOfAssetId: spec.variantOfAssetId ?? null,
+      ...(spec.provenance ?? {}),
     },
   };
 };

@@ -193,6 +193,16 @@ export interface NanoBananaUsageRecordInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface NanoBananaImportRecordInput {
+  sourceId: string;
+  promptId: string;
+  sourcePromptId: string;
+  importType: NanoBananaPromptImportType;
+  projectId?: string | null;
+  targetId?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 export type NanoBananaIpcResponse<T> = {
   success: boolean;
   error?: string;
