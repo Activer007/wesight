@@ -32,11 +32,13 @@ import type {
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { DeliveryMode, PayloadKind, ScheduleKind, SessionTarget, WakeMode } from '../../../scheduledTask/constants';
 import casesData from '../../data/creatorStudio/cases.json';
 import manifestData from '../../data/creatorStudio/manifest.json';
 import styleLibraryData from '../../data/creatorStudio/style-library.json';
 import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
+import { scheduledTaskService } from '../../services/scheduledTask';
 import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
 import { setActiveSkillIds, setSkills } from '../../store/slices/skillSlice';
@@ -53,6 +55,13 @@ import type {
 } from '../../types/creatorStudio';
 import { CreatorMaterialRole, CreatorMaterialSource, CreatorPromptSourceMode, CreatorStudioSourceType, CreatorTemplateFieldKind } from '../../types/creatorStudio';
 import { applyCreatorBriefAutofill } from '../../utils/creatorBriefAutofill';
+import {
+  buildCreatorProductionPackage,
+  CreatorProductionPackageIssueSeverity,
+  type CreatorProductionPackageSummary,
+  type CreatorProductionPerformanceGroup,
+  summarizeCreatorProductionPackage,
+} from '../../utils/creatorProductionPackage';
 import { compileCreatorPrompt, CreatorPromptCompileTarget } from '../../utils/creatorPromptCompiler';
 import { CreatorPromptLintSeverity, lintCreatorPromptSpec } from '../../utils/creatorPromptLint';
 import { reverseEngineerCreatorPrompt } from '../../utils/creatorPromptReverseEngineer';
@@ -190,6 +199,49 @@ const copyText = async (text: string) => {
   dispatchToast(i18nService.t('copied'));
 };
 
+const encodeTextBase64 = (text: string): string => {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+};
+
+const buildProductionPackageFileName = (projectName: string): string => {
+  const safeProjectName = projectName.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'creator-project';
+  return `${safeProjectName}-production-package.json`;
+};
+
+const CreatorRecipeAutomationDefaultCron = '0 9 * * *';
+
+const buildRecipeAutomationPrompt = (recipe: CreatorRecipeRecord): string => (
+  [
+    i18nService.t('creatorRecipeAutomationPromptIntro'),
+    '',
+    `recipeId: ${recipe.id}`,
+    `recipeTitle: ${recipe.title}`,
+    `tags: ${recipe.tags.length > 0 ? recipe.tags.join(', ') : 'none'}`,
+    '',
+    'PromptSpec:',
+    '```json',
+    JSON.stringify(recipe.promptSpec, null, 2),
+    '```',
+    '',
+    'Default runtime:',
+    '```json',
+    JSON.stringify(recipe.defaultRuntime, null, 2),
+    '```',
+    '',
+    'Default output:',
+    '```json',
+    JSON.stringify(recipe.defaultOutput, null, 2),
+    '```',
+  ].join('\n')
+);
+
 const PlaceholderImage: React.FC<{
   src: string | null;
   alt: string;
@@ -285,6 +337,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const [activeBatchRun, setActiveBatchRun] = useState<CreatorBatchRunRecord | null>(null);
   const [isCreatingBatchRun, setIsCreatingBatchRun] = useState(false);
   const [recipes, setRecipes] = useState<CreatorRecipeRecord[]>([]);
+  const [projectAssets, setProjectAssets] = useState<CreatorProductionAssetRecord[]>([]);
 
   useEffect(() => {
     void skillService.loadSkills().then((loadedSkills) => {
@@ -316,6 +369,12 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const loadRecipes = useCallback(async (projectId: string) => {
     const result = await creatorStudioAssetService.listRecipes({ projectId, limit: 50 });
     setRecipes(result.recipes);
+  }, []);
+
+  const loadProjectAssets = useCallback(async (projectId: string) => {
+    const result = await creatorStudioAssetService.listAssets({ projectId, limit: 200 });
+    setProjectAssets(result.assets);
+    return result.assets;
   }, []);
 
   useEffect(() => {
@@ -352,6 +411,13 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       dispatchToast(i18nService.t('creatorRecipeLoadFailed'));
     });
   }, [currentProjectId, loadRecipes]);
+
+  useEffect(() => {
+    if (!currentProjectId) return;
+    void loadProjectAssets(currentProjectId).catch(() => {
+      dispatchToast(i18nService.t('creatorAssetsLoadFailed'));
+    });
+  }, [currentProjectId, loadProjectAssets]);
 
   const searchableLabels = useMemo(() => {
     const labels = new Map<string, string[]>();
@@ -418,6 +484,19 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     [boardContextPack, boardPromptSpec, boardWorkspace?.brandKit]
   );
   const batchPromptText = useMemo(() => renderCreatorPrompt(batchPromptSpec), [batchPromptSpec]);
+  const currentProject = useMemo(
+    () => workspace?.projects.find((project) => project.id === currentProjectId) ?? null,
+    [currentProjectId, workspace?.projects]
+  );
+  const productionPackageSummary = useMemo<CreatorProductionPackageSummary>(() => (
+    summarizeCreatorProductionPackage({
+      projectId: currentProjectId,
+      project: currentProject,
+      assets: projectAssets,
+      recipes,
+      batchRuns,
+    })
+  ), [batchRuns, currentProject, currentProjectId, projectAssets, recipes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -717,6 +796,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         ].filter((item): item is string => Boolean(item?.trim())),
       });
       dispatchToast(i18nService.t('creatorPromptAssetSaved'));
+      await loadProjectAssets(projectId);
     } catch (error) {
       dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorPromptAssetSaveFailed'));
     }
@@ -784,6 +864,80 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       dispatchToast(i18nService.t('creatorRecipeImported'));
     } catch (error) {
       dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorRecipeImportFailed'));
+    }
+  };
+
+  const scheduleRecipeAutomation = async (recipe: CreatorRecipeRecord, cronExpression: string) => {
+    const normalizedCronExpression = cronExpression.trim();
+    if (!normalizedCronExpression) return;
+    if (!window.electron?.scheduledTasks) {
+      dispatchToast(i18nService.t('creatorRecipeAutomationFailed'));
+      return;
+    }
+    try {
+      await scheduledTaskService.createTask({
+        name: i18nService.t('creatorRecipeAutomationTaskName').replace('{title}', recipe.title),
+        description: i18nService.t('creatorRecipeAutomationTaskDescription').replace('{id}', recipe.id),
+        enabled: true,
+        schedule: {
+          kind: ScheduleKind.Cron,
+          expr: normalizedCronExpression,
+        },
+        sessionTarget: SessionTarget.Isolated,
+        wakeMode: WakeMode.Now,
+        payload: {
+          kind: PayloadKind.AgentTurn,
+          message: buildRecipeAutomationPrompt(recipe),
+        },
+        delivery: {
+          mode: DeliveryMode.None,
+        },
+      });
+      dispatchToast(i18nService.t('creatorRecipeAutomationCreated'));
+    } catch (error) {
+      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorRecipeAutomationFailed'));
+    }
+  };
+
+  const exportProductionPackage = async () => {
+    const projectId = currentProjectId || workspace?.currentProjectId;
+    if (!projectId) {
+      dispatchToast(i18nService.t('creatorWorkspaceLoadFailed'));
+      return;
+    }
+    try {
+      const [assetResult, recipeResult, batchResult] = await Promise.all([
+        creatorStudioAssetService.listAssets({ projectId, limit: 200 }),
+        creatorStudioAssetService.listRecipes({ projectId, limit: 50 }),
+        creatorStudioAssetService.listBatchRuns({ projectId, limit: 20 }),
+      ]);
+      setProjectAssets(assetResult.assets);
+      setRecipes(recipeResult.recipes);
+      setBatchRuns(batchResult.runs);
+      setActiveBatchRun((current) => {
+        if (!current) return batchResult.runs[0] ?? null;
+        return batchResult.runs.find((run) => run.id === current.id) ?? batchResult.runs[0] ?? null;
+      });
+      const project = workspace?.projects.find((item) => item.id === projectId) ?? null;
+      const manifest = buildCreatorProductionPackage({
+        projectId,
+        project,
+        assets: assetResult.assets,
+        recipes: recipeResult.recipes,
+        batchRuns: batchResult.runs,
+      });
+      const dataBase64 = encodeTextBase64(JSON.stringify(manifest, null, 2));
+      const result = await window.electron.dialog.saveInlineFile({
+        dataBase64,
+        fileName: buildProductionPackageFileName(manifest.project.name),
+        mimeType: 'application/json',
+      });
+      if (!result.success) {
+        throw new Error(result.error || i18nService.t('creatorProductionPackageExportFailed'));
+      }
+      dispatchToast(i18nService.t('creatorProductionPackageExported'));
+    } catch (error) {
+      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorProductionPackageExportFailed'));
     }
   };
 
@@ -1086,11 +1240,14 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
             workspace={workspace}
             currentProjectId={currentProjectId}
             recipes={recipes}
+            productionPackageSummary={productionPackageSummary}
             onProjectChange={(projectId) => void switchProject(projectId)}
             onCreateProject={createProject}
             onUseRecipe={useRecipeInBuilder}
             onSaveRecipe={(promptSpec) => void saveRecipe(promptSpec)}
             onImportRecipe={(recipeJson) => void importRecipe(recipeJson)}
+            onScheduleRecipe={(recipe, cronExpression) => void scheduleRecipeAutomation(recipe, cronExpression)}
+            onExportProductionPackage={() => void exportProductionPackage()}
             onClearSource={() => {
               setBuilderSeed(null);
               setBuilderForm(defaultBuilderForm);
@@ -1488,6 +1645,30 @@ const getLintSeverityClass = (severity: CreatorPromptLintSeverity): string => {
   }
 };
 
+const getProductionIssueSeverityClass = (severity: CreatorProductionPackageIssueSeverity): string => {
+  switch (severity) {
+    case CreatorProductionPackageIssueSeverity.Blocker:
+      return 'bg-red-500/10 text-red-600';
+    case CreatorProductionPackageIssueSeverity.Warning:
+      return 'bg-amber-500/10 text-amber-700 dark:text-amber-400';
+    case CreatorProductionPackageIssueSeverity.Info:
+    default:
+      return 'bg-surface-raised text-muted';
+  }
+};
+
+const getProductionIssueSeverityLabel = (severity: CreatorProductionPackageIssueSeverity): string => {
+  switch (severity) {
+    case CreatorProductionPackageIssueSeverity.Blocker:
+      return i18nService.t('creatorProductionIssueSeverityBlocker');
+    case CreatorProductionPackageIssueSeverity.Warning:
+      return i18nService.t('creatorProductionIssueSeverityWarning');
+    case CreatorProductionPackageIssueSeverity.Info:
+    default:
+      return i18nService.t('creatorProductionIssueSeverityInfo');
+  }
+};
+
 const capitalizeLintSeverity = (severity: CreatorPromptLintSeverity): string => (
   severity.charAt(0).toUpperCase() + severity.slice(1)
 );
@@ -1505,11 +1686,14 @@ const PromptBuilder: React.FC<{
   workspace: CreatorWorkspaceSnapshot | null;
   currentProjectId: string;
   recipes: CreatorRecipeRecord[];
+  productionPackageSummary: CreatorProductionPackageSummary;
   onProjectChange: (projectId: string) => void;
   onCreateProject: (name: string) => Promise<void> | void;
   onUseRecipe: (recipe: CreatorRecipeRecord) => void;
   onSaveRecipe: (promptSpec: CreatorPromptSpec) => void;
   onImportRecipe: (recipeJson: string) => void;
+  onScheduleRecipe: (recipe: CreatorRecipeRecord, cronExpression: string) => Promise<void> | void;
+  onExportProductionPackage: () => void;
   onClearSource: () => void;
   onOpenSourceDetail: () => void;
   brandKit: CreatorBrandKitRecord | null;
@@ -1534,11 +1718,14 @@ const PromptBuilder: React.FC<{
   workspace,
   currentProjectId,
   recipes,
+  productionPackageSummary,
   onProjectChange,
   onCreateProject,
   onUseRecipe,
   onSaveRecipe,
   onImportRecipe,
+  onScheduleRecipe,
+  onExportProductionPackage,
   onClearSource,
   onOpenSourceDetail,
   brandKit,
@@ -1555,6 +1742,9 @@ const PromptBuilder: React.FC<{
   const [briefAutofillMessage, setBriefAutofillMessage] = useState('');
   const [recipeImportText, setRecipeImportText] = useState('');
   const [isRecipeImportOpen, setIsRecipeImportOpen] = useState(false);
+  const [recipeScheduleId, setRecipeScheduleId] = useState<string | null>(null);
+  const [recipeScheduleCron, setRecipeScheduleCron] = useState(CreatorRecipeAutomationDefaultCron);
+  const [isSchedulingRecipe, setIsSchedulingRecipe] = useState(false);
   const promptLanguage = normalizePromptLanguage(i18nService.getLanguage(), form);
   const rawPromptSpec: CreatorPromptSpec = buildPromptSpec(seed, form, promptLanguage, i18nService.t('creatorBlankBuilder'), materials);
   const basePromptSpec = applyBoardAndBrandKit(rawPromptSpec, brandKit, boardContextPack);
@@ -1622,6 +1812,27 @@ const PromptBuilder: React.FC<{
     }
   };
 
+  const openRecipeScheduleForm = (recipe: CreatorRecipeRecord) => {
+    setRecipeScheduleId(recipe.id);
+    setRecipeScheduleCron(CreatorRecipeAutomationDefaultCron);
+  };
+
+  const closeRecipeScheduleForm = () => {
+    setRecipeScheduleId(null);
+    setRecipeScheduleCron(CreatorRecipeAutomationDefaultCron);
+  };
+
+  const submitRecipeSchedule = async (recipe: CreatorRecipeRecord) => {
+    if (!recipeScheduleCron.trim()) return;
+    setIsSchedulingRecipe(true);
+    try {
+      await onScheduleRecipe(recipe, recipeScheduleCron);
+      closeRecipeScheduleForm();
+    } finally {
+      setIsSchedulingRecipe(false);
+    }
+  };
+
   return (
     <section className="grid min-w-0 gap-4 p-4 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
       <div className="min-w-0 space-y-3 rounded-lg border border-border bg-surface p-4">
@@ -1647,30 +1858,42 @@ const PromptBuilder: React.FC<{
                 </div>
               )}
             </div>
-            {sourceMode !== CreatorPromptSourceMode.Blank && (
-              <div className="flex shrink-0 gap-1">
-                {sourceCanOpen && (
+            <div className="flex shrink-0 gap-1">
+              <button
+                type="button"
+                disabled={!currentProjectId}
+                onClick={() => onSaveRecipe(promptSpec)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={i18nService.t('creatorSaveAsRecipe')}
+                title={i18nService.t('creatorSaveAsRecipe')}
+              >
+                <DocumentDuplicateIcon className="h-4 w-4" />
+              </button>
+              {sourceMode !== CreatorPromptSourceMode.Blank && (
+                <>
+                  {sourceCanOpen && (
+                    <button
+                      type="button"
+                      onClick={onOpenSourceDetail}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition-colors hover:bg-surface-raised hover:text-foreground"
+                      aria-label={i18nService.t('creatorBuilderOpenSource')}
+                      title={i18nService.t('creatorBuilderOpenSource')}
+                    >
+                      <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={onOpenSourceDetail}
+                    onClick={onClearSource}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition-colors hover:bg-surface-raised hover:text-foreground"
-                    aria-label={i18nService.t('creatorBuilderOpenSource')}
-                    title={i18nService.t('creatorBuilderOpenSource')}
+                    aria-label={i18nService.t('creatorBuilderClearSource')}
+                    title={i18nService.t('creatorBuilderClearSource')}
                   >
-                    <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                    <XMarkIcon className="h-4 w-4" />
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={onClearSource}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition-colors hover:bg-surface-raised hover:text-foreground"
-                  aria-label={i18nService.t('creatorBuilderClearSource')}
-                  title={i18nService.t('creatorBuilderClearSource')}
-                >
-                  <XMarkIcon className="h-4 w-4" />
-                </button>
-              </div>
-            )}
+                </>
+              )}
+            </div>
           </div>
         </div>
         <div className="rounded-lg border border-border bg-background p-3">
@@ -1801,6 +2024,13 @@ const PromptBuilder: React.FC<{
                     </button>
                     <button
                       type="button"
+                      onClick={() => openRecipeScheduleForm(recipe)}
+                      className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground"
+                    >
+                      {i18nService.t('creatorRecipeSchedule')}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => void copyText(JSON.stringify(recipe, null, 2))}
                       className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground"
                     >
@@ -1808,8 +2038,125 @@ const PromptBuilder: React.FC<{
                     </button>
                   </div>
                 </div>
+                {recipeScheduleId === recipe.id && (
+                  <div className="mt-3 space-y-2 rounded-lg border border-border bg-background p-3">
+                    <div>
+                      <label className="text-[11px] font-medium text-secondary" htmlFor={`recipe-schedule-${recipe.id}`}>
+                        {i18nService.t('creatorRecipeScheduleCronLabel')}
+                      </label>
+                      <input
+                        id={`recipe-schedule-${recipe.id}`}
+                        value={recipeScheduleCron}
+                        onChange={(event) => setRecipeScheduleCron(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') void submitRecipeSchedule(recipe);
+                          if (event.key === 'Escape') closeRecipeScheduleForm();
+                        }}
+                        placeholder={CreatorRecipeAutomationDefaultCron}
+                        className="mt-1 h-9 w-full rounded-lg border border-border bg-surface px-2 text-xs outline-none focus:border-primary"
+                      />
+                      <p className="mt-1 text-[11px] leading-4 text-muted">
+                        {i18nService.t('creatorRecipeScheduleCronHelp')}
+                      </p>
+                    </div>
+                    <div className="space-y-1 rounded-md bg-surface px-2 py-2 text-[11px] text-muted">
+                      <div className="break-words">
+                        <span className="font-medium text-secondary">{i18nService.t('creatorRecipeScheduleTaskName')}</span>
+                        {' '}
+                        {i18nService.t('creatorRecipeAutomationTaskName').replace('{title}', recipe.title)}
+                      </div>
+                      <div className="break-words">
+                        <span className="font-medium text-secondary">{i18nService.t('creatorRecipeScheduleTaskDescription')}</span>
+                        {' '}
+                        {i18nService.t('creatorRecipeAutomationTaskDescription').replace('{id}', recipe.id)}
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={closeRecipeScheduleForm}
+                        className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                      >
+                        {i18nService.t('cancel')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!recipeScheduleCron.trim() || isSchedulingRecipe}
+                        onClick={() => void submitRecipeSchedule(recipe)}
+                        className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {i18nService.t('creatorRecipeScheduleCreate')}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
+          </div>
+        </div>
+        <div className="rounded-lg border border-border bg-background p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-secondary">{i18nService.t('creatorProductionPackage')}</div>
+              <p className="mt-1 text-xs leading-5 text-muted">{i18nService.t('creatorProductionPackageHint')}</p>
+            </div>
+            <button
+              type="button"
+              disabled={!currentProjectId}
+              onClick={onExportProductionPackage}
+              className="shrink-0 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {i18nService.t('creatorProductionPackageExport')}
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <ProductionMetric label={i18nService.t('creatorProductionMetricAssets')} value={String(productionPackageSummary.stats.totalAssets)} />
+            <ProductionMetric label={i18nService.t('creatorProductionMetricSelected')} value={String(productionPackageSummary.stats.selectedAssets)} />
+            <ProductionMetric label={i18nService.t('creatorProductionMetricAdopted')} value={String(productionPackageSummary.stats.adoptedAssets)} />
+            <ProductionMetric label={i18nService.t('creatorProductionMetricRecipes')} value={String(productionPackageSummary.stats.recipes)} />
+            <ProductionMetric label={i18nService.t('creatorProductionMetricBatches')} value={String(productionPackageSummary.stats.batchRuns)} />
+            <ProductionMetric label={i18nService.t('creatorProductionMetricCompletion')} value={`${productionPackageSummary.stats.completionRate}%`} />
+          </div>
+          <div className="mt-3 space-y-2">
+            <div className="text-[11px] font-semibold uppercase text-muted">{i18nService.t('creatorProductionPerformance')}</div>
+            <div className="grid gap-2">
+              <ProductionPerformanceList
+                title={i18nService.t('creatorProductionPerformanceTemplates')}
+                items={productionPackageSummary.performance.byTemplate}
+              />
+              <ProductionPerformanceList
+                title={i18nService.t('creatorProductionPerformanceModels')}
+                items={productionPackageSummary.performance.byModel}
+              />
+              <ProductionPerformanceList
+                title={i18nService.t('creatorProductionPerformanceDirections')}
+                items={productionPackageSummary.performance.byDirection}
+              />
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            <div className="text-[11px] font-semibold uppercase text-muted">{i18nService.t('creatorProductionPackageGovernance')}</div>
+            {productionPackageSummary.issues.length === 0 ? (
+              <div className="rounded-lg border border-border bg-surface p-3 text-xs text-muted">
+                {i18nService.t('creatorProductionPackageNoIssues')}
+              </div>
+            ) : productionPackageSummary.issues.slice(0, 5).map((issue) => (
+              <div key={issue.code} className="rounded-lg border border-border bg-surface p-2">
+                <div className="flex items-start gap-2">
+                  <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${getProductionIssueSeverityClass(issue.severity)}`}>
+                    {getProductionIssueSeverityLabel(issue.severity)}
+                  </span>
+                  <p className="min-w-0 text-xs leading-5 text-secondary">
+                    {i18nService.t(issue.messageKey).replace('{count}', String(issue.count))}
+                  </p>
+                </div>
+              </div>
+            ))}
+            {productionPackageSummary.issues.length > 5 && (
+              <div className="text-xs text-muted">
+                {i18nService.t('creatorProductionPackageMoreIssues').replace('{count}', String(productionPackageSummary.issues.length - 5))}
+              </div>
+            )}
           </div>
         </div>
         <BuilderSection title={i18nService.t('creatorBuilderSectionBrief')}>
@@ -2173,6 +2520,54 @@ const rgbToHex = (red: number, green: number, blue: number): string => (
   `#${colorChannelToHex(red)}${colorChannelToHex(green)}${colorChannelToHex(blue)}`
 );
 
+const getCommonDivisor = (left: number, right: number): number => {
+  let a = Math.max(1, Math.round(left));
+  let b = Math.max(1, Math.round(right));
+  while (b) {
+    const next = a % b;
+    a = b;
+    b = next;
+  }
+  return a;
+};
+
+const getImageOrientation = (width: number, height: number): CreatorMaterialImageAnalysis['orientation'] => (
+  Math.abs(width - height) <= Math.max(width, height) * 0.04
+    ? 'square'
+    : width > height ? 'landscape' : 'portrait'
+);
+
+const getImageAspectRatio = (width: number, height: number): string => {
+  const divisor = getCommonDivisor(width, height);
+  return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;
+};
+
+const getImageBrightness = (averageLuminance: number): CreatorMaterialImageAnalysis['brightness'] => {
+  if (averageLuminance < 82) return 'dark';
+  if (averageLuminance > 174) return 'bright';
+  return 'balanced';
+};
+
+const getImageContrast = (luminanceDeviation: number): CreatorMaterialImageAnalysis['contrast'] => {
+  if (luminanceDeviation < 28) return 'low';
+  if (luminanceDeviation > 60) return 'high';
+  return 'medium';
+};
+
+const getImageColorMood = (
+  warmPixelCount: number,
+  coolPixelCount: number,
+  sampleCount: number
+): CreatorMaterialImageAnalysis['colorMood'] => {
+  if (sampleCount === 0) return 'neutral';
+  const warmRatio = warmPixelCount / sampleCount;
+  const coolRatio = coolPixelCount / sampleCount;
+  if (warmRatio > 0.25 && coolRatio > 0.25) return 'mixed';
+  if (warmRatio > coolRatio + 0.12) return 'warm';
+  if (coolRatio > warmRatio + 0.12) return 'cool';
+  return 'neutral';
+};
+
 const analyzeImageDataUrl = (dataUrl: string): Promise<CreatorMaterialImageAnalysis | undefined> => new Promise((resolve) => {
   if (typeof Image === 'undefined' || typeof document === 'undefined') {
     resolve(undefined);
@@ -2192,9 +2587,22 @@ const analyzeImageDataUrl = (dataUrl: string): Promise<CreatorMaterialImageAnaly
     context.drawImage(image, 0, 0, sampleSize, sampleSize);
     const pixels = context.getImageData(0, 0, sampleSize, sampleSize).data;
     const colorBuckets = new Map<string, number>();
+    const luminanceValues: number[] = [];
+    let warmPixelCount = 0;
+    let coolPixelCount = 0;
     for (let index = 0; index < pixels.length; index += 4) {
       const alpha = pixels[index + 3];
       if (alpha < 180) continue;
+      const originalRed = pixels[index];
+      const originalGreen = pixels[index + 1];
+      const originalBlue = pixels[index + 2];
+      const luminance = originalRed * 0.2126 + originalGreen * 0.7152 + originalBlue * 0.0722;
+      luminanceValues.push(luminance);
+      if (originalRed - originalBlue > 24) {
+        warmPixelCount += 1;
+      } else if (originalBlue - originalRed > 24) {
+        coolPixelCount += 1;
+      }
       const red = Math.round(pixels[index] / 32) * 32;
       const green = Math.round(pixels[index + 1] / 32) * 32;
       const blue = Math.round(pixels[index + 2] / 32) * 32;
@@ -2205,10 +2613,21 @@ const analyzeImageDataUrl = (dataUrl: string): Promise<CreatorMaterialImageAnaly
       .sort((left, right) => right[1] - left[1])
       .slice(0, 4)
       .map(([color]) => color);
+    const averageLuminance = luminanceValues.length > 0
+      ? luminanceValues.reduce((sum, value) => sum + value, 0) / luminanceValues.length
+      : 128;
+    const luminanceDeviation = luminanceValues.length > 0
+      ? Math.sqrt(luminanceValues.reduce((sum, value) => sum + ((value - averageLuminance) ** 2), 0) / luminanceValues.length)
+      : 0;
     resolve({
       width: image.naturalWidth,
       height: image.naturalHeight,
       dominantColors,
+      orientation: getImageOrientation(image.naturalWidth, image.naturalHeight),
+      aspectRatio: getImageAspectRatio(image.naturalWidth, image.naturalHeight),
+      brightness: getImageBrightness(averageLuminance),
+      contrast: getImageContrast(luminanceDeviation),
+      colorMood: getImageColorMood(warmPixelCount, coolPixelCount, luminanceValues.length),
     });
   };
   image.onerror = () => resolve(undefined);
@@ -2362,6 +2781,55 @@ const MaterialTray: React.FC<{
                 >
                   <TrashIcon className="h-4 w-4" />
                 </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ProductionMetric: React.FC<{
+  label: string;
+  value: string;
+}> = ({ label, value }) => (
+  <div className="rounded-lg border border-border bg-surface p-2">
+    <div className="truncate text-[11px] text-muted">{label}</div>
+    <div className="mt-1 text-sm font-semibold text-foreground">{value}</div>
+  </div>
+);
+
+const ProductionPerformanceList: React.FC<{
+  title: string;
+  items: CreatorProductionPerformanceGroup[];
+}> = ({ title, items }) => {
+  const visibleItems = items.slice(0, 3);
+  return (
+    <div className="rounded-lg border border-border bg-surface p-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] font-medium text-secondary">{title}</div>
+        <div className="text-[10px] text-muted">{i18nService.t('creatorProductionPerformanceScore')}</div>
+      </div>
+      {visibleItems.length === 0 ? (
+        <div className="mt-2 text-xs text-muted">{i18nService.t('creatorProductionPerformanceEmpty')}</div>
+      ) : (
+        <div className="mt-2 space-y-1.5">
+          {visibleItems.map((item) => (
+            <div key={item.id} className="min-w-0 rounded-md bg-background px-2 py-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 truncate text-xs font-medium text-secondary" title={item.label}>
+                  {item.label}
+                </div>
+                <div className="shrink-0 text-[11px] font-semibold text-primary">{item.score}</div>
+              </div>
+              <div className="mt-1 truncate text-[11px] text-muted">
+                {i18nService.t('creatorProductionPerformanceLine')
+                  .replace('{adopted}', String(item.adoptedAssets))
+                  .replace('{selected}', String(item.selectedAssets))
+                  .replace('{completed}', String(item.completedBatchTasks))
+                  .replace('{failed}', String(item.failedBatchTasks))
+                  .replace('{rate}', `${item.completionRate}%`)}
               </div>
             </div>
           ))}
