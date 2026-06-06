@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
 import type { CoworkFileActivity } from '../shared/cowork/fileActivity';
+import { CreatorStudioIpcChannel } from '../shared/creatorStudio/constants';
 import { DialogIpcChannel } from '../shared/dialog/constants';
 import { type FeishuEngineKeyType, type FeishuManagementModeType, type FeishuRuntimeOwnershipType, ImIpcChannel } from '../shared/im/constants';
 import { DesktopPetIpcChannel, type DesktopPetTaskSnapshot, type PetConfig, type PetPosition } from '../shared/pet/constants';
@@ -531,6 +532,80 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:sessions:changed', handler);
       return () => ipcRenderer.removeListener('cowork:sessions:changed', handler);
     },
+  },
+  creatorStudio: {
+    listAssets: (input?: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.AssetList, input),
+    getAssetSource: (assetId: string) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.AssetGetSource, assetId),
+    setAssetFavorite: (input: { assetId: string; favorite: boolean }) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.AssetSetFavorite, input),
+    updateAsset: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.AssetUpdate, input),
+    createPromptAsset: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.AssetCreatePrompt, input),
+    createCaseAsset: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.AssetCreateCase, input),
+    revealAssetInFolder: (assetId: string) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.AssetRevealInFolder, assetId),
+    createRecipe: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.RecipeCreate, input),
+    importRecipe: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.RecipeImport, input),
+    listRecipes: (input?: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.RecipeList, input),
+    createPromptVersion: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.PromptVersionCreate, input),
+    listPromptVersions: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.PromptVersionList, input),
+    forkPromptVersion: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.PromptVersionFork, input),
+    diffPromptVersions: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.PromptVersionDiff, input),
+    getWorkspace: () =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.WorkspaceGet),
+    createProject: (input: { name: string; description?: string }) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ProjectCreate, input),
+    setCurrentProject: (projectId: string) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ProjectSetCurrent, projectId),
+    createCollection: (input: { projectId: string; name: string; description?: string }) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.CollectionCreate, input),
+    addAssetToCollection: (input: { assetId: string; collectionId: string }) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.CollectionAddAsset, input),
+    getBoardWorkspace: (projectId?: string) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BoardWorkspaceGet, projectId),
+    createBoard: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BoardCreate, input),
+    setCurrentBoard: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BoardSetCurrent, input),
+    addBoardCard: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BoardCardAdd, input),
+    updateBoardCard: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BoardCardUpdate, input),
+    removeBoardCard: (cardId: string) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BoardCardRemove, cardId),
+    moveBoardCard: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BoardCardMove, input),
+    selectBoardCard: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BoardCardSelect, input),
+    buildBoardContextPack: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BoardBuildContextPack, input),
+    updateBrandKit: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BrandKitUpdate, input),
+    listModelCapabilities: () =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ModelCapabilityList),
+    createBatchRun: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BatchRunCreate, input),
+    listBatchRuns: (input?: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BatchRunList, input),
+    getBatchRun: (batchRunId: string) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BatchRunGet, batchRunId),
+    retryBatchTask: (taskId: string) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BatchTaskRetry, taskId),
+    skipBatchTask: (taskId: string) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BatchTaskSkip, taskId),
+    failBatchTask: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.BatchTaskFail, input),
   },
   dialog: {
     selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),

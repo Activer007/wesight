@@ -15,6 +15,47 @@ import type {
 } from '@shared/cowork/runtimeMetrics';
 import type { CoworkSessionRuntimeSnapshot } from '@shared/cowork/runtimeSnapshot';
 import type { CoworkStudioAssetsResult } from '@shared/cowork/studioAssets';
+import type {
+  CreatorAssetCollectionAddInput,
+  CreatorAssetCollectionCreateInput,
+  CreatorAssetUpdateInput,
+  CreatorBatchRunCreateInput,
+  CreatorBatchRunListInput,
+  CreatorBatchRunListResult,
+  CreatorBatchRunRecord,
+  CreatorBatchTaskFailInput,
+  CreatorBoardCardCreateInput,
+  CreatorBoardCardMoveInput,
+  CreatorBoardCardRecord,
+  CreatorBoardCardSelectInput,
+  CreatorBoardCardUpdateInput,
+  CreatorBoardContextPackInput,
+  CreatorBoardContextPackResult,
+  CreatorBoardCreateInput,
+  CreatorBoardWorkspaceSnapshot,
+  CreatorBrandKitUpdateInput,
+  CreatorCaseAssetCreateInput,
+  CreatorCreativeModelCapability,
+  CreatorProductionAssetListInput,
+  CreatorProductionAssetListResult,
+  CreatorProductionAssetRecord,
+  CreatorProductionAssetSourceLookup,
+  CreatorProjectCreateInput,
+  CreatorPromptAssetCreateInput,
+  CreatorPromptVersionCreateInput,
+  CreatorPromptVersionDiffInput,
+  CreatorPromptVersionDiffResult,
+  CreatorPromptVersionForkInput,
+  CreatorPromptVersionListInput,
+  CreatorPromptVersionListResult,
+  CreatorPromptVersionRecord,
+  CreatorRecipeCreateInput,
+  CreatorRecipeImportInput,
+  CreatorRecipeListInput,
+  CreatorRecipeListResult,
+  CreatorRecipeRecord,
+  CreatorWorkspaceSnapshot,
+} from '@shared/creatorStudio/types';
 import type { FeishuEngineKeyType, FeishuManagementModeType, FeishuRuntimeOwnershipType, WeixinOwnershipType } from '@shared/im/constants';
 import type { DesktopPetTaskSnapshot, PetConfig, PetPosition } from '@shared/pet/constants';
 import type { SkillMarketplaceSort, SkillMarketplaceSourceType } from '@shared/skills/constants';
@@ -660,8 +701,8 @@ interface IElectronAPI {
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
   cowork: {
-    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; agentId?: string; teamId?: string; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }> }) => Promise<{ success: boolean; session?: CoworkSession; error?: string; code?: string; engineStatus?: OpenClawEngineStatus }>;
-    continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[]; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }> }) => Promise<{ success: boolean; session?: CoworkSession; error?: string; code?: string; engineStatus?: OpenClawEngineStatus }>;
+    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; agentId?: string; teamId?: string; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>; messageMetadata?: Record<string, unknown> }) => Promise<{ success: boolean; session?: CoworkSession; error?: string; code?: string; engineStatus?: OpenClawEngineStatus }>;
+    continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[]; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>; messageMetadata?: Record<string, unknown> }) => Promise<{ success: boolean; session?: CoworkSession; error?: string; code?: string; engineStatus?: OpenClawEngineStatus }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string }>;
@@ -764,6 +805,188 @@ interface IElectronAPI {
     onStreamComplete: (callback: (data: { sessionId: string; claudeSessionId: string | null }) => void) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
     onSessionsChanged: (callback: () => void) => () => void;
+  };
+  creatorStudio: {
+    listAssets: (input?: CreatorProductionAssetListInput) => Promise<{
+      success: boolean;
+      assets?: CreatorProductionAssetListResult['assets'];
+      total?: number;
+      error?: string;
+    }>;
+    getAssetSource: (assetId: string) => Promise<{
+      success: boolean;
+      source?: CreatorProductionAssetSourceLookup;
+      error?: string;
+    }>;
+    setAssetFavorite: (input: { assetId: string; favorite: boolean }) => Promise<{
+      success: boolean;
+      asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    updateAsset: (input: CreatorAssetUpdateInput) => Promise<{
+      success: boolean;
+      asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    createPromptAsset: (input: CreatorPromptAssetCreateInput) => Promise<{
+      success: boolean;
+      asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    createCaseAsset: (input: CreatorCaseAssetCreateInput) => Promise<{
+      success: boolean;
+      asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    revealAssetInFolder: (assetId: string) => Promise<{ success: boolean; error?: string }>;
+    createRecipe: (input: CreatorRecipeCreateInput) => Promise<{
+      success: boolean;
+      recipe?: CreatorRecipeRecord;
+      error?: string;
+    }>;
+    importRecipe: (input: CreatorRecipeImportInput) => Promise<{
+      success: boolean;
+      recipe?: CreatorRecipeRecord;
+      error?: string;
+    }>;
+    listRecipes: (input?: CreatorRecipeListInput) => Promise<{
+      success: boolean;
+      recipes?: CreatorRecipeListResult['recipes'];
+      total?: number;
+      error?: string;
+    }>;
+    createPromptVersion: (input: CreatorPromptVersionCreateInput) => Promise<{
+      success: boolean;
+      version?: CreatorPromptVersionRecord;
+      error?: string;
+    }>;
+    listPromptVersions: (input: CreatorPromptVersionListInput) => Promise<{
+      success: boolean;
+      versions?: CreatorPromptVersionListResult['versions'];
+      total?: number;
+      error?: string;
+    }>;
+    forkPromptVersion: (input: CreatorPromptVersionForkInput) => Promise<{
+      success: boolean;
+      asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    diffPromptVersions: (input: CreatorPromptVersionDiffInput) => Promise<{
+      success: boolean;
+      diff?: CreatorPromptVersionDiffResult;
+      error?: string;
+    }>;
+    getWorkspace: () => Promise<{
+      success: boolean;
+      workspace?: CreatorWorkspaceSnapshot;
+      error?: string;
+    }>;
+    createProject: (input: CreatorProjectCreateInput) => Promise<{
+      success: boolean;
+      workspace?: CreatorWorkspaceSnapshot;
+      error?: string;
+    }>;
+    setCurrentProject: (projectId: string) => Promise<{
+      success: boolean;
+      workspace?: CreatorWorkspaceSnapshot;
+      error?: string;
+    }>;
+    createCollection: (input: CreatorAssetCollectionCreateInput) => Promise<{
+      success: boolean;
+      workspace?: CreatorWorkspaceSnapshot;
+      error?: string;
+    }>;
+    addAssetToCollection: (input: CreatorAssetCollectionAddInput) => Promise<{
+      success: boolean;
+      asset?: CreatorProductionAssetRecord;
+      error?: string;
+    }>;
+    getBoardWorkspace: (projectId?: string) => Promise<{
+      success: boolean;
+      workspace?: CreatorBoardWorkspaceSnapshot;
+      error?: string;
+    }>;
+    createBoard: (input: CreatorBoardCreateInput) => Promise<{
+      success: boolean;
+      workspace?: CreatorBoardWorkspaceSnapshot;
+      error?: string;
+    }>;
+    setCurrentBoard: (input: { projectId: string; boardId: string }) => Promise<{
+      success: boolean;
+      workspace?: CreatorBoardWorkspaceSnapshot;
+      error?: string;
+    }>;
+    addBoardCard: (input: CreatorBoardCardCreateInput) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    updateBoardCard: (input: CreatorBoardCardUpdateInput) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    removeBoardCard: (cardId: string) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    moveBoardCard: (input: CreatorBoardCardMoveInput) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    selectBoardCard: (input: CreatorBoardCardSelectInput) => Promise<{
+      success: boolean;
+      card?: CreatorBoardCardRecord;
+      error?: string;
+    }>;
+    buildBoardContextPack: (input: CreatorBoardContextPackInput) => Promise<{
+      success: boolean;
+      contextPack?: CreatorBoardContextPackResult;
+      error?: string;
+    }>;
+    updateBrandKit: (input: CreatorBrandKitUpdateInput) => Promise<{
+      success: boolean;
+      workspace?: CreatorBoardWorkspaceSnapshot;
+      error?: string;
+    }>;
+    listModelCapabilities: () => Promise<{
+      success: boolean;
+      capabilities?: CreatorCreativeModelCapability[];
+      error?: string;
+    }>;
+    createBatchRun: (input: CreatorBatchRunCreateInput) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
+    listBatchRuns: (input?: CreatorBatchRunListInput) => Promise<{
+      success: boolean;
+      runs?: CreatorBatchRunListResult['runs'];
+      total?: number;
+      error?: string;
+    }>;
+    getBatchRun: (batchRunId: string) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
+    retryBatchTask: (taskId: string) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
+    skipBatchTask: (taskId: string) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
+    failBatchTask: (input: CreatorBatchTaskFailInput) => Promise<{
+      success: boolean;
+      batchRun?: CreatorBatchRunRecord;
+      error?: string;
+    }>;
   };
   dialog: {
     selectDirectory: () => Promise<{ success: boolean; path: string | null }>;
