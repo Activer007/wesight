@@ -5997,7 +5997,7 @@ if (!gotTheLock) {
 
   // ==================== Creator Studio IPC Handlers ====================
 
-  registerCreatorStudioIpcHandlers(ipcMain, getCreatorAssetStore);
+  registerCreatorStudioIpcHandlers(ipcMain, getCreatorAssetStore, getCoworkStore);
 
   // ==================== Permissions IPC Handlers ====================
 

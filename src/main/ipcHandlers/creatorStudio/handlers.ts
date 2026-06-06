@@ -3,23 +3,37 @@ import { shell } from 'electron';
 import fs from 'fs';
 
 import {
+  CreatorProductionAssetKind,
   CreatorStudioAssetListDefaultLimit,
   CreatorStudioAssetListMaxLimit,
   CreatorStudioIpcChannel,
   isCreatorAssetAdoptionStatus,
   isCreatorBoardCardKind,
   isCreatorBoardMoveDirection,
+  isCreatorImageProcessingOutputFormat,
+  isCreatorImageProcessingPresetId,
   isCreatorProductionAssetSource,
 } from '../../../shared/creatorStudio/constants';
+import type {
+  CreatorImageBatchCreateInput,
+  CreatorImageJobListInput,
+  CreatorImagePlanCreateInput,
+  CreatorImageRecipeExecuteInput,
+} from '../../../shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorAssetUpdateInput,
   CreatorBoardCardCreateInput,
   CreatorBoardCardUpdateInput,
   CreatorBrandKitUpdateInput,
+  CreatorImageInspectInput,
+  CreatorProductionAssetRecord,
   CreatorPromptAssetCreateInput,
   CreatorRecipeCreateInput,
 } from '../../../shared/creatorStudio/types';
+import type { CoworkStore } from '../../coworkStore';
 import type { CreatorAssetStore } from '../../creatorAssetStore';
+import { createCreatorAssetImageProcessingPlan } from '../../libs/imageProcessing/imageProcessingPlanner';
+import { createImageProcessingService } from '../../libs/imageProcessing/imageProcessingService';
 
 type CreatorStudioIpcResponse<T> = {
   success: boolean;
@@ -101,9 +115,106 @@ const normalizeRecord = (value: unknown): Record<string, unknown> => (
   normalizeObject(value) ?? {}
 );
 
+const normalizeImageInspectInput = (input: unknown): CreatorImageInspectInput | null => {
+  const record = normalizeObject(input);
+  const assetId = toTrimmedString(record?.assetId);
+  if (assetId) {
+    return { assetId };
+  }
+
+  const source = normalizeObject(record?.source);
+  const sessionId = toTrimmedString(source?.sessionId);
+  const messageId = toTrimmedString(source?.messageId);
+  const artifactId = toTrimmedString(source?.artifactId);
+  const filePath = toTrimmedString(source?.filePath);
+  if (!sessionId || (!messageId && !artifactId) || !filePath) {
+    return null;
+  }
+
+  return {
+    source: {
+      sessionId,
+      ...(messageId ? { messageId } : {}),
+      ...(artifactId ? { artifactId } : {}),
+      filePath,
+    },
+  };
+};
+
+const normalizeNumber = (value: unknown): number | null => (
+  typeof value === 'number' && Number.isFinite(value) ? value : null
+);
+
+const normalizeImagePlanCreateInput = (input: unknown): CreatorImagePlanCreateInput | null => {
+  const record = normalizeObject(input);
+  const assetId = toTrimmedString(record?.assetId);
+  if (!assetId) return null;
+  return {
+    assetId,
+    ...(isCreatorImageProcessingPresetId(record?.presetId) ? { presetId: record.presetId } : {}),
+    ...(isCreatorImageProcessingOutputFormat(record?.outputFormat) ? { outputFormat: record.outputFormat } : {}),
+    ...(normalizeNumber(record?.quality) !== null ? { quality: normalizeNumber(record?.quality) } : {}),
+    ...(normalizeNumber(record?.width) !== null ? { width: normalizeNumber(record?.width) } : {}),
+    ...(normalizeNumber(record?.height) !== null ? { height: normalizeNumber(record?.height) } : {}),
+    ...(normalizeNumber(record?.maxWidth) !== null ? { maxWidth: normalizeNumber(record?.maxWidth) } : {}),
+    ...(normalizeNumber(record?.maxHeight) !== null ? { maxHeight: normalizeNumber(record?.maxHeight) } : {}),
+    ...(toTrimmedString(record?.cropRatio) ? { cropRatio: toTrimmedString(record?.cropRatio) } : {}),
+    ...(normalizeNumber(record?.rotate) !== null ? { rotate: normalizeNumber(record?.rotate) } : {}),
+    ...(toTrimmedString(record?.outputDirectory) ? { outputDirectory: toTrimmedString(record?.outputDirectory) } : {}),
+  };
+};
+
+const normalizeImageJobListInput = (input: unknown): CreatorImageJobListInput => {
+  const record = normalizeObject(input) ?? {};
+  return {
+    ...(toTrimmedString(record.projectId) ? { projectId: toTrimmedString(record.projectId)! } : {}),
+    ...(normalizeNumber(record.limit) !== null ? { limit: normalizeNumber(record.limit)! } : {}),
+    ...(normalizeNumber(record.offset) !== null ? { offset: normalizeNumber(record.offset)! } : {}),
+  };
+};
+
+const normalizeImageBatchCreateInput = (input: unknown): CreatorImageBatchCreateInput | null => {
+  const record = normalizeObject(input);
+  const projectId = toTrimmedString(record?.projectId);
+  const assetIds = normalizeStringArray(record?.assetIds) ?? [];
+  if (!projectId || assetIds.length === 0) return null;
+  return {
+    projectId,
+    assetIds,
+    ...(typeof record?.waitForCompletion === 'boolean' ? { waitForCompletion: record.waitForCompletion } : {}),
+    ...(isCreatorImageProcessingPresetId(record?.presetId) ? { presetId: record.presetId } : {}),
+    ...(isCreatorImageProcessingOutputFormat(record?.outputFormat) ? { outputFormat: record.outputFormat } : {}),
+    ...(normalizeNumber(record?.quality) !== null ? { quality: normalizeNumber(record?.quality) } : {}),
+    ...(normalizeNumber(record?.width) !== null ? { width: normalizeNumber(record?.width) } : {}),
+    ...(normalizeNumber(record?.height) !== null ? { height: normalizeNumber(record?.height) } : {}),
+    ...(normalizeNumber(record?.maxWidth) !== null ? { maxWidth: normalizeNumber(record?.maxWidth) } : {}),
+    ...(normalizeNumber(record?.maxHeight) !== null ? { maxHeight: normalizeNumber(record?.maxHeight) } : {}),
+    ...(toTrimmedString(record?.cropRatio) ? { cropRatio: toTrimmedString(record?.cropRatio) } : {}),
+    ...(normalizeNumber(record?.rotate) !== null ? { rotate: normalizeNumber(record?.rotate) } : {}),
+    ...(toTrimmedString(record?.outputDirectory) ? { outputDirectory: toTrimmedString(record?.outputDirectory) } : {}),
+  };
+};
+
+const normalizeImageRecipeExecuteInput = (input: unknown): CreatorImageRecipeExecuteInput | null => {
+  const record = normalizeObject(input);
+  const recipeId = toTrimmedString(record?.recipeId);
+  const assetId = toTrimmedString(record?.assetId);
+  if (!recipeId || !assetId) return null;
+  return {
+    recipeId,
+    assetId,
+    ...(toTrimmedString(record?.ruleId) ? { ruleId: toTrimmedString(record?.ruleId) } : {}),
+    ...(toTrimmedString(record?.outputDirectory) ? { outputDirectory: toTrimmedString(record?.outputDirectory) } : {}),
+    ...(typeof record?.waitForCompletion === 'boolean' ? { waitForCompletion: record.waitForCompletion } : {}),
+  };
+};
+
+const imageProcessingService = createImageProcessingService();
+
 export const registerCreatorStudioIpcHandlers = (
   ipcMain: IpcMain,
-  getCreatorAssetStore: () => CreatorAssetStore
+  getCreatorAssetStore: () => CreatorAssetStore,
+  getCoworkStore?: () => CoworkStore
 ): void => {
   ipcMain.handle(CreatorStudioIpcChannel.AssetList, async (_event, input: unknown) => {
     try {
@@ -136,6 +247,268 @@ export const registerCreatorStudioIpcHandlers = (
         error: error instanceof Error ? error.message : 'Failed to get creator asset source',
       };
     }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageInspect, async (_event, input: unknown) => {
+    try {
+      const normalized = normalizeImageInspectInput(input);
+      if (!normalized) {
+        return { success: false, error: 'assetId or controlled source is required' };
+      }
+      const result = await getCreatorAssetStore().inspectImageAsset(normalized);
+      if (!result) {
+        return { success: false, error: 'Image asset not found' };
+      }
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to inspect image metadata',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImagePlanCreate, async (_event, input: unknown) => {
+    try {
+      const normalized = normalizeImagePlanCreateInput(input);
+      if (!normalized) {
+        return { success: false, error: 'assetId is required' };
+      }
+      const store = getCreatorAssetStore();
+      let asset = store.getAsset(normalized.assetId);
+      if (!asset || asset.kind !== CreatorProductionAssetKind.Image) {
+        return { success: false, error: 'Image asset not found' };
+      }
+      if (!asset.imageMetadata) {
+        const inspected = await store.inspectImageAsset({ assetId: asset.id });
+        asset = inspected?.asset ?? asset;
+      }
+      const plan = createCreatorAssetImageProcessingPlan({
+        asset,
+        presetId: normalized.presetId,
+        outputFormat: normalized.outputFormat,
+        quality: normalized.quality,
+        width: normalized.width,
+        height: normalized.height,
+        maxWidth: normalized.maxWidth,
+        maxHeight: normalized.maxHeight,
+        cropRatio: normalized.cropRatio,
+        rotate: normalized.rotate,
+        outputDirectory: normalized.outputDirectory,
+      });
+      imageProcessingService.savePlan(plan);
+      store.saveImageProcessingPlan?.(plan);
+      return { success: true, plan };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create image processing plan',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImagePlanGet, async (_event, input: unknown) => {
+    const planId = toTrimmedString(normalizeObject(input)?.planId) ?? toTrimmedString(input);
+    if (!planId) {
+      return { success: false, error: 'planId is required' };
+    }
+    const storePlan = getCreatorAssetStore().getImageProcessingPlan?.(planId) ?? null;
+    const plan = imageProcessingService.getPlan(planId) ?? storePlan;
+    if (!plan) {
+      return { success: false, error: 'Image processing plan not found' };
+    }
+    return { success: true, plan };
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageJobExecute, async (_event, input: unknown) => {
+    try {
+      const record = normalizeObject(input);
+      const planId = toTrimmedString(record?.planId) ?? toTrimmedString(input);
+      if (!planId) {
+        return { success: false, error: 'planId is required' };
+      }
+      const storePlan = getCreatorAssetStore().getImageProcessingPlan?.(planId) ?? null;
+      const plan = imageProcessingService.getPlan(planId) ?? storePlan;
+      if (!plan) {
+        return { success: false, error: 'Image processing plan not found' };
+      }
+      const sourceAssetId = plan.inputItems[0]?.sourceAssetId;
+      if (!sourceAssetId) {
+        return { success: false, error: 'source asset is required' };
+      }
+      const result = await getCreatorAssetStore().executeImageProcessingPlan(plan);
+      const outputAssets = result.outputAssetIds
+        .map((assetId) => getCreatorAssetStore().getAsset(assetId))
+        .filter((asset): asset is CreatorProductionAssetRecord => Boolean(asset));
+      const coworkSessionId = toTrimmedString(record?.coworkSessionId);
+      if (coworkSessionId && getCoworkStore) {
+        try {
+          getCoworkStore().recordImageProcessingExecutionResult({
+            sessionId: coworkSessionId,
+            plan,
+            job: result.job,
+            tasks: result.tasks,
+            outputAssetIds: result.outputAssetIds,
+            outputAssets,
+            planMessageId: toTrimmedString(record?.coworkPlanMessageId),
+          });
+        } catch (writebackError) {
+          console.warn('[CreatorStudio] image processing cowork result writeback failed:', writebackError);
+        }
+      }
+      return {
+        success: true,
+        job: result.job,
+        tasks: result.tasks,
+        outputAssetIds: result.outputAssetIds,
+        outputAssets,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to execute image processing job',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageJobGet, async (_event, input: unknown) => {
+    const jobId = toTrimmedString(normalizeObject(input)?.jobId) ?? toTrimmedString(input);
+    if (!jobId) {
+      return { success: false, error: 'jobId is required' };
+    }
+    const record = imageProcessingService.getJob(jobId);
+    const storedRecord = record ?? getCreatorAssetStore().getImageProcessingJob(jobId);
+    if (!storedRecord) {
+      return { success: false, error: 'Image processing job not found' };
+    }
+    return { success: true, ...storedRecord };
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageJobList, async (_event, input: unknown) => {
+    try {
+      return {
+        success: true,
+        ...getCreatorAssetStore().listImageProcessingJobs(normalizeImageJobListInput(input)),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to list image processing jobs',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageBatchCreate, async (_event, input: unknown) => {
+    try {
+      const normalized = normalizeImageBatchCreateInput(input);
+      if (!normalized) {
+        return { success: false, error: 'projectId and assetIds are required' };
+      }
+      const result = await getCreatorAssetStore().createImageProcessingBatchJob(normalized);
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create image processing batch job',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageRecipeExecute, async (_event, input: unknown) => {
+    try {
+      const normalized = normalizeImageRecipeExecuteInput(input);
+      if (!normalized) {
+        return { success: false, error: 'recipeId and assetId are required' };
+      }
+      const result = await getCreatorAssetStore().executeImageProcessingRecipe(normalized);
+      return {
+        success: true,
+        ...result,
+        outputAssets: result.outputAssetIds
+          .map((assetId) => getCreatorAssetStore().getAsset(assetId))
+          .filter((asset): asset is CreatorProductionAssetRecord => Boolean(asset)),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to execute image processing recipe',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageTaskRetry, async (_event, input: unknown) => {
+    try {
+      const taskId = toTrimmedString(normalizeObject(input)?.taskId) ?? toTrimmedString(input);
+      if (!taskId) {
+        return { success: false, error: 'taskId is required' };
+      }
+      const result = await getCreatorAssetStore().retryImageProcessingTask(taskId);
+      if (!result) {
+        return { success: false, error: 'Image processing task not found' };
+      }
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to retry image processing task',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageTaskCancel, async (_event, input: unknown) => {
+    try {
+      const taskId = toTrimmedString(normalizeObject(input)?.taskId) ?? toTrimmedString(input);
+      if (!taskId) {
+        return { success: false, error: 'taskId is required' };
+      }
+      const result = getCreatorAssetStore().cancelImageProcessingTask(taskId);
+      if (!result) {
+        return { success: false, error: 'Image processing task is not cancelable' };
+      }
+      return { success: true, ...result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to cancel image processing task',
+      };
+    }
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageOutputReveal, async (_event, input: unknown) => {
+    const record = normalizeObject(input);
+    const target = imageProcessingService.revealTargetFor({
+      jobId: toTrimmedString(record?.jobId) ?? undefined,
+      taskId: toTrimmedString(record?.taskId) ?? undefined,
+      outputPath: toTrimmedString(record?.outputPath) ?? undefined,
+    });
+    const storedTarget = target
+      ?? (toTrimmedString(record?.taskId) ? getCreatorAssetStore().getImageProcessingJob(toTrimmedString(record?.jobId) ?? '')?.tasks.find((task) => task.id === toTrimmedString(record?.taskId))?.outputPath ?? null : null)
+      ?? (toTrimmedString(record?.jobId) ? getCreatorAssetStore().getImageProcessingJob(toTrimmedString(record?.jobId)!)?.tasks.find((task) => task.outputPath)?.outputPath ?? null : null);
+    if (!storedTarget || !fs.existsSync(storedTarget)) {
+      return { success: false, error: 'Output file not found' };
+    }
+    shell.showItemInFolder(storedTarget);
+    return { success: true };
+  });
+
+  ipcMain.handle(CreatorStudioIpcChannel.ImageReportOpen, async (_event, input: unknown) => {
+    const jobId = toTrimmedString(normalizeObject(input)?.jobId) ?? toTrimmedString(input);
+    if (!jobId) {
+      return { success: false, error: 'jobId is required' };
+    }
+    const record = getCreatorAssetStore().getImageProcessingJob(jobId);
+    if (!record?.job.reportAssetId) {
+      return { success: false, error: 'Image processing report not found' };
+    }
+    const asset = getCreatorAssetStore().getAsset(record.job.reportAssetId);
+    if (!asset || asset.kind !== CreatorProductionAssetKind.Report || !fs.existsSync(asset.filePath)) {
+      return { success: false, error: 'Image processing report file not found' };
+    }
+    const errorMessage = await shell.openPath(asset.filePath);
+    if (errorMessage) {
+      return { success: false, error: errorMessage };
+    }
+    return { success: true };
   });
 
   ipcMain.handle(CreatorStudioIpcChannel.AssetSetFavorite, async (_event, input: unknown) => {

@@ -1,4 +1,5 @@
 import {
+  AdjustmentsHorizontalIcon,
   ChartBarIcon,
   ChevronRightIcon,
   CodeBracketIcon,
@@ -18,8 +19,10 @@ import {
   CoworkFileActivityStatus,
 } from '@shared/cowork/fileActivity';
 import { calculateModelTps, calculateRuntimeTps } from '@shared/cowork/runtimeMetrics';
+import type { CreatorProductionAssetRecord } from '@shared/creatorStudio/types';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
+import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
 import type { CoworkSessionStatus, RuntimeCallRecord } from '../../types/cowork';
 import {
@@ -31,13 +34,16 @@ import {
   type CoworkActivitySnapshot,
   type CoworkActivityToolItem,
 } from '../../utils/coworkActivity';
+import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
 import { getCompactFolderName } from '../../utils/path';
+import { ImagePostProcessingDrawer } from '../creatorStudio/ImagePostProcessingDrawer';
 import { CoworkActivitySidebarMode } from './activitySidebarConstants';
 import DiffView from './DiffView';
 import { getLiveCodeInitialLineLimit, shouldAutoFollowLiveCodeScroll } from './liveCodePreviewUtils';
 
 interface CoworkActivitySidebarProps {
   snapshot: CoworkActivitySnapshot;
+  sessionId: string;
   sessionStatus: CoworkSessionStatus;
   engineLabel: string;
   cwd: string;
@@ -646,6 +652,7 @@ const LiveCodePreview: React.FC<{ activity: CoworkFileActivity }> = ({ activity 
 
 const CoworkActivitySidebar: React.FC<CoworkActivitySidebarProps> = ({
   snapshot,
+  sessionId,
   sessionStatus,
   engineLabel,
   cwd,
@@ -662,6 +669,10 @@ const CoworkActivitySidebar: React.FC<CoworkActivitySidebarProps> = ({
   onResizeStart,
   onClose,
 }) => {
+  const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [postProcessingStatus, setPostProcessingStatus] = useState<string | null>(null);
+  const [preparingArtifactId, setPreparingArtifactId] = useState<string | null>(null);
+  const imageProcessingEnabled = isCreatorImageProcessingEnabled();
   const selectedFileChange = useMemo(() => {
     if (selectedFileChangeId) {
       const selected = snapshot.fileChanges.find((change) => change.id === selectedFileChangeId);
@@ -686,6 +697,37 @@ const CoworkActivitySidebar: React.FC<CoworkActivitySidebarProps> = ({
   const selectCodeChange = (fileChangeId: string) => {
     onSelectFileChange(fileChangeId);
     onModeChange(CoworkActivitySidebarMode.CodeDiff);
+  };
+
+  const handlePostProcessArtifact = async (artifact: CoworkActivitySnapshot['artifacts'][number]) => {
+    if (preparingArtifactId) return;
+    setPreparingArtifactId(artifact.id);
+    setPostProcessingStatus(null);
+    try {
+      const result = await creatorStudioAssetService.inspectImage({
+        source: {
+          sessionId,
+          ...(artifact.messageId ? { messageId: artifact.messageId } : {}),
+          artifactId: artifact.id,
+          filePath: artifact.path,
+        },
+      });
+      if (!result?.asset) {
+        setPostProcessingStatus(i18nService.t('creatorImageProcessingSourceMapFailed'));
+        return;
+      }
+      setPostProcessingAsset(result.asset);
+    } catch (error) {
+      setPostProcessingStatus(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingSourceMapFailed'));
+    } finally {
+      setPreparingArtifactId(null);
+    }
+  };
+
+  const handlePostProcessingCompleted = (assets: CreatorProductionAssetRecord[]) => {
+    setPostProcessingStatus(assets[0]
+      ? i18nService.t('creatorImageProcessingActivityCompleted')
+      : i18nService.t('creatorImageProcessingCompleted'));
   };
 
   const isCodeDiffMode = mode === CoworkActivitySidebarMode.CodeDiff;
@@ -836,12 +878,35 @@ const CoworkActivitySidebar: React.FC<CoworkActivitySidebarProps> = ({
                   >
                     {i18nService.t('coworkActivityRevealFile')}
                   </button>
+                  {imageProcessingEnabled && artifact.type === ActivityArtifactType.Image && (
+                    <button
+                      type="button"
+                      onClick={() => void handlePostProcessArtifact(artifact)}
+                      disabled={preparingArtifactId === artifact.id}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <AdjustmentsHorizontalIcon className="h-3 w-3" />
+                      {preparingArtifactId === artifact.id
+                        ? i18nService.t('creatorImageProcessingPreparing')
+                        : i18nService.t('creatorImagePostProcessingAction')}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         )}
       </Section>
+      {postProcessingStatus && (
+        <div className="mx-2 mt-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-secondary">
+          {postProcessingStatus}
+        </div>
+      )}
+      <ImagePostProcessingDrawer
+        asset={postProcessingAsset}
+        onClose={() => setPostProcessingAsset(null)}
+        onCompleted={handlePostProcessingCompleted}
+      />
 
       <Section
         title={i18nService.t('coworkActivityToolTimeline')}

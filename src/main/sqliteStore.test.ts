@@ -112,3 +112,43 @@ test('initializes creator production asset tables', () => {
   expect(assetColumnNames.has('license_note')).toBe(true);
   expect(assetColumnNames.has('usage_note')).toBe(true);
 });
+
+test('initializes creator image processing schema idempotently', () => {
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wesight-sqlite-'));
+  tempDirs.push(userDataDir);
+
+  const firstStore = SqliteStore.create(userDataDir);
+  firstStore.close();
+  const secondStore = SqliteStore.create(userDataDir);
+  const db = secondStore.getDatabase();
+  const rows = db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN (
+        'creator_image_processing_plans',
+        'creator_image_processing_jobs',
+        'creator_image_processing_tasks'
+      )
+  `).all() as Array<{ name: string }>;
+  const indexes = db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'index'
+      AND name IN (
+        'idx_creator_image_processing_plans_project_created',
+        'idx_creator_image_processing_jobs_project_created',
+        'idx_creator_image_processing_tasks_job'
+      )
+  `).all() as Array<{ name: string }>;
+  secondStore.close();
+
+  const tableNames = new Set(rows.map((row) => row.name));
+  const indexNames = new Set(indexes.map((row) => row.name));
+  expect(tableNames.has('creator_image_processing_plans')).toBe(true);
+  expect(tableNames.has('creator_image_processing_jobs')).toBe(true);
+  expect(tableNames.has('creator_image_processing_tasks')).toBe(true);
+  expect(indexNames.has('idx_creator_image_processing_plans_project_created')).toBe(true);
+  expect(indexNames.has('idx_creator_image_processing_jobs_project_created')).toBe(true);
+  expect(indexNames.has('idx_creator_image_processing_tasks_job')).toBe(true);
+});

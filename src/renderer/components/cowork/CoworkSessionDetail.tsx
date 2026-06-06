@@ -11,12 +11,18 @@ import {
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { CoworkAgentEngine } from '@shared/cowork/constants';
 import { CoworkFileActivityStatus } from '@shared/cowork/fileActivity';
+import type {
+  CreatorImageMetadata,
+  CreatorImageProcessingPlan,
+} from '@shared/creatorStudio/imageProcessingTypes';
+import type { CreatorProductionAssetRecord } from '@shared/creatorStudio/types';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
 import { coworkService } from '../../services/cowork';
+import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
 import { setActiveSkillIds } from '../../store/slices/skillSlice';
@@ -33,6 +39,7 @@ import {
   getPreferredActivityFileChangeId,
 } from '../../utils/coworkActivity';
 import { buildCoworkStudioSnapshot } from '../../utils/coworkStudio';
+import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
 import { getCompactFolderName } from '../../utils/path';
 import {
   getCollapsedText,
@@ -42,6 +49,7 @@ import {
 } from '../../utils/renderingGuards';
 import { getAgentEngineLabel } from '../agent/AgentEngineSelect';
 import Modal from '../common/Modal';
+import { ImagePostProcessingDrawer } from '../creatorStudio/ImagePostProcessingDrawer';
 import ComposeIcon from '../icons/ComposeIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
@@ -442,6 +450,17 @@ const getGeneratedImages = (metadata?: CoworkMessageMetadata): GeneratedImage[] 
   ));
 };
 
+const getCoworkImageProcessingPlan = (
+  metadata?: CoworkMessageMetadata,
+): CreatorImageProcessingPlan | null => {
+  const plan = metadata?.imageProcessingPlan;
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return null;
+  const record = plan as Partial<CreatorImageProcessingPlan>;
+  return typeof record.id === 'string' && record.output && Array.isArray(record.outputItems)
+    ? record as CreatorImageProcessingPlan
+    : null;
+};
+
 const encodeLocalFileSrc = (filePath: string): string => {
   const raw = filePath.trim();
   const normalized = raw.replace(/\\/g, '/');
@@ -460,6 +479,29 @@ const getGeneratedImageName = (image: GeneratedImage): string => {
   if (image.name?.trim()) return image.name.trim();
   const segments = image.path.replace(/\\/g, '/').split('/');
   return segments[segments.length - 1] || 'generated-image.png';
+};
+
+const formatImageFileSize = (bytes: number | null | undefined): string => {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
+    return i18nService.t('creatorImageUnknown');
+  }
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+};
+
+const formatImageMetadataSummary = (metadata: CreatorImageMetadata): string => {
+  const dimensions = metadata.width && metadata.height
+    ? `${metadata.width} x ${metadata.height}`
+    : i18nService.t('creatorImageUnknown');
+  const format = metadata.format?.toUpperCase() || metadata.mimeType || i18nService.t('creatorImageUnknown');
+  return `${dimensions} · ${format} · ${formatImageFileSize(metadata.fileSize)}`;
 };
 
 const getToolResultDisplay = (message: CoworkMessage): string => {
@@ -1239,21 +1281,33 @@ export const UserMessageItem: React.FC<{
 
 const AssistantMessageItem: React.FC<{
   message: CoworkMessage;
+  sessionId?: string;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
   showCopyButton?: boolean;
 }> = ({
   message,
+  sessionId,
   resolveLocalFilePath,
   mapDisplayText,
   showCopyButton = false,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedGeneratedImage | null>(null);
+  const [expandedImageMetadata, setExpandedImageMetadata] = useState<CreatorImageMetadata | null>(null);
+  const [isInspectingExpandedImage, setIsInspectingExpandedImage] = useState(false);
+  const [expandedImageMetadataError, setExpandedImageMetadataError] = useState<string | null>(null);
   const [isDownloadingImage, setIsDownloadingImage] = useState(false);
   const [imageDownloadStatus, setImageDownloadStatus] = useState<ImageDownloadStatus | null>(null);
+  const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [isPreparingPostProcessing, setIsPreparingPostProcessing] = useState(false);
+  const [postProcessingStatus, setPostProcessingStatus] = useState<ImageDownloadStatus | null>(null);
+  const [isExecutingPlanCard, setIsExecutingPlanCard] = useState(false);
+  const [planCardStatus, setPlanCardStatus] = useState<ImageDownloadStatus | null>(null);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
   const generatedImages = getGeneratedImages(message.metadata);
+  const imageProcessingPlan = getCoworkImageProcessingPlan(message.metadata);
+  const imageProcessingEnabled = isCreatorImageProcessingEnabled();
 
   const openGeneratedImage = useCallback((image: GeneratedImage, src: string, name: string) => {
     setImageDownloadStatus(null);
@@ -1263,8 +1317,51 @@ const AssistantMessageItem: React.FC<{
   const closeGeneratedImage = useCallback(() => {
     if (isDownloadingImage) return;
     setExpandedImage(null);
+    setExpandedImageMetadata(null);
+    setExpandedImageMetadataError(null);
     setImageDownloadStatus(null);
+    setPostProcessingStatus(null);
   }, [isDownloadingImage]);
+
+  useEffect(() => {
+    if (!expandedImage || !sessionId) {
+      setExpandedImageMetadata(null);
+      setExpandedImageMetadataError(null);
+      setIsInspectingExpandedImage(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsInspectingExpandedImage(true);
+    setExpandedImageMetadata(null);
+    setExpandedImageMetadataError(null);
+    void creatorStudioAssetService.inspectImage({
+      source: {
+        sessionId,
+        messageId: message.id,
+        filePath: expandedImage.image.path,
+      },
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setExpandedImageMetadata(result?.imageMetadata ?? null);
+        if (!result?.imageMetadata) {
+          setExpandedImageMetadataError(i18nService.t('creatorImageMetadataUnavailable'));
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setExpandedImageMetadataError(error instanceof Error ? error.message : i18nService.t('creatorImageMetadataInspectFailed'));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setIsInspectingExpandedImage(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedImage, message.id, sessionId]);
 
   const handleDownloadGeneratedImage = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -1300,6 +1397,73 @@ const AssistantMessageItem: React.FC<{
       setIsDownloadingImage(false);
     }
   }, [expandedImage, isDownloadingImage]);
+
+  const handlePostProcessGeneratedImage = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!expandedImage || !sessionId || isPreparingPostProcessing) return;
+
+    setIsPreparingPostProcessing(true);
+    setPostProcessingStatus(null);
+    try {
+      const result = await creatorStudioAssetService.inspectImage({
+        source: {
+          sessionId,
+          messageId: message.id,
+          filePath: expandedImage.image.path,
+        },
+      });
+      if (!result?.asset) {
+        setPostProcessingStatus({
+          type: 'error',
+          message: i18nService.t('creatorImageProcessingSourceMapFailed'),
+        });
+        return;
+      }
+      setPostProcessingAsset(result.asset);
+    } catch (error) {
+      setPostProcessingStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : i18nService.t('creatorImageProcessingSourceMapFailed'),
+      });
+    } finally {
+      setIsPreparingPostProcessing(false);
+    }
+  }, [expandedImage, isPreparingPostProcessing, message.id, sessionId]);
+
+  const handlePostProcessingCompleted = useCallback((assets: CreatorProductionAssetRecord[]) => {
+    setPostProcessingStatus({
+      type: 'success',
+      message: assets[0]
+        ? i18nService.t('creatorImageProcessingCoworkCompleted')
+        : i18nService.t('creatorImageProcessingCompleted'),
+    });
+  }, []);
+
+  const handleExecutePlanCard = useCallback(async () => {
+    if (!imageProcessingPlan || isExecutingPlanCard) return;
+    setIsExecutingPlanCard(true);
+    setPlanCardStatus(null);
+    try {
+      const result = await creatorStudioAssetService.executeImageJob({
+        planId: imageProcessingPlan.id,
+        coworkSessionId: sessionId,
+        coworkPlanMessageId: message.id,
+      });
+      setPlanCardStatus({
+        type: 'success',
+        message: result.outputAssetIds.length > 0
+          ? i18nService.t('creatorImageProcessingCoworkExecuteDone')
+          : i18nService.t('creatorImageProcessingCompleted'),
+      });
+    } catch (error) {
+      setPlanCardStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : i18nService.t('creatorImageProcessingExecuteFailed'),
+      });
+    } finally {
+      setIsExecutingPlanCard(false);
+    }
+  }, [imageProcessingPlan, isExecutingPlanCard, message.id, sessionId]);
 
   return (
     <div
@@ -1339,6 +1503,37 @@ const AssistantMessageItem: React.FC<{
             })}
           </div>
         )}
+        {imageProcessingPlan && (
+          <div className="mt-3 rounded-lg border border-border bg-surface p-3 text-sm">
+            <div className="font-medium text-foreground">{i18nService.t('creatorImageProcessingPlan')}</div>
+            <div className="mt-2 grid gap-1 text-xs text-muted">
+              <div>{i18nService.t('creatorImageProcessingPlanId')}: {imageProcessingPlan.id}</div>
+              <div>{i18nService.t('creatorImageProcessingPreset')}: {imageProcessingPlan.presetId ?? i18nService.t('creatorImageProcessingPresetCustom')}</div>
+              <div>{i18nService.t('creatorImageProcessingOutputFormat')}: {imageProcessingPlan.output.format}</div>
+              <div>{i18nService.t('creatorImageProcessingOutputFile')}: {imageProcessingPlan.outputItems[0]?.fileName ?? '-'}</div>
+            </div>
+            <div className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              {i18nService.t('creatorImageProcessingAgentConfirmHint')}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExecutePlanCard}
+                disabled={!imageProcessingEnabled || isExecutingPlanCard}
+                className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isExecutingPlanCard
+                  ? i18nService.t('creatorImageProcessingExecuting')
+                  : i18nService.t('creatorImageProcessingConfirmExecute')}
+              </button>
+              {planCardStatus && (
+                <span className={planCardStatus.type === 'success' ? 'text-xs text-emerald-600' : 'text-xs text-red-500'}>
+                  {planCardStatus.message}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       {expandedImage && (
         <div
@@ -1354,6 +1549,13 @@ const AssistantMessageItem: React.FC<{
               alt={expandedImage.name}
               className="max-h-[82vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
             />
+            <div className="rounded-full bg-black/60 px-3 py-1 text-xs text-white shadow">
+              {isInspectingExpandedImage
+                ? i18nService.t('creatorImageMetadataLoading')
+                : expandedImageMetadata
+                  ? formatImageMetadataSummary(expandedImageMetadata)
+                  : expandedImageMetadataError || i18nService.t('creatorImageMetadataUnavailable')}
+            </div>
             <div className="flex flex-col items-center gap-2">
               <button
                 type="button"
@@ -1364,16 +1566,36 @@ const AssistantMessageItem: React.FC<{
                 <DocumentArrowDownIcon className="h-4 w-4" />
                 {isDownloadingImage ? i18nService.t('downloadingImage') : i18nService.t('downloadImage')}
               </button>
-              {imageDownloadStatus && (
+              {imageProcessingEnabled && sessionId && (
+                <button
+                  type="button"
+                  onClick={handlePostProcessGeneratedImage}
+                  disabled={isPreparingPostProcessing}
+                  className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-900 shadow-lg transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-900 dark:text-white dark:hover:bg-slate-800"
+                >
+                  <PhotoIcon className="h-4 w-4" />
+                  {isPreparingPostProcessing
+                    ? i18nService.t('creatorImageProcessingPreparing')
+                    : i18nService.t('creatorImagePostProcessingAction')}
+                </button>
+              )}
+              {(imageDownloadStatus || postProcessingStatus) && (
                 <div className={`rounded-full px-3 py-1 text-xs shadow ${
-                  imageDownloadStatus.type === 'success'
+                  (postProcessingStatus ?? imageDownloadStatus)?.type === 'success'
                     ? 'bg-emerald-500/90 text-white'
                     : 'bg-red-500/90 text-white'
                 }`}>
-                  {imageDownloadStatus.message}
+                  {(postProcessingStatus ?? imageDownloadStatus)?.message}
                 </div>
               )}
             </div>
+          </div>
+          <div onClick={(event) => event.stopPropagation()}>
+            <ImagePostProcessingDrawer
+              asset={postProcessingAsset}
+              onClose={() => setPostProcessingAsset(null)}
+              onCompleted={handlePostProcessingCompleted}
+            />
           </div>
         </div>
       )}
@@ -1594,6 +1816,7 @@ const TeamTurnCard: React.FC<{
 
 export const AssistantTurnBlock: React.FC<{
   turn: ConversationTurn;
+  sessionId?: string;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
   showTypingIndicator?: boolean;
@@ -1601,6 +1824,7 @@ export const AssistantTurnBlock: React.FC<{
   onOpenFileChange?: (fileChangeId: string) => void;
 }> = ({
   turn,
+  sessionId,
   resolveLocalFilePath,
   mapDisplayText,
   showTypingIndicator = false,
@@ -1730,6 +1954,7 @@ export const AssistantTurnBlock: React.FC<{
                   <AssistantMessageItem
                     key={item.message.id}
                     message={item.message}
+                    sessionId={sessionId}
                     resolveLocalFilePath={resolveLocalFilePath}
                     mapDisplayText={mapDisplayText}
                     showCopyButton={showCopyButtons && !hasToolGroupAfter}
@@ -2929,6 +3154,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               userMessage: null,
               assistantItems: [],
             }}
+            sessionId={currentSession.id}
             resolveLocalFilePath={resolveLocalFilePath}
             showTypingIndicator
             showCopyButtons={!isStreaming}
@@ -2966,6 +3192,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             <div data-export-role="assistant-block" {...(asstRailIdx >= 0 ? { 'data-rail-index': asstRailIdx } : undefined)}>
               <AssistantTurnBlock
                 turn={turn}
+                sessionId={currentSession.id}
                 resolveLocalFilePath={resolveLocalFilePath}
                 mapDisplayText={mapDisplayText}
                 showTypingIndicator={showTypingIndicator}
@@ -3495,6 +3722,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           <div className="hidden h-full lg:block">
             <CoworkActivitySidebar
               snapshot={activitySnapshot}
+              sessionId={currentSession.id}
               sessionStatus={currentSession.status}
               engineLabel={getEngineLabel()}
               cwd={currentSession.cwd}
@@ -3517,6 +3745,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           <div className="absolute inset-0 z-40 flex justify-end bg-black/20 lg:hidden">
             <CoworkActivitySidebar
               snapshot={activitySnapshot}
+              sessionId={currentSession.id}
               sessionStatus={currentSession.status}
               engineLabel={getEngineLabel()}
               cwd={currentSession.cwd}

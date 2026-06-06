@@ -6,6 +6,7 @@ import {
 } from '@shared/creatorStudio/constants';
 import type {
   CreatorBatchRunRecord,
+  CreatorImageProcessingAssetMetadata,
   CreatorProductionAssetRecord,
   CreatorProjectRecord,
   CreatorRecipeRecord,
@@ -102,6 +103,7 @@ export interface CreatorProductionPackageManifest {
   recipes: CreatorRecipeRecord[];
   batchRuns: CreatorBatchRunRecord[];
   assets: CreatorProductionAssetRecord[];
+  imageProcessingRecords: CreatorProductionPackageImageProcessingRecord[];
 }
 
 export interface CreatorProductionPackageInput {
@@ -111,6 +113,30 @@ export interface CreatorProductionPackageInput {
   recipes: CreatorRecipeRecord[];
   batchRuns: CreatorBatchRunRecord[];
   exportedAt?: string;
+}
+
+export interface CreatorProductionPackageImageProcessingRecord {
+  sourceAssetId: string;
+  outputAssetId: string | null;
+  reportAssetId: string | null;
+  recipeId: string | null;
+  presetId: string | null;
+  plan: CreatorImageProcessingAssetMetadata['plan'];
+  job: CreatorImageProcessingAssetMetadata['job'];
+  tasks: NonNullable<CreatorImageProcessingAssetMetadata['tasks']>;
+  report: CreatorImageProcessingAssetMetadata['report'];
+  readmeSuggestions: NonNullable<CreatorImageProcessingAssetMetadata['readmeSuggestions']>;
+  promptSpec: CreatorProductionAssetRecord['promptSpec'];
+  promptText: string;
+  licenseNote: string | null;
+  usageNote: string | null;
+  lineage: {
+    variantOfAssetId: string | null;
+    sourceSessionId: string | null;
+    sourceMessageId: string | null;
+    promptVersionId: string | null;
+    parentPromptAssetId: string | null;
+  };
 }
 
 const SECRET_PATTERN = /(sk-[a-zA-Z0-9_-]{16,}|AIza[0-9A-Za-z_-]{20,}|AKIA[0-9A-Z]{16})/;
@@ -204,6 +230,46 @@ const addBatchTaskPerformance = (
   if (status === CreatorBatchTaskStatus.Skipped) group.skippedBatchTasks += 1;
 };
 
+const buildImageProcessingRecords = (
+  assets: CreatorProductionAssetRecord[]
+): CreatorProductionPackageImageProcessingRecord[] => {
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+  return assets
+    .filter((asset) => Boolean(asset.imageProcessing))
+    .map((asset) => {
+      const processing = asset.imageProcessing!;
+      const sourceAsset = assetById.get(processing.sourceAssetId);
+      const job = processing.job;
+      const tasks = processing.tasks
+        ?? (processing.task ? [processing.task] : []);
+      const reportAssetId = job?.reportAssetId
+        ?? (asset.kind === CreatorProductionAssetKind.Report ? asset.id : null);
+      return {
+        sourceAssetId: processing.sourceAssetId,
+        outputAssetId: asset.kind === CreatorProductionAssetKind.Image ? asset.id : null,
+        reportAssetId,
+        recipeId: processing.recipeId ?? processing.plan?.recipeId ?? asset.recipeId ?? sourceAsset?.recipeId ?? null,
+        presetId: processing.presetId,
+        plan: processing.plan,
+        job,
+        tasks,
+        report: processing.report ?? null,
+        readmeSuggestions: processing.readmeSuggestions ?? processing.plan?.readmeSuggestions ?? [],
+        promptSpec: asset.promptSpec ?? sourceAsset?.promptSpec ?? null,
+        promptText: asset.promptText || sourceAsset?.promptText || '',
+        licenseNote: asset.licenseNote ?? sourceAsset?.licenseNote ?? null,
+        usageNote: asset.usageNote ?? sourceAsset?.usageNote ?? null,
+        lineage: {
+          variantOfAssetId: asset.variantOfAssetId ?? sourceAsset?.variantOfAssetId ?? null,
+          sourceSessionId: asset.sessionId ?? sourceAsset?.sessionId ?? null,
+          sourceMessageId: asset.messageId ?? sourceAsset?.messageId ?? null,
+          promptVersionId: asset.promptVersionId ?? sourceAsset?.promptVersionId ?? null,
+          parentPromptAssetId: asset.parentPromptAssetId ?? sourceAsset?.parentPromptAssetId ?? null,
+        },
+      };
+    });
+};
+
 const finalizePerformanceGroups = (
   groups: Map<string, CreatorProductionPerformanceGroup>
 ): CreatorProductionPerformanceGroup[] => (
@@ -293,6 +359,7 @@ export const buildCreatorProductionPackage = ({
   const sensitivePromptRecords = promptRecords.filter((record) => containsPattern(record, SECRET_PATTERN)).length;
   const localPathPromptRecords = promptRecords.filter((record) => containsPattern(record, LOCAL_PATH_PATTERN)).length;
   const performance = buildCreatorProductionPerformance({ assets, batchRuns });
+  const imageProcessingRecords = buildImageProcessingRecords(assets);
 
   const stats: CreatorProductionPackageStats = {
     totalAssets: assets.length,
@@ -361,6 +428,7 @@ export const buildCreatorProductionPackage = ({
     recipes,
     batchRuns,
     assets,
+    imageProcessingRecords,
   };
 };
 

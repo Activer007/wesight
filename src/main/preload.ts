@@ -538,6 +538,30 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetList, input),
     getAssetSource: (assetId: string) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetGetSource, assetId),
+    inspectImage: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageInspect, input),
+    createImagePlan: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImagePlanCreate, input),
+    getImagePlan: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImagePlanGet, input),
+    executeImageJob: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageJobExecute, input),
+    getImageJob: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageJobGet, input),
+    listImageJobs: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageJobList, input),
+    createImageBatch: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageBatchCreate, input),
+    executeImageRecipe: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageRecipeExecute, input),
+    retryImageTask: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageTaskRetry, input),
+    cancelImageTask: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageTaskCancel, input),
+    revealImageOutput: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageOutputReveal, input),
+    openImageReport: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke(CreatorStudioIpcChannel.ImageReportOpen, input),
     setAssetFavorite: (input: { assetId: string; favorite: boolean }) =>
       ipcRenderer.invoke(CreatorStudioIpcChannel.AssetSetFavorite, input),
     updateAsset: (input: Record<string, unknown>) =>

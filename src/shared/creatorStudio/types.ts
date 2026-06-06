@@ -5,12 +5,23 @@ import type {
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
   CreatorCreativeModelOutputKind,
+  CreatorImageProcessingOutputFormat,
+  CreatorImageProcessingPresetId,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
   CreatorProductionRunSource,
   CreatorProductionRunStatus,
+  CreatorRecipeImageProcessingPackKind,
+  CreatorRecipeOutputKind,
+  CreatorRecipeOutputSchemaVersion,
 } from './constants';
+import type {
+  CreatorImageMetadata,
+  CreatorImageProcessingJob,
+  CreatorImageProcessingPlan,
+  CreatorImageProcessingTask,
+} from './imageProcessingTypes';
 
 export interface CreatorPromptSpecSnapshot {
   schemaVersion?: 'creator.prompt.v1';
@@ -232,6 +243,51 @@ export interface CreatorProductionAssetRecord {
   createdAt: number;
   updatedAt: number;
   sourceSessionAvailable: boolean;
+  imageMetadata: CreatorImageMetadata | null;
+  imageProcessing: CreatorImageProcessingAssetMetadata | null;
+}
+
+export interface CreatorImageProcessingAssetMetadata {
+  sourceAssetId: string;
+  recipeId?: string | null;
+  presetId: string | null;
+  operations: CreatorImageProcessingPlan['operations'];
+  plan: CreatorImageProcessingPlan | null;
+  job: CreatorImageProcessingJob | null;
+  task: CreatorImageProcessingTask | null;
+  tasks?: CreatorImageProcessingTask[];
+  report?: {
+    path: string;
+    title: string;
+  } | null;
+  readmeSuggestions?: CreatorImageProcessingPlan['readmeSuggestions'];
+}
+
+export interface CreatorImageInspectInput {
+  assetId?: string;
+  source?: {
+    sessionId?: string;
+    messageId?: string;
+    artifactId?: string;
+    filePath?: string;
+  };
+}
+
+export interface CreatorImageInspectResult {
+  asset: CreatorProductionAssetRecord;
+  imageMetadata: CreatorImageMetadata;
+}
+
+export interface CreatorImageProcessingAssetCreateInput {
+  sourceAssetId: string;
+  outputPath: string;
+  fileName: string;
+  mimeType: string | null;
+  imageMetadata: CreatorImageMetadata;
+  plan: CreatorImageProcessingPlan;
+  job: CreatorImageProcessingJob;
+  task: CreatorImageProcessingTask;
+  recipeId?: string | null;
 }
 
 export interface CreatorProductionAssetSourceLookup {
@@ -327,6 +383,49 @@ export interface CreatorPromptAssetCreateInput {
   changeNote?: string | null;
 }
 
+export interface CreatorRecipeImageProcessingReadmeSuggestion {
+  outputRelativePath: string;
+  markdown: string;
+  note: string | null;
+}
+
+export interface CreatorRecipeImageProcessingRule {
+  id: string;
+  title: string;
+  presetId: CreatorImageProcessingPresetId;
+  outputFormat?: CreatorImageProcessingOutputFormat | null;
+  quality?: number | null;
+  width?: number | null;
+  height?: number | null;
+  maxWidth?: number | null;
+  maxHeight?: number | null;
+  cropRatio?: string | null;
+  rotate?: number | null;
+  outputDirectory?: string | null;
+  fileNamePattern?: string | null;
+  readmeSuggestion?: CreatorRecipeImageProcessingReadmeSuggestion | null;
+}
+
+export interface CreatorRecipeImageProcessingOutput {
+  schemaVersion: CreatorRecipeOutputSchemaVersion;
+  kind: CreatorRecipeOutputKind;
+  packKind: CreatorRecipeImageProcessingPackKind;
+  rules: CreatorRecipeImageProcessingRule[];
+  report: {
+    enabled: boolean;
+  };
+  readmeSuggestion?: {
+    enabled: boolean;
+    note: string | null;
+  } | null;
+}
+
+export type CreatorRecipeDefaultOutput =
+  | CreatorRecipeImageProcessingOutput
+  | (Record<string, unknown> & {
+    imageProcessing?: CreatorRecipeImageProcessingOutput;
+  });
+
 export interface CreatorRecipeRecord {
   id: string;
   projectId: string;
@@ -335,7 +434,7 @@ export interface CreatorRecipeRecord {
   sourcePromptAssetId: string | null;
   promptSpec: CreatorPromptSpecSnapshot;
   defaultRuntime: Record<string, unknown>;
-  defaultOutput: Record<string, unknown>;
+  defaultOutput: CreatorRecipeDefaultOutput;
   tags: string[];
   createdAt: number;
   updatedAt: number;
@@ -348,7 +447,7 @@ export interface CreatorRecipeCreateInput {
   sourcePromptAssetId?: string | null;
   promptSpec: CreatorPromptSpecSnapshot;
   defaultRuntime?: Record<string, unknown>;
-  defaultOutput?: Record<string, unknown>;
+  defaultOutput?: CreatorRecipeDefaultOutput;
   tags?: string[];
 }
 

@@ -1,4 +1,26 @@
 import type {
+  CreatorImageBatchCreateInput,
+  CreatorImageBatchCreateResult,
+  CreatorImageJobExecuteInput,
+  CreatorImageJobExecuteResult,
+  CreatorImageJobGetInput,
+  CreatorImageJobGetResult,
+  CreatorImageJobListInput,
+  CreatorImageJobListResult,
+  CreatorImageOutputRevealInput,
+  CreatorImagePlanCreateInput,
+  CreatorImagePlanCreateResult,
+  CreatorImagePlanGetInput,
+  CreatorImagePlanGetResult,
+  CreatorImageRecipeExecuteInput,
+  CreatorImageRecipeExecuteResult,
+  CreatorImageReportOpenInput,
+  CreatorImageTaskCancelInput,
+  CreatorImageTaskCancelResult,
+  CreatorImageTaskRetryInput,
+  CreatorImageTaskRetryResult,
+} from '@shared/creatorStudio/imageProcessingTypes';
+import type {
   CreatorAssetCollectionAddInput,
   CreatorAssetCollectionCreateInput,
   CreatorAssetUpdateInput,
@@ -19,6 +41,8 @@ import type {
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
   CreatorCreativeModelCapability,
+  CreatorImageInspectInput,
+  CreatorImageInspectResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -58,6 +82,137 @@ class CreatorStudioAssetService {
       throw new Error(result.error || 'Failed to get creator asset source');
     }
     return result.source ?? null;
+  }
+
+  async inspectImage(input: CreatorImageInspectInput): Promise<CreatorImageInspectResult | null> {
+    const result = await window.electron.creatorStudio.inspectImage(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to inspect image metadata');
+    }
+    if (!result.asset || !result.imageMetadata) {
+      return null;
+    }
+    return {
+      asset: result.asset,
+      imageMetadata: result.imageMetadata,
+    };
+  }
+
+  async createImagePlan(input: CreatorImagePlanCreateInput): Promise<CreatorImagePlanCreateResult['plan']> {
+    const result = await window.electron.creatorStudio.createImagePlan(input);
+    if (!result.success || !result.plan) {
+      throw new Error(result.error || 'Failed to create image processing plan');
+    }
+    return result.plan;
+  }
+
+  async getImagePlan(input: CreatorImagePlanGetInput): Promise<CreatorImagePlanGetResult['plan'] | null> {
+    const result = await window.electron.creatorStudio.getImagePlan(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to get image processing plan');
+    }
+    return result.plan ?? null;
+  }
+
+  async executeImageJob(input: CreatorImageJobExecuteInput): Promise<
+    CreatorImageJobExecuteResult & { outputAssets: CreatorProductionAssetRecord[] }
+  > {
+    const result = await window.electron.creatorStudio.executeImageJob(input);
+    if (!result.success || !result.job || !result.tasks) {
+      throw new Error(result.error || 'Failed to execute image processing job');
+    }
+    return {
+      job: result.job,
+      tasks: result.tasks,
+      outputAssetIds: result.outputAssetIds ?? [],
+      outputAssets: result.outputAssets ?? [],
+    };
+  }
+
+  async getImageJob(input: CreatorImageJobGetInput): Promise<CreatorImageJobGetResult | null> {
+    const result = await window.electron.creatorStudio.getImageJob(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to get image processing job');
+    }
+    if (!result.job || !result.tasks) return null;
+    return { job: result.job, tasks: result.tasks };
+  }
+
+  async listImageJobs(input: CreatorImageJobListInput): Promise<CreatorImageJobListResult> {
+    const result = await window.electron.creatorStudio.listImageJobs(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to list image processing jobs');
+    }
+    return {
+      jobs: result.jobs ?? [],
+      total: result.total ?? 0,
+    };
+  }
+
+  async createImageBatch(input: CreatorImageBatchCreateInput): Promise<CreatorImageBatchCreateResult> {
+    const result = await window.electron.creatorStudio.createImageBatch(input);
+    if (!result.success || !result.plan || !result.job || !result.tasks) {
+      throw new Error(result.error || 'Failed to create image processing batch');
+    }
+    return {
+      plan: result.plan,
+      job: result.job,
+      tasks: result.tasks,
+      outputAssetIds: result.outputAssetIds ?? [],
+    };
+  }
+
+  async executeImageRecipe(input: CreatorImageRecipeExecuteInput): Promise<
+    CreatorImageRecipeExecuteResult & { outputAssets: CreatorProductionAssetRecord[] }
+  > {
+    const result = await window.electron.creatorStudio.executeImageRecipe(input);
+    if (!result.success || !result.plan || !result.job || !result.tasks) {
+      throw new Error(result.error || 'Failed to execute image processing recipe');
+    }
+    return {
+      plan: result.plan,
+      job: result.job,
+      tasks: result.tasks,
+      outputAssetIds: result.outputAssetIds ?? [],
+      outputAssets: result.outputAssets ?? [],
+    };
+  }
+
+  async retryImageTask(input: CreatorImageTaskRetryInput): Promise<CreatorImageTaskRetryResult> {
+    const result = await window.electron.creatorStudio.retryImageTask(input);
+    if (!result.success || !result.job || !result.tasks) {
+      throw new Error(result.error || 'Failed to retry image processing task');
+    }
+    return {
+      job: result.job,
+      tasks: result.tasks,
+      outputAssetIds: result.outputAssetIds ?? [],
+    };
+  }
+
+  async cancelImageTask(input: CreatorImageTaskCancelInput): Promise<CreatorImageTaskCancelResult> {
+    const result = await window.electron.creatorStudio.cancelImageTask(input);
+    if (!result.success || !result.job || !result.tasks) {
+      throw new Error(result.error || 'Failed to cancel image processing task');
+    }
+    return {
+      job: result.job,
+      tasks: result.tasks,
+    };
+  }
+
+  async revealImageOutput(input: CreatorImageOutputRevealInput): Promise<void> {
+    const result = await window.electron.creatorStudio.revealImageOutput(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to reveal image output');
+    }
+  }
+
+  async openImageReport(input: CreatorImageReportOpenInput): Promise<void> {
+    const result = await window.electron.creatorStudio.openImageReport(input);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to open image processing report');
+    }
   }
 
   async setFavorite(assetId: string, favorite: boolean): Promise<CreatorProductionAssetRecord | null> {

@@ -10,14 +10,46 @@ import {
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
+  CreatorImageMetadataStatus,
+  CreatorImageProcessingCreatedBy,
+  CreatorImageProcessingJobStatus,
+  CreatorImageProcessingPlanStatus,
+  CreatorImageProcessingSourceKind,
+  CreatorImageProcessingTaskStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
   CreatorProductionRunSource,
   CreatorProductionRunStatus,
   CreatorPromptSpecSchemaVersion,
+  CreatorRecipeImageProcessingPackKind,
+  CreatorRecipeOutputKind,
+  CreatorRecipeOutputSchemaVersion,
   CreatorStudioDefaultProjectId,
+  isCreatorImageMetadataStatus,
+  isCreatorImageProcessingJobStatus,
+  isCreatorImageProcessingOutputFormat,
+  isCreatorImageProcessingPlanStatus,
+  isCreatorImageProcessingPresetId,
+  isCreatorImageProcessingTaskStatus,
+  isCreatorRecipeImageProcessingPackKind,
+  isCreatorRecipeOutputKind,
+  isCreatorRecipeOutputSchemaVersion,
 } from '../shared/creatorStudio/constants';
+import type {
+  CreatorImageBatchCreateInput,
+  CreatorImageBatchCreateResult,
+  CreatorImageJobListInput,
+  CreatorImageJobListResult,
+  CreatorImageMetadata,
+  CreatorImageProcessingJob,
+  CreatorImageProcessingPlan,
+  CreatorImageProcessingReport,
+  CreatorImageProcessingRuntimeMetrics,
+  CreatorImageProcessingTask,
+  CreatorImageTaskCancelResult,
+  CreatorImageTaskRetryResult,
+} from '../shared/creatorStudio/imageProcessingTypes';
 import { CREATOR_CREATIVE_MODEL_CAPABILITIES } from '../shared/creatorStudio/modelCapabilities';
 import type {
   CreatorAssetCollectionAddInput,
@@ -46,6 +78,10 @@ import type {
   CreatorBrandKitRecord,
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
+  CreatorImageInspectInput,
+  CreatorImageInspectResult,
+  CreatorImageProcessingAssetCreateInput,
+  CreatorImageProcessingAssetMetadata,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -63,6 +99,8 @@ import type {
   CreatorPromptVersionListResult,
   CreatorPromptVersionRecord,
   CreatorRecipeCreateInput,
+  CreatorRecipeImageProcessingOutput,
+  CreatorRecipeImageProcessingRule,
   CreatorRecipeImportInput,
   CreatorRecipeListInput,
   CreatorRecipeListResult,
@@ -71,6 +109,10 @@ import type {
   CreatorWorkspaceSnapshot,
 } from '../shared/creatorStudio/types';
 import type { CoworkMessage, CoworkMessageMetadata } from './coworkStore';
+import { inspectImageMetadata } from './libs/imageProcessing/imageMetadataInspector';
+import { createCreatorAssetsImageProcessingPlan } from './libs/imageProcessing/imageProcessingPlanner';
+import { createImageProcessingReport } from './libs/imageProcessing/imageProcessingReport';
+import { executeImageProcessingTask } from './libs/imageProcessing/imageProcessingService';
 
 interface ProductionAssetRow {
   id: string;
@@ -104,11 +146,20 @@ interface ProductionAssetRow {
   tags_json: string | null;
   license_note: string | null;
   usage_note: string | null;
+  metadata: string | null;
   created_at: number;
   updated_at: number;
   source_session_available?: number | null;
   collection_ids_json?: string | null;
   selected_status?: string | null;
+}
+
+export interface CreatorImageProcessingRecipeExecuteInput {
+  recipeId: string;
+  assetId: string;
+  ruleId?: string | null;
+  outputDirectory?: string | null;
+  waitForCompletion?: boolean;
 }
 
 interface ProductionRunRow {
@@ -129,12 +180,73 @@ interface ProductionRunRow {
   completed_at: number | null;
 }
 
+interface ImageProcessingPlanRow {
+  id: string;
+  project_id: string;
+  source_json: string;
+  plan_json: string;
+  status: string;
+  preset_id: string | null;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+}
+
+interface ImageProcessingJobRow {
+  id: string;
+  project_id: string;
+  plan_id: string;
+  status: string;
+  total_count: number;
+  success_count: number;
+  failed_count: number;
+  input_total_size: number;
+  output_total_size: number;
+  saved_size: number;
+  report_asset_id: string | null;
+  metadata_json: string | null;
+  created_at: number;
+  started_at: number | null;
+  completed_at: number | null;
+}
+
+interface ImageProcessingTaskRow {
+  id: string;
+  job_id: string;
+  project_id: string;
+  source_asset_id: string | null;
+  output_asset_id: string | null;
+  source_artifact_id: string | null;
+  source_path: string;
+  output_path: string | null;
+  status: string;
+  input_size: number | null;
+  output_size: number | null;
+  duration_ms: number | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: number;
+  updated_at: number;
+  completed_at: number | null;
+}
+
 type GeneratedImageInput = {
   path: string;
   name?: string;
   mimeType?: string;
   source?: string;
 };
+
+interface CreatorGeneratedImageContext {
+  templateId: string | null;
+  caseIds: string[];
+  promptSpec: CreatorPromptSpecSnapshot | null;
+  promptText: string;
+  variantOfAssetId: string | null;
+  promptVersionId: string | null;
+  recipeId: string | null;
+  selectedDirectionId: string | null;
+}
 
 interface ProjectRow {
   id: string;
@@ -280,6 +392,221 @@ const parseJsonObject = (value: string | null | undefined): Record<string, unkno
   } catch {
     return {};
   }
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+);
+
+const optionalNumber = (value: unknown): number | null | undefined => (
+  value === null || value === undefined
+    ? value as null | undefined
+    : typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : undefined
+);
+
+const optionalString = (value: unknown): string | null | undefined => (
+  value === null || value === undefined
+    ? value as null | undefined
+    : typeof value === 'string'
+      ? value
+      : undefined
+);
+
+export const parseCreatorRecipeImageProcessingOutput = (
+  defaultOutput: unknown,
+): CreatorRecipeImageProcessingOutput | null => {
+  if (!isRecord(defaultOutput)) return null;
+  const candidate = isRecord(defaultOutput.imageProcessing)
+    ? defaultOutput.imageProcessing
+    : defaultOutput;
+  if (
+    !isCreatorRecipeOutputSchemaVersion(candidate.schemaVersion)
+    || !isCreatorRecipeOutputKind(candidate.kind)
+    || candidate.kind !== CreatorRecipeOutputKind.ImageProcessing
+    || !isCreatorRecipeImageProcessingPackKind(candidate.packKind)
+    || !Array.isArray(candidate.rules)
+  ) {
+    return null;
+  }
+
+  const rules: CreatorRecipeImageProcessingRule[] = candidate.rules
+    .filter(isRecord)
+    .map((rule): CreatorRecipeImageProcessingRule | null => {
+      const id = typeof rule.id === 'string' && rule.id.trim() ? rule.id.trim() : null;
+      const title = typeof rule.title === 'string' && rule.title.trim() ? rule.title.trim() : null;
+      const presetId = isCreatorImageProcessingPresetId(rule.presetId) ? rule.presetId : null;
+      if (!id || !title || !presetId) return null;
+      const readmeSuggestion = isRecord(rule.readmeSuggestion)
+        ? {
+          outputRelativePath: typeof rule.readmeSuggestion.outputRelativePath === 'string'
+            ? rule.readmeSuggestion.outputRelativePath
+            : '',
+          markdown: typeof rule.readmeSuggestion.markdown === 'string'
+            ? rule.readmeSuggestion.markdown
+            : '',
+          note: typeof rule.readmeSuggestion.note === 'string' ? rule.readmeSuggestion.note : null,
+        }
+        : null;
+      const parsedRule: CreatorRecipeImageProcessingRule = {
+        id,
+        title,
+        presetId,
+      };
+      if (isCreatorImageProcessingOutputFormat(rule.outputFormat)) parsedRule.outputFormat = rule.outputFormat;
+      if (optionalString(rule.outputFormat) === null) parsedRule.outputFormat = null;
+      const quality = optionalNumber(rule.quality);
+      if (quality !== undefined) parsedRule.quality = quality;
+      const width = optionalNumber(rule.width);
+      if (width !== undefined) parsedRule.width = width;
+      const height = optionalNumber(rule.height);
+      if (height !== undefined) parsedRule.height = height;
+      const maxWidth = optionalNumber(rule.maxWidth);
+      if (maxWidth !== undefined) parsedRule.maxWidth = maxWidth;
+      const maxHeight = optionalNumber(rule.maxHeight);
+      if (maxHeight !== undefined) parsedRule.maxHeight = maxHeight;
+      const cropRatio = optionalString(rule.cropRatio);
+      if (cropRatio !== undefined) parsedRule.cropRatio = cropRatio;
+      const rotate = optionalNumber(rule.rotate);
+      if (rotate !== undefined) parsedRule.rotate = rotate;
+      const outputDirectory = optionalString(rule.outputDirectory);
+      if (outputDirectory !== undefined) parsedRule.outputDirectory = outputDirectory;
+      const fileNamePattern = optionalString(rule.fileNamePattern);
+      if (fileNamePattern !== undefined) parsedRule.fileNamePattern = fileNamePattern;
+      if (readmeSuggestion) parsedRule.readmeSuggestion = readmeSuggestion;
+      return parsedRule;
+    })
+    .filter((rule): rule is CreatorRecipeImageProcessingRule => Boolean(rule));
+
+  if (rules.length === 0) return null;
+
+  return {
+    schemaVersion: CreatorRecipeOutputSchemaVersion.ImageProcessingV1,
+    kind: CreatorRecipeOutputKind.ImageProcessing,
+    packKind: candidate.packKind,
+    rules,
+    report: isRecord(candidate.report)
+      ? { enabled: candidate.report.enabled !== false }
+      : { enabled: true },
+    readmeSuggestion: isRecord(candidate.readmeSuggestion)
+      ? {
+        enabled: candidate.readmeSuggestion.enabled !== false,
+        note: typeof candidate.readmeSuggestion.note === 'string' ? candidate.readmeSuggestion.note : null,
+      }
+      : null,
+  };
+};
+
+const parseImageProcessingPlanJson = (value: string): CreatorImageProcessingPlan | null => {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as CreatorImageProcessingPlan
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const parseImageMetadata = (metadata: Record<string, unknown>): CreatorImageMetadata | null => {
+  const value = metadata.imageMetadata;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const sourcePath = typeof record.sourcePath === 'string' ? record.sourcePath : null;
+  const fileSize = typeof record.fileSize === 'number' ? record.fileSize : null;
+  const inspectedAt = typeof record.inspectedAt === 'number' ? record.inspectedAt : null;
+  if (!sourcePath || fileSize === null || inspectedAt === null || !isCreatorImageMetadataStatus(record.status)) {
+    return null;
+  }
+
+  return {
+    sourcePath,
+    width: typeof record.width === 'number' ? record.width : null,
+    height: typeof record.height === 'number' ? record.height : null,
+    fileSize,
+    format: typeof record.format === 'string' ? record.format : null,
+    mimeType: typeof record.mimeType === 'string' ? record.mimeType : null,
+    hasAlpha: typeof record.hasAlpha === 'boolean' ? record.hasAlpha : null,
+    exifOrientation: typeof record.exifOrientation === 'number' ? record.exifOrientation : null,
+    colorSpace: typeof record.colorSpace === 'string' ? record.colorSpace : null,
+    inspectedAt,
+    status: record.status,
+    warningCodes: Array.isArray(record.warningCodes)
+      ? record.warningCodes.filter((item): item is string => typeof item === 'string')
+      : [],
+    ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
+    ...(typeof record.errorMessage === 'string' ? { errorMessage: record.errorMessage } : {}),
+  };
+};
+
+const parseImageProcessingMetadata = (metadata: Record<string, unknown>): CreatorImageProcessingAssetMetadata | null => {
+  const value = metadata.processing;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const sourceAssetId = typeof record.sourceAssetId === 'string' && record.sourceAssetId.trim()
+    ? record.sourceAssetId.trim()
+    : null;
+  if (!sourceAssetId) return null;
+
+  const plan = record.plan && typeof record.plan === 'object' && !Array.isArray(record.plan)
+    ? record.plan as CreatorImageProcessingAssetMetadata['plan']
+    : null;
+  const job = record.job && typeof record.job === 'object' && !Array.isArray(record.job)
+    ? record.job as CreatorImageProcessingAssetMetadata['job']
+    : null;
+  const task = record.task && typeof record.task === 'object' && !Array.isArray(record.task)
+    ? record.task as CreatorImageProcessingAssetMetadata['task']
+    : null;
+  const tasks = Array.isArray(record.tasks)
+    ? record.tasks.filter((item): item is CreatorImageProcessingTask => (
+      Boolean(item) && typeof item === 'object' && !Array.isArray(item)
+    ))
+    : undefined;
+  const report = record.report && typeof record.report === 'object' && !Array.isArray(record.report)
+    ? record.report as CreatorImageProcessingAssetMetadata['report']
+    : null;
+  const readmeSuggestions = Array.isArray(record.readmeSuggestions)
+    ? record.readmeSuggestions as CreatorImageProcessingAssetMetadata['readmeSuggestions']
+    : undefined;
+  const planOperations = plan?.operations ?? [];
+  const operations = Array.isArray(record.operations)
+    ? record.operations as CreatorImageProcessingAssetMetadata['operations']
+    : planOperations;
+
+  return {
+    sourceAssetId,
+    recipeId: typeof record.recipeId === 'string' ? record.recipeId : plan?.recipeId ?? null,
+    presetId: typeof record.presetId === 'string' ? record.presetId : plan?.presetId ?? null,
+    operations,
+    plan,
+    job,
+    task,
+    tasks,
+    report,
+    readmeSuggestions,
+  };
+};
+
+const parseImageProcessingRuntimeMetrics = (
+  value: unknown,
+): CreatorImageProcessingRuntimeMetrics | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Partial<CreatorImageProcessingRuntimeMetrics>;
+  if (record.backend !== 'sharp') return null;
+  return {
+    backend: 'sharp',
+    source: typeof record.source === 'string' ? record.source as CreatorImageProcessingRuntimeMetrics['source'] : CreatorImageProcessingSourceKind.CreatorAsset,
+    preset: typeof record.preset === 'string' ? record.preset as CreatorImageProcessingRuntimeMetrics['preset'] : null,
+    durationMs: typeof record.durationMs === 'number' ? record.durationMs : 0,
+    imageCount: typeof record.imageCount === 'number' ? record.imageCount : 0,
+    successCount: typeof record.successCount === 'number' ? record.successCount : 0,
+    failedCount: typeof record.failedCount === 'number' ? record.failedCount : 0,
+    inputSize: typeof record.inputSize === 'number' ? record.inputSize : 0,
+    outputSize: typeof record.outputSize === 'number' ? record.outputSize : 0,
+    savedSize: typeof record.savedSize === 'number' ? record.savedSize : 0,
+    savedPercentage: typeof record.savedPercentage === 'number' ? record.savedPercentage : 0,
+  };
 };
 
 const normalizeTags = (values: unknown): string[] => {
@@ -1116,6 +1443,1146 @@ export class CreatorAssetStore {
     };
   }
 
+  async inspectImageAsset(input: CreatorImageInspectInput): Promise<CreatorImageInspectResult | null> {
+    const assetId = input.assetId?.trim();
+    const asset = assetId
+      ? this.getAsset(assetId)
+      : this.resolveControlledImageAsset(input.source);
+    if (!asset || asset.kind !== CreatorProductionAssetKind.Image) {
+      return null;
+    }
+
+    const imageMetadata = await inspectImageMetadata(asset.filePath);
+    const currentMetadata = parseJsonObject(this.getAssetMetadataJson(asset.id));
+    this.db.prepare(`
+      UPDATE production_assets
+      SET metadata = ?,
+        status = ?,
+        mime_type = COALESCE(?, mime_type),
+        updated_at = ?
+      WHERE id = ?
+    `).run(
+      JSON.stringify({
+        ...currentMetadata,
+        imageMetadata,
+      }),
+      imageMetadata.status === CreatorImageMetadataStatus.Missing
+        ? CreatorProductionAssetStatus.Missing
+        : asset.status,
+      imageMetadata.mimeType,
+      Date.now(),
+      asset.id
+    );
+
+    const updated = this.getAsset(asset.id);
+    return updated ? { asset: updated, imageMetadata } : null;
+  }
+
+  resolveImageProcessingSourceAsset(input: CreatorImageInspectInput): CreatorProductionAssetRecord | null {
+    const assetId = input.assetId?.trim();
+    if (assetId) {
+      const asset = this.getAsset(assetId);
+      return asset?.kind === CreatorProductionAssetKind.Image ? asset : null;
+    }
+    return this.resolveControlledImageAsset(input.source);
+  }
+
+  createImageProcessingAsset(input: CreatorImageProcessingAssetCreateInput): CreatorProductionAssetRecord {
+    const sourceAsset = this.getAsset(input.sourceAssetId);
+    if (!sourceAsset || sourceAsset.kind !== CreatorProductionAssetKind.Image) {
+      throw new Error('Source image asset not found');
+    }
+    if (path.resolve(sourceAsset.filePath) === path.resolve(input.outputPath)) {
+      throw new Error('Output file must not overwrite the source image');
+    }
+
+    const now = Date.now();
+    const id = uuidv4();
+    const recipeId = input.recipeId ?? input.plan.recipeId ?? sourceAsset.recipeId;
+    const isRecipeProcessing = Boolean(input.recipeId ?? input.plan.recipeId)
+      || input.plan.createdBy === CreatorImageProcessingCreatedBy.Recipe;
+    const metadata = {
+      imageMetadata: input.imageMetadata,
+      processing: {
+        sourceAssetId: sourceAsset.id,
+        recipeId,
+        plan: input.plan,
+        job: input.job,
+        task: input.task,
+        presetId: input.plan.presetId,
+        operations: input.plan.operations,
+        readmeSuggestions: input.plan.readmeSuggestions ?? [],
+      },
+    };
+
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id,
+        project_id,
+        kind,
+        title,
+        status,
+        source,
+        run_id,
+        source_run_id,
+        variant_of_asset_id,
+        session_id,
+        source_session_id,
+        message_id,
+        source_message_id,
+        template_id,
+        case_ids,
+        case_ids_json,
+        prompt_spec,
+        prompt_spec_json,
+        prompt_text,
+        parent_prompt_asset_id,
+        prompt_version_id,
+        recipe_id,
+        selected_direction_id,
+        file_path,
+        file_name,
+        mime_type,
+        favorite,
+        adoption_status,
+        tags_json,
+        license_note,
+        usage_note,
+        metadata,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      sourceAsset.projectId,
+      CreatorProductionAssetKind.Image,
+      input.fileName,
+      CreatorProductionAssetStatus.Ready,
+      isRecipeProcessing ? CreatorProductionAssetSource.RecipePostProcessing : CreatorProductionAssetSource.LocalImageProcessing,
+      sourceAsset.runId,
+      sourceAsset.runId,
+      sourceAsset.id,
+      null,
+      sourceAsset.sessionId,
+      null,
+      sourceAsset.messageId,
+      sourceAsset.templateId,
+      JSON.stringify(sourceAsset.caseIds),
+      JSON.stringify(sourceAsset.caseIds),
+      sourceAsset.promptSpec ? JSON.stringify(sourceAsset.promptSpec) : null,
+      sourceAsset.promptSpec ? JSON.stringify(sourceAsset.promptSpec) : null,
+      sourceAsset.promptText,
+      sourceAsset.parentPromptAssetId,
+      sourceAsset.promptVersionId,
+      recipeId,
+      sourceAsset.selectedDirectionId,
+      input.outputPath,
+      input.fileName,
+      input.mimeType,
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(sourceAsset.tags),
+      sourceAsset.licenseNote,
+      sourceAsset.usageNote,
+      JSON.stringify(metadata),
+      now,
+      now,
+    );
+
+    return this.getAsset(id)!;
+  }
+
+  async executeImageProcessingPlan(plan: CreatorImageProcessingPlan): Promise<CreatorImageBatchCreateResult> {
+    if (plan.inputItems.length === 0) {
+      throw new Error('At least one image input is required');
+    }
+    const job = this.createImageProcessingJobShell(plan);
+    const tasks = plan.inputItems.map((_item, index) => this.createImageProcessingTaskShell(job, plan, index));
+    this.insertImageProcessingPlan(plan);
+    this.insertImageProcessingJob(job);
+    for (const task of tasks) {
+      this.insertImageProcessingTask(task);
+    }
+    const executed = await this.executeImageProcessingJobQueue(plan, job, tasks, 1);
+    return {
+      plan,
+      job: executed.job,
+      tasks: executed.tasks,
+      outputAssetIds: executed.tasks
+        .map((task) => task.outputAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId)),
+    };
+  }
+
+  async createImageProcessingBatchJob(input: CreatorImageBatchCreateInput): Promise<CreatorImageBatchCreateResult> {
+    const projectId = input.projectId.trim() || CreatorStudioDefaultProjectId;
+    const assetIds = [...new Set(input.assetIds.map((assetId) => assetId.trim()).filter(Boolean))];
+    const assets: CreatorProductionAssetRecord[] = [];
+    for (const assetId of assetIds) {
+      let asset = this.getAsset(assetId);
+      if (!asset || asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready) {
+        continue;
+      }
+      if (!asset.imageMetadata) {
+        const inspected = await this.inspectImageAsset({ assetId: asset.id });
+        asset = inspected?.asset ?? asset;
+      }
+      assets.push(asset);
+    }
+
+    if (assets.length === 0) {
+      throw new Error('At least one ready image asset is required');
+    }
+
+    const plan = createCreatorAssetsImageProcessingPlan({
+      projectId,
+      assets,
+      presetId: input.presetId,
+      outputFormat: input.outputFormat,
+      quality: input.quality,
+      width: input.width,
+      height: input.height,
+      maxWidth: input.maxWidth,
+      maxHeight: input.maxHeight,
+      cropRatio: input.cropRatio,
+      rotate: input.rotate,
+      outputDirectory: input.outputDirectory,
+    });
+    const job = this.createImageProcessingJobShell(plan);
+    const tasks = plan.inputItems.map((_item, index) => this.createImageProcessingTaskShell(job, plan, index));
+    this.insertImageProcessingPlan(plan);
+    this.insertImageProcessingJob(job);
+    for (const task of tasks) {
+      this.insertImageProcessingTask(task);
+    }
+
+    if (input.waitForCompletion === false) {
+      void this.executeImageProcessingJobQueue(plan, job, tasks).catch((error) => {
+        console.error('[CreatorImageProcessing] batch job execution failed:', error);
+      });
+      return {
+        plan,
+        job,
+        tasks,
+        outputAssetIds: [],
+      };
+    }
+
+    const executed = await this.executeImageProcessingJobQueue(plan, job, tasks);
+    return {
+      plan,
+      job: executed.job,
+      tasks: executed.tasks,
+      outputAssetIds: executed.tasks
+        .map((task) => task.outputAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId)),
+    };
+  }
+
+  listImageProcessingJobs(input: CreatorImageJobListInput = {}): CreatorImageJobListResult {
+    const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 20), 100));
+    const offset = Math.max(0, Math.floor(input.offset ?? 0));
+    const projectId = input.projectId?.trim();
+    const where = projectId ? 'WHERE project_id = ?' : '';
+    const args = projectId ? [projectId] : [];
+    const rows = this.db.prepare(`
+      SELECT * FROM creator_image_processing_jobs
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...args, limit, offset) as ImageProcessingJobRow[];
+    const total = (this.db.prepare(`
+      SELECT COUNT(*) AS count FROM creator_image_processing_jobs ${where}
+    `).get(...args) as { count: number }).count;
+
+    return {
+      jobs: rows.map((row) => {
+        const job = this.mapImageProcessingJobRow(row);
+        return { job, tasks: this.listImageProcessingTasks(job.id) };
+      }),
+      total,
+    };
+  }
+
+  getImageProcessingJob(jobId: string): { job: CreatorImageProcessingJob; tasks: CreatorImageProcessingTask[] } | null {
+    const row = this.db.prepare(`
+      SELECT * FROM creator_image_processing_jobs WHERE id = ? LIMIT 1
+    `).get(jobId) as ImageProcessingJobRow | undefined;
+    if (!row) return null;
+    const job = this.mapImageProcessingJobRow(row);
+    return { job, tasks: this.listImageProcessingTasks(job.id) };
+  }
+
+  getImageProcessingPlan(planId: string): CreatorImageProcessingPlan | null {
+    const row = this.db.prepare(`
+      SELECT * FROM creator_image_processing_plans WHERE id = ? LIMIT 1
+    `).get(planId) as ImageProcessingPlanRow | undefined;
+    if (!row) return null;
+    return this.mapImageProcessingPlanRow(row);
+  }
+
+  saveImageProcessingPlan(plan: CreatorImageProcessingPlan): CreatorImageProcessingPlan {
+    this.insertImageProcessingPlan(plan);
+    return plan;
+  }
+
+  async executeImageProcessingRecipe(
+    input: CreatorImageProcessingRecipeExecuteInput,
+  ): Promise<CreatorImageBatchCreateResult> {
+    const recipe = this.getRecipe(input.recipeId.trim());
+    if (!recipe) {
+      throw new Error('Creator recipe not found');
+    }
+    let asset = this.getAsset(input.assetId.trim());
+    if (!asset || asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready) {
+      throw new Error('At least one ready image asset is required');
+    }
+    if (!asset.imageMetadata) {
+      const inspected = await this.inspectImageAsset({ assetId: asset.id });
+      asset = inspected?.asset ?? asset;
+    }
+
+    const imageOutput = parseCreatorRecipeImageProcessingOutput(recipe.defaultOutput);
+    if (!imageOutput) {
+      throw new Error('Creator recipe does not declare image processing output');
+    }
+    const rule = input.ruleId?.trim()
+      ? imageOutput.rules.find((item) => item.id === input.ruleId?.trim())
+      : imageOutput.rules[0];
+    if (!rule) {
+      throw new Error('Creator recipe image processing rule not found');
+    }
+
+    const outputDirectory = input.outputDirectory?.trim()
+      || rule.outputDirectory?.trim()
+      || path.join(
+        path.dirname(asset.filePath),
+        '.wesight',
+        'creator-outputs',
+        'recipes',
+        recipe.id,
+        rule.id,
+      );
+    const plan = createCreatorAssetsImageProcessingPlan({
+      projectId: asset.projectId,
+      assets: [asset],
+      presetId: rule.presetId,
+      outputFormat: rule.outputFormat,
+      quality: rule.quality,
+      width: rule.width,
+      height: rule.height,
+      maxWidth: rule.maxWidth,
+      maxHeight: rule.maxHeight,
+      cropRatio: rule.cropRatio,
+      rotate: rule.rotate,
+      outputDirectory,
+      fileNamePattern: rule.fileNamePattern,
+      createdBy: CreatorImageProcessingCreatedBy.Recipe,
+      recipeId: recipe.id,
+    });
+    plan.readmeSuggestions = this.createReadmeSuggestionsForRecipeRule(plan, rule, imageOutput.packKind);
+    plan.updatedAt = Date.now();
+
+    const job = this.createImageProcessingJobShell(plan);
+    const tasks = plan.inputItems.map((_item, index) => this.createImageProcessingTaskShell(job, plan, index));
+    this.insertImageProcessingPlan(plan);
+    this.insertImageProcessingJob(job);
+    for (const task of tasks) {
+      this.insertImageProcessingTask(task);
+    }
+
+    if (input.waitForCompletion === false) {
+      void this.executeImageProcessingJobQueue(plan, job, tasks, 1).catch((error) => {
+        console.error('[CreatorImageProcessing] recipe job execution failed:', error);
+      });
+      return {
+        plan,
+        job,
+        tasks,
+        outputAssetIds: [],
+      };
+    }
+
+    const executed = await this.executeImageProcessingJobQueue(plan, job, tasks, 1);
+    return {
+      plan,
+      job: executed.job,
+      tasks: executed.tasks,
+      outputAssetIds: executed.tasks
+        .map((task) => task.outputAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId)),
+    };
+  }
+
+  private createReadmeSuggestionsForRecipeRule(
+    plan: CreatorImageProcessingPlan,
+    rule: CreatorRecipeImageProcessingRule,
+    packKind: CreatorRecipeImageProcessingPackKind,
+  ): NonNullable<CreatorImageProcessingPlan['readmeSuggestions']> {
+    if (packKind !== CreatorRecipeImageProcessingPackKind.ReadmeBannerPack) {
+      return [];
+    }
+    return plan.outputItems.map((outputItem) => {
+      const relativePath = rule.readmeSuggestion?.outputRelativePath?.trim()
+        || path.posix.join('assets', outputItem.fileName);
+      return {
+        outputPath: outputItem.outputPath,
+        markdown: rule.readmeSuggestion?.markdown?.trim()
+          || `![README banner](${relativePath})`,
+        note: rule.readmeSuggestion?.note
+          ?? 'Generated suggestion only. WeSight does not modify README files automatically.',
+      };
+    });
+  }
+
+  async retryImageProcessingTask(taskId: string): Promise<CreatorImageTaskRetryResult | null> {
+    const taskRow = this.db.prepare(`
+      SELECT * FROM creator_image_processing_tasks WHERE id = ? LIMIT 1
+    `).get(taskId) as ImageProcessingTaskRow | undefined;
+    if (!taskRow) return null;
+    const jobRecord = this.getImageProcessingJob(taskRow.job_id);
+    if (!jobRecord) return null;
+    const plan = this.getImageProcessingPlan(jobRecord.job.planId);
+    if (!plan) return null;
+    const index = jobRecord.tasks.findIndex((task) => task.id === taskId);
+    if (index < 0) return null;
+
+    const task: CreatorImageProcessingTask = {
+      ...jobRecord.tasks[index],
+      status: CreatorImageProcessingTaskStatus.Pending,
+      outputAssetId: null,
+      outputSize: null,
+      durationMs: null,
+      errorCode: null,
+      errorMessage: null,
+      completedAt: null,
+      updatedAt: Date.now(),
+    };
+    this.updateImageProcessingTask(task);
+    const executed = await this.executeImageProcessingJobQueue(plan, jobRecord.job, [task], 1);
+    return {
+      job: executed.job,
+      tasks: this.listImageProcessingTasks(executed.job.id),
+      outputAssetIds: executed.tasks
+        .map((item) => item.outputAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId)),
+    };
+  }
+
+  cancelImageProcessingTask(taskId: string): CreatorImageTaskCancelResult | null {
+    const taskRow = this.db.prepare(`
+      SELECT * FROM creator_image_processing_tasks WHERE id = ? LIMIT 1
+    `).get(taskId) as ImageProcessingTaskRow | undefined;
+    if (!taskRow || taskRow.status !== CreatorImageProcessingTaskStatus.Pending) {
+      return null;
+    }
+    const task = this.mapImageProcessingTaskRow(taskRow);
+    task.status = CreatorImageProcessingTaskStatus.Canceled;
+    task.updatedAt = Date.now();
+    task.completedAt = task.updatedAt;
+    this.updateImageProcessingTask(task);
+    const jobRecord = this.getImageProcessingJob(task.jobId);
+    if (!jobRecord) return null;
+    const job = this.recalculateImageProcessingJob(jobRecord.job);
+    return {
+      job,
+      tasks: this.listImageProcessingTasks(job.id),
+    };
+  }
+
+  private createImageProcessingJobShell(plan: CreatorImageProcessingPlan): CreatorImageProcessingJob {
+    const now = Date.now();
+    return {
+      id: `job-${plan.id}`,
+      projectId: plan.projectId,
+      planId: plan.id,
+      status: CreatorImageProcessingJobStatus.Pending,
+      totalCount: plan.inputItems.length,
+      successCount: 0,
+      failedCount: 0,
+      inputTotalSize: plan.inputItems.reduce((total, item) => total + (item.metadata?.fileSize ?? 0), 0),
+      outputTotalSize: 0,
+      savedSize: 0,
+      savedPercentage: 0,
+      runtimeMetrics: null,
+      reportAssetId: null,
+      reportPath: null,
+      createdAt: now,
+      startedAt: null,
+      completedAt: null,
+    };
+  }
+
+  private createImageProcessingTaskShell(
+    job: CreatorImageProcessingJob,
+    plan: CreatorImageProcessingPlan,
+    inputIndex: number,
+  ): CreatorImageProcessingTask {
+    const inputItem = plan.inputItems[inputIndex];
+    const outputItem = plan.outputItems[inputIndex];
+    if (!inputItem || !outputItem) {
+      throw new Error('Image processing input item is missing');
+    }
+    const now = Date.now();
+    return {
+      id: `task-${job.id}-${inputItem.id}`,
+      jobId: job.id,
+      projectId: plan.projectId,
+      sourceAssetId: inputItem.sourceAssetId,
+      outputAssetId: null,
+      sourceArtifactId: inputItem.source.artifactId ?? null,
+      sourcePath: inputItem.sourcePath,
+      outputPath: outputItem.outputPath,
+      status: CreatorImageProcessingTaskStatus.Pending,
+      inputSize: inputItem.metadata?.fileSize ?? null,
+      outputSize: null,
+      durationMs: null,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+    };
+  }
+
+  private insertImageProcessingPlan(plan: CreatorImageProcessingPlan): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO creator_image_processing_plans (
+        id, project_id, source_json, plan_json, status, preset_id, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      plan.id,
+      plan.projectId,
+      JSON.stringify(plan.source),
+      JSON.stringify(plan),
+      plan.status,
+      plan.presetId,
+      plan.createdBy,
+      plan.createdAt,
+      plan.updatedAt,
+    );
+  }
+
+  private insertImageProcessingJob(job: CreatorImageProcessingJob): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO creator_image_processing_jobs (
+        id, project_id, plan_id, status, total_count, success_count, failed_count,
+        input_total_size, output_total_size, saved_size, report_asset_id,
+        metadata_json, created_at, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      job.id,
+      job.projectId,
+      job.planId,
+      job.status,
+      job.totalCount,
+      job.successCount,
+      job.failedCount,
+      job.inputTotalSize,
+      job.outputTotalSize,
+      job.savedSize,
+      job.reportAssetId,
+      JSON.stringify(this.createImageProcessingJobMetadata(job)),
+      job.createdAt,
+      job.startedAt,
+      job.completedAt,
+    );
+  }
+
+  private insertImageProcessingTask(task: CreatorImageProcessingTask): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO creator_image_processing_tasks (
+        id, job_id, project_id, source_asset_id, output_asset_id, source_artifact_id,
+        source_path, output_path, status, input_size, output_size, duration_ms,
+        error_code, error_message, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      task.id,
+      task.jobId,
+      task.projectId,
+      task.sourceAssetId,
+      task.outputAssetId,
+      task.sourceArtifactId,
+      task.sourcePath,
+      task.outputPath,
+      task.status,
+      task.inputSize,
+      task.outputSize,
+      task.durationMs,
+      task.errorCode,
+      task.errorMessage,
+      task.createdAt,
+      task.updatedAt,
+      task.completedAt,
+    );
+  }
+
+  private updateImageProcessingTask(task: CreatorImageProcessingTask): void {
+    this.db.prepare(`
+      UPDATE creator_image_processing_tasks
+      SET output_asset_id = ?, output_path = ?, status = ?, input_size = ?, output_size = ?,
+        duration_ms = ?, error_code = ?, error_message = ?, updated_at = ?, completed_at = ?
+      WHERE id = ?
+    `).run(
+      task.outputAssetId,
+      task.outputPath,
+      task.status,
+      task.inputSize,
+      task.outputSize,
+      task.durationMs,
+      task.errorCode,
+      task.errorMessage,
+      task.updatedAt,
+      task.completedAt,
+      task.id,
+    );
+  }
+
+  private updateImageProcessingJob(job: CreatorImageProcessingJob): void {
+    this.db.prepare(`
+      UPDATE creator_image_processing_jobs
+      SET status = ?, success_count = ?, failed_count = ?, output_total_size = ?,
+        saved_size = ?, report_asset_id = ?, metadata_json = ?, started_at = ?, completed_at = ?
+      WHERE id = ?
+    `).run(
+      job.status,
+      job.successCount,
+      job.failedCount,
+      job.outputTotalSize,
+      job.savedSize,
+      job.reportAssetId,
+      JSON.stringify(this.createImageProcessingJobMetadata(job)),
+      job.startedAt,
+      job.completedAt,
+      job.id,
+    );
+  }
+
+  private createImageProcessingJobMetadata(job: CreatorImageProcessingJob): Record<string, unknown> {
+    return {
+      savedPercentage: job.savedPercentage,
+      runtimeMetrics: job.runtimeMetrics,
+      reportPath: job.reportPath,
+    };
+  }
+
+  private writeImageProcessingReportForJob(
+    job: CreatorImageProcessingJob,
+    tasks: CreatorImageProcessingTask[],
+  ): void {
+    const plan = this.getImageProcessingPlan(job.planId);
+    if (!plan) return;
+    if (!plan.output || !Array.isArray(plan.outputItems)) return;
+    const reportDirectory = this.resolveImageProcessingReportDirectory(plan, tasks);
+    fs.mkdirSync(reportDirectory, { recursive: true });
+    const reportPath = path.join(reportDirectory, `${job.id}-report.md`);
+    const report = createImageProcessingReport({
+      plan,
+      job,
+      tasks,
+      reportPath,
+    });
+    if (/base64,/i.test(report.markdown)) {
+      console.warn('[CreatorImageProcessing] skipped report because sanitized content still contains base64');
+      return;
+    }
+    fs.writeFileSync(reportPath, report.markdown, 'utf8');
+    job.runtimeMetrics = report.metrics;
+    job.savedPercentage = report.metrics.savedPercentage;
+    job.reportPath = reportPath;
+    const reportAsset = this.createImageProcessingReportAsset(report, plan, job, tasks);
+    job.reportAssetId = reportAsset.id;
+  }
+
+  private resolveImageProcessingReportDirectory(
+    plan: CreatorImageProcessingPlan,
+    tasks: CreatorImageProcessingTask[],
+  ): string {
+    const outputDirectory = plan.outputItems.find((item) => item.outputDirectory)?.outputDirectory;
+    if (outputDirectory) return outputDirectory;
+    const outputPath = tasks.find((task) => task.outputPath)?.outputPath;
+    if (outputPath) return path.dirname(outputPath);
+    return path.resolve(process.cwd(), '.wesight/creator-outputs/image-processing', plan.id);
+  }
+
+  private createImageProcessingReportAsset(
+    report: CreatorImageProcessingReport,
+    plan: CreatorImageProcessingPlan,
+    job: CreatorImageProcessingJob,
+    tasks: CreatorImageProcessingTask[],
+  ): CreatorProductionAssetRecord {
+    if (job.reportAssetId) {
+      const existing = this.getAsset(job.reportAssetId);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    const firstSourceAsset = plan.inputItems
+      .map((item) => item.sourceAssetId ? this.getAsset(item.sourceAssetId) : null)
+      .find((asset): asset is CreatorProductionAssetRecord => Boolean(asset));
+    const recipeId = plan.recipeId ?? firstSourceAsset?.recipeId ?? null;
+    const now = Date.now();
+    const id = uuidv4();
+    const outputAssetIds = tasks
+      .map((task) => task.outputAssetId)
+      .filter((assetId): assetId is string => Boolean(assetId));
+    const sourceAssetIds = plan.inputItems
+      .map((item) => item.sourceAssetId)
+      .filter((assetId): assetId is string => Boolean(assetId));
+    const metadata = {
+      imageProcessingReport: {
+        schemaVersion: 'creator.imageProcessingReport.v1',
+        jobId: job.id,
+        planId: plan.id,
+        presetId: plan.presetId,
+        metrics: report.metrics,
+        failureReasons: report.failureReasons,
+        sourceAssetIds,
+        outputAssetIds,
+        recipeId,
+      },
+      processing: {
+        sourceAssetId: firstSourceAsset?.id ?? sourceAssetIds[0] ?? '',
+        recipeId,
+        presetId: plan.presetId,
+        operations: plan.operations,
+        plan,
+        job,
+        tasks,
+        report: {
+          path: report.reportPath,
+          title: report.title,
+        },
+        readmeSuggestions: plan.readmeSuggestions ?? [],
+      },
+    };
+
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id,
+        project_id,
+        kind,
+        title,
+        status,
+        source,
+        run_id,
+        source_run_id,
+        variant_of_asset_id,
+        session_id,
+        source_session_id,
+        message_id,
+        source_message_id,
+        template_id,
+        case_ids,
+        case_ids_json,
+        prompt_spec,
+        prompt_spec_json,
+        prompt_text,
+        parent_prompt_asset_id,
+        prompt_version_id,
+        recipe_id,
+        selected_direction_id,
+        file_path,
+        file_name,
+        mime_type,
+        favorite,
+        adoption_status,
+        tags_json,
+        license_note,
+        usage_note,
+        metadata,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      job.projectId,
+      CreatorProductionAssetKind.Report,
+      report.title,
+      CreatorProductionAssetStatus.Ready,
+      CreatorProductionAssetSource.ImageProcessingReport,
+      firstSourceAsset?.runId ?? null,
+      firstSourceAsset?.runId ?? null,
+      firstSourceAsset?.id ?? null,
+      null,
+      firstSourceAsset?.sessionId ?? null,
+      null,
+      firstSourceAsset?.messageId ?? null,
+      firstSourceAsset?.templateId ?? null,
+      JSON.stringify(firstSourceAsset?.caseIds ?? []),
+      JSON.stringify(firstSourceAsset?.caseIds ?? []),
+      firstSourceAsset?.promptSpec ? JSON.stringify(firstSourceAsset.promptSpec) : null,
+      firstSourceAsset?.promptSpec ? JSON.stringify(firstSourceAsset.promptSpec) : null,
+      firstSourceAsset?.promptText ?? '',
+      firstSourceAsset?.parentPromptAssetId ?? null,
+      firstSourceAsset?.promptVersionId ?? null,
+      recipeId,
+      firstSourceAsset?.selectedDirectionId ?? null,
+      report.reportPath,
+      path.basename(report.reportPath),
+      'text/markdown',
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      JSON.stringify(['image-processing-report']),
+      firstSourceAsset?.licenseNote ?? null,
+      firstSourceAsset?.usageNote ?? null,
+      JSON.stringify(metadata),
+      now,
+      now,
+    );
+
+    return this.getAsset(id)!;
+  }
+
+  private async executeImageProcessingJobQueue(
+    plan: CreatorImageProcessingPlan,
+    job: CreatorImageProcessingJob,
+    tasks: CreatorImageProcessingTask[],
+    concurrency = 2,
+  ): Promise<{ job: CreatorImageProcessingJob; tasks: CreatorImageProcessingTask[] }> {
+    const startedAt = Date.now();
+    job.status = CreatorImageProcessingJobStatus.Running;
+    job.startedAt = job.startedAt ?? startedAt;
+    job.completedAt = null;
+    this.updateImageProcessingJob(job);
+
+    let cursor = 0;
+    const runNext = async (): Promise<void> => {
+      const task = tasks[cursor];
+      cursor += 1;
+      if (!task) return;
+      const latestRow = this.db.prepare(`
+        SELECT * FROM creator_image_processing_tasks WHERE id = ? LIMIT 1
+      `).get(task.id) as ImageProcessingTaskRow | undefined;
+      if (latestRow?.status === CreatorImageProcessingTaskStatus.Canceled) {
+        await runNext();
+        return;
+      }
+      const inputIndex = plan.inputItems.findIndex((item) => item.sourceAssetId === task.sourceAssetId && item.sourcePath === task.sourcePath);
+      task.status = CreatorImageProcessingTaskStatus.Running;
+      task.updatedAt = Date.now();
+      this.updateImageProcessingTask(task);
+
+      await executeImageProcessingTask({
+        plan,
+        task,
+        inputIndex: inputIndex >= 0 ? inputIndex : 0,
+        createAsset: (assetInput) => {
+          if (!task.sourceAssetId) {
+            throw new Error('source asset is required');
+          }
+          return this.createImageProcessingAsset({
+            sourceAssetId: task.sourceAssetId,
+            outputPath: assetInput.outputPath,
+            fileName: assetInput.fileName,
+            mimeType: assetInput.mimeType,
+            imageMetadata: assetInput.imageMetadata,
+            plan: assetInput.plan,
+            job,
+            task: assetInput.task,
+            recipeId: plan.recipeId,
+          });
+        },
+      });
+      this.updateImageProcessingTask(task);
+      await runNext();
+    };
+
+    await Promise.all(Array.from({ length: Math.max(1, concurrency) }, () => runNext()));
+    const recalculatedJob = this.recalculateImageProcessingJob(job);
+    return { job: recalculatedJob, tasks: this.listImageProcessingTasks(job.id) };
+  }
+
+  private recalculateImageProcessingJob(job: CreatorImageProcessingJob): CreatorImageProcessingJob {
+    const tasks = this.listImageProcessingTasks(job.id);
+    job.successCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Completed).length;
+    job.failedCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Failed).length;
+    job.outputTotalSize = tasks.reduce((total, task) => total + (task.outputSize ?? 0), 0);
+    job.savedSize = job.inputTotalSize - job.outputTotalSize;
+    job.savedPercentage = job.inputTotalSize > 0
+      ? Math.round((job.savedSize / job.inputTotalSize) * 10000) / 100
+      : 0;
+    const pendingCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Pending).length;
+    const runningCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Running).length;
+    const canceledCount = tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Canceled).length;
+    const terminalCount = tasks.filter((task) => (
+      task.status === CreatorImageProcessingTaskStatus.Completed
+      || task.status === CreatorImageProcessingTaskStatus.Failed
+      || task.status === CreatorImageProcessingTaskStatus.Canceled
+      || task.status === CreatorImageProcessingTaskStatus.Skipped
+    )).length;
+    if (pendingCount > 0 || runningCount > 0) {
+      job.status = CreatorImageProcessingJobStatus.Running;
+      job.completedAt = null;
+    } else if (terminalCount === tasks.length) {
+      job.completedAt = Date.now();
+      job.status = canceledCount === tasks.length
+        ? CreatorImageProcessingJobStatus.Canceled
+        : job.failedCount > 0
+        ? job.successCount > 0
+          ? CreatorImageProcessingJobStatus.PartialFailed
+          : CreatorImageProcessingJobStatus.Failed
+        : CreatorImageProcessingJobStatus.Completed;
+      this.writeImageProcessingReportForJob(job, tasks);
+    }
+    this.updateImageProcessingJob(job);
+    return job;
+  }
+
+  private resolveControlledImageAsset(source: CreatorImageInspectInput['source']): CreatorProductionAssetRecord | null {
+    const sessionId = source?.sessionId?.trim();
+    const messageId = source?.messageId?.trim() ?? null;
+    const filePath = source?.filePath?.trim();
+    if (!sessionId || !filePath) {
+      return null;
+    }
+
+    const row = this.db.prepare(`
+      SELECT
+        a.*,
+        CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS source_session_available
+      FROM production_assets a
+      LEFT JOIN cowork_sessions s ON s.id = COALESCE(a.source_session_id, a.session_id)
+      WHERE COALESCE(a.source_session_id, a.session_id) = ?
+        AND (? IS NULL OR COALESCE(a.source_message_id, a.message_id) = ?)
+        AND a.file_path = ?
+        AND a.kind = ?
+        AND a.source IN (?, ?)
+      LIMIT 1
+    `).get(
+      sessionId,
+      messageId,
+      messageId,
+      filePath,
+      CreatorProductionAssetKind.Image,
+      CreatorProductionAssetSource.CoworkGeneratedImage,
+      CreatorProductionAssetSource.LocalImageProcessing,
+    ) as ProductionAssetRow | undefined;
+
+    if (row) {
+      return this.mapAssetRow(row);
+    }
+
+    return messageId
+      ? this.createControlledGeneratedImageAsset({ sessionId, messageId, filePath })
+        ?? this.createControlledActivityImageAsset({
+          sessionId,
+          messageId,
+          artifactId: source?.artifactId,
+          filePath,
+        })
+      : this.createControlledActivityImageAsset({ sessionId, artifactId: source?.artifactId, filePath });
+  }
+
+  private createControlledGeneratedImageAsset(input: {
+    sessionId: string;
+    messageId: string;
+    filePath: string;
+  }): CreatorProductionAssetRecord | null {
+    const row = this.db.prepare(`
+      SELECT id, session_id, type, content, metadata, created_at, sequence
+      FROM cowork_messages
+      WHERE session_id = ? AND id = ?
+      LIMIT 1
+    `).get(input.sessionId, input.messageId) as {
+      id: string;
+      session_id: string;
+      type: string;
+      content: string;
+      metadata: string | null;
+      created_at: number;
+      sequence: number | null;
+    } | undefined;
+    if (!row) return null;
+
+    const metadata = parseJsonObject(row.metadata) as CoworkMessageMetadata;
+    const image = getGeneratedImages(metadata).find((item) => item.path.trim() === input.filePath);
+    if (!image) return null;
+
+    return this.upsertControlledImageAsset({
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      image,
+      timestamp: row.created_at,
+      source: CreatorProductionAssetSource.CoworkGeneratedImage,
+      metadata: { generatedImageSource: image.source || null },
+    });
+  }
+
+  private createControlledActivityImageAsset(input: {
+    sessionId: string;
+    messageId?: string | null;
+    artifactId?: string;
+    filePath: string;
+  }): CreatorProductionAssetRecord | null {
+    const rows = this.db.prepare(`
+      SELECT id, type, content, metadata, created_at, sequence
+      FROM cowork_messages
+      WHERE session_id = ?
+        AND (? IS NULL OR id = ?)
+      ORDER BY COALESCE(sequence, 0) ASC, created_at ASC
+    `).all(input.sessionId, input.messageId ?? null, input.messageId ?? null) as Array<{
+      id: string;
+      type: string;
+      content: string;
+      metadata: string | null;
+      created_at: number;
+      sequence: number | null;
+    }>;
+
+    for (const row of rows) {
+      const metadata = parseJsonObject(row.metadata) as CoworkMessageMetadata;
+      const generatedImage = getGeneratedImages(metadata).find((item) => item.path.trim() === input.filePath);
+      if (generatedImage) {
+        return this.upsertControlledImageAsset({
+          sessionId: input.sessionId,
+          messageId: row.id,
+          image: generatedImage,
+          timestamp: row.created_at,
+          source: CreatorProductionAssetSource.CoworkGeneratedImage,
+          metadata: {
+            activityArtifactId: input.artifactId ?? null,
+            generatedImageSource: generatedImage.source || null,
+          },
+        });
+      }
+
+      if (row.type === 'assistant' && this.messageContentLinksFile(row.content, input.filePath)) {
+        return this.upsertControlledImageAsset({
+          sessionId: input.sessionId,
+          messageId: row.id,
+          image: {
+            path: input.filePath,
+            name: path.basename(input.filePath),
+          },
+          timestamp: row.created_at,
+          source: CreatorProductionAssetSource.CoworkGeneratedImage,
+          metadata: {
+            activityArtifactId: input.artifactId ?? null,
+            activityArtifactSource: 'assistant_file_link',
+          },
+        });
+      }
+    }
+
+    return null;
+  }
+
+  private messageContentLinksFile(content: string, filePath: string): boolean {
+    const normalizedTarget = path.resolve(filePath);
+    const linkPattern = /\[([^\]]+)\]\((file:\/\/[^)\s]+|\/[^)\s]+)\)/g;
+    let match: RegExpExecArray | null;
+    while ((match = linkPattern.exec(content)) !== null) {
+      const rawPath = match[2]?.trim().replace(/^file:\/\//i, '');
+      if (rawPath && path.resolve(rawPath) === normalizedTarget) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private upsertControlledImageAsset(input: {
+    sessionId: string;
+    messageId: string;
+    image: GeneratedImageInput;
+    timestamp: number;
+    source: CreatorProductionAssetSource;
+    metadata: Record<string, unknown>;
+  }): CreatorProductionAssetRecord | null {
+    const run = this.getLatestPendingRunForSession(input.sessionId)
+      ?? this.createRunFromLatestPrompt(input.sessionId, input.timestamp);
+    const context = this.getImageAssetContextFromRun(run);
+    const filePath = input.image.path.trim();
+    const now = input.timestamp || Date.now();
+    const caseIdsJson = JSON.stringify(context.caseIds);
+    const promptSpecJson = context.promptSpec ? JSON.stringify(context.promptSpec) : null;
+    this.db.prepare(`
+      INSERT INTO production_assets (
+        id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id, session_id,
+        source_session_id, message_id, source_message_id, template_id,
+        case_ids, case_ids_json, prompt_spec, prompt_spec_json, prompt_text,
+        parent_prompt_asset_id, prompt_version_id, recipe_id, selected_direction_id,
+        file_path, file_name, mime_type,
+        favorite, adoption_status, tags_json, license_note, usage_note, metadata, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id, message_id, file_path) DO UPDATE SET
+        status = excluded.status,
+        run_id = COALESCE(production_assets.run_id, excluded.run_id),
+        source_run_id = COALESCE(production_assets.source_run_id, excluded.source_run_id),
+        variant_of_asset_id = COALESCE(production_assets.variant_of_asset_id, excluded.variant_of_asset_id),
+        source_session_id = COALESCE(production_assets.source_session_id, excluded.source_session_id),
+        source_message_id = COALESCE(production_assets.source_message_id, excluded.source_message_id),
+        template_id = COALESCE(production_assets.template_id, excluded.template_id),
+        case_ids = excluded.case_ids,
+        case_ids_json = excluded.case_ids_json,
+        prompt_spec = excluded.prompt_spec,
+        prompt_spec_json = excluded.prompt_spec_json,
+        prompt_text = excluded.prompt_text,
+        parent_prompt_asset_id = COALESCE(production_assets.parent_prompt_asset_id, excluded.parent_prompt_asset_id),
+        prompt_version_id = COALESCE(production_assets.prompt_version_id, excluded.prompt_version_id),
+        recipe_id = COALESCE(production_assets.recipe_id, excluded.recipe_id),
+        selected_direction_id = COALESCE(production_assets.selected_direction_id, excluded.selected_direction_id),
+        title = excluded.title,
+        file_name = excluded.file_name,
+        mime_type = excluded.mime_type,
+        metadata = excluded.metadata,
+        updated_at = excluded.updated_at
+    `).run(
+      uuidv4(),
+      this.getCurrentProjectId(),
+      CreatorProductionAssetKind.Image,
+      getImageName(input.image),
+      fs.existsSync(filePath) ? CreatorProductionAssetStatus.Ready : CreatorProductionAssetStatus.Missing,
+      input.source,
+      run?.id ?? null,
+      run?.id ?? null,
+      context.variantOfAssetId,
+      input.sessionId,
+      input.sessionId,
+      input.messageId,
+      input.messageId,
+      context.templateId,
+      caseIdsJson,
+      caseIdsJson,
+      promptSpecJson,
+      promptSpecJson,
+      context.promptText,
+      context.variantOfAssetId,
+      context.promptVersionId,
+      context.recipeId,
+      context.selectedDirectionId,
+      filePath,
+      getImageName(input.image),
+      input.image.mimeType || null,
+      0,
+      CreatorAssetAdoptionStatus.Unset,
+      '[]',
+      null,
+      null,
+      JSON.stringify(input.metadata),
+      now,
+      now,
+    );
+
+    const assetRow = this.db.prepare(`
+      SELECT id
+      FROM production_assets
+      WHERE session_id = ? AND message_id = ? AND file_path = ?
+      LIMIT 1
+    `).get(input.sessionId, input.messageId, filePath) as { id: string } | undefined;
+    return assetRow?.id ? this.getAsset(assetRow.id) : null;
+  }
+
+  private getAssetMetadataJson(assetId: string): string | null {
+    const row = this.db.prepare('SELECT metadata FROM production_assets WHERE id = ?')
+      .get(assetId) as { metadata: string | null } | undefined;
+    return row?.metadata ?? null;
+  }
+
   setFavorite(id: string, favorite: boolean): CreatorProductionAssetRecord | null {
     this.db.prepare(`
       UPDATE production_assets
@@ -1640,27 +3107,7 @@ export class CreatorAssetStore {
     const images = getGeneratedImages(message.metadata);
     if (images.length === 0) return;
     const run = this.getLatestPendingRunForSession(sessionId) ?? this.createRunFromLatestPrompt(sessionId, message.timestamp);
-    const context = run
-      ? {
-        templateId: run.templateId,
-        caseIds: run.caseIds,
-        promptSpec: run.promptSpec,
-        promptText: run.promptText,
-        variantOfAssetId: run.variantOfAssetId,
-        promptVersionId: run.promptVersionId,
-        recipeId: run.recipeId,
-        selectedDirectionId: run.selectedDirectionId,
-      }
-      : {
-        templateId: null,
-        caseIds: [],
-        promptSpec: null,
-        promptText: '',
-        variantOfAssetId: null,
-        promptVersionId: null,
-        recipeId: null,
-        selectedDirectionId: null,
-      };
+    const context = this.getImageAssetContextFromRun(run);
     const now = message.timestamp || Date.now();
     const insertAsset = this.db.prepare(`
       INSERT INTO production_assets (
@@ -1762,6 +3209,30 @@ export class CreatorAssetStore {
         this.completeBatchTaskForRun(run, outputAssetIds, now);
       }
     })();
+  }
+
+  private getImageAssetContextFromRun(run: CreatorProductionRunRecord | null): CreatorGeneratedImageContext {
+    return run
+      ? {
+        templateId: run.templateId,
+        caseIds: run.caseIds,
+        promptSpec: run.promptSpec,
+        promptText: run.promptText,
+        variantOfAssetId: run.variantOfAssetId,
+        promptVersionId: run.promptVersionId,
+        recipeId: run.recipeId,
+        selectedDirectionId: run.selectedDirectionId,
+      }
+      : {
+        templateId: null,
+        caseIds: [],
+        promptSpec: null,
+        promptText: '',
+        variantOfAssetId: null,
+        promptVersionId: null,
+        recipeId: null,
+        selectedDirectionId: null,
+      };
   }
 
   private completeBatchTaskForRun(
@@ -2393,8 +3864,77 @@ export class CreatorAssetStore {
     };
   }
 
+  private mapImageProcessingPlanRow(row: ImageProcessingPlanRow): CreatorImageProcessingPlan | null {
+    const plan = parseImageProcessingPlanJson(row.plan_json);
+    if (!plan) return null;
+    return {
+      ...plan,
+      status: isCreatorImageProcessingPlanStatus(row.status) ? row.status : CreatorImageProcessingPlanStatus.Failed,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private mapImageProcessingJobRow(row: ImageProcessingJobRow): CreatorImageProcessingJob {
+    const metadata = parseJsonObject(row.metadata_json);
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      planId: row.plan_id,
+      status: isCreatorImageProcessingJobStatus(row.status) ? row.status : CreatorImageProcessingJobStatus.Failed,
+      totalCount: row.total_count,
+      successCount: row.success_count,
+      failedCount: row.failed_count,
+      inputTotalSize: row.input_total_size,
+      outputTotalSize: row.output_total_size,
+      savedSize: row.saved_size,
+      savedPercentage: typeof metadata.savedPercentage === 'number'
+        ? metadata.savedPercentage
+        : row.input_total_size > 0
+          ? Math.round((row.saved_size / row.input_total_size) * 10000) / 100
+          : 0,
+      runtimeMetrics: parseImageProcessingRuntimeMetrics(metadata.runtimeMetrics),
+      reportAssetId: row.report_asset_id,
+      reportPath: typeof metadata.reportPath === 'string' ? metadata.reportPath : null,
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+    };
+  }
+
+  private mapImageProcessingTaskRow(row: ImageProcessingTaskRow): CreatorImageProcessingTask {
+    return {
+      id: row.id,
+      jobId: row.job_id,
+      projectId: row.project_id,
+      sourceAssetId: row.source_asset_id,
+      outputAssetId: row.output_asset_id,
+      sourceArtifactId: row.source_artifact_id,
+      sourcePath: row.source_path,
+      outputPath: row.output_path,
+      status: isCreatorImageProcessingTaskStatus(row.status) ? row.status : CreatorImageProcessingTaskStatus.Failed,
+      inputSize: row.input_size,
+      outputSize: row.output_size,
+      durationMs: row.duration_ms,
+      errorCode: row.error_code,
+      errorMessage: row.error_message,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+    };
+  }
+
+  private listImageProcessingTasks(jobId: string): CreatorImageProcessingTask[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM creator_image_processing_tasks
+      WHERE job_id = ?
+      ORDER BY created_at ASC
+    `).all(jobId) as ImageProcessingTaskRow[];
+    return rows.map((row) => this.mapImageProcessingTaskRow(row));
+  }
+
   private mapAssetRow(row: ProductionAssetRow): CreatorProductionAssetRecord {
     const exists = fs.existsSync(row.file_path);
+    const metadata = parseJsonObject(row.metadata);
     const projectId = row.project_id || CreatorStudioDefaultProjectId;
     const adoptionStatus = isAdoptionStatus(row.adoption_status)
       ? row.adoption_status
@@ -2433,6 +3973,8 @@ export class CreatorAssetStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       sourceSessionAvailable: Boolean(row.source_session_available),
+      imageMetadata: parseImageMetadata(metadata),
+      imageProcessing: parseImageProcessingMetadata(metadata),
     };
   }
 }

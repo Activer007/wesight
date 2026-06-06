@@ -2,9 +2,21 @@ import {
   CreatorAssetAdoptionStatus,
   CreatorBatchRunStatus,
   CreatorBatchTaskStatus,
+  CreatorImageProcessingCreatedBy,
+  CreatorImageProcessingJobStatus,
+  CreatorImageProcessingOutputFormat,
+  CreatorImageProcessingPlanSchemaVersion,
+  CreatorImageProcessingPlanStatus,
+  CreatorImageProcessingPresetId,
+  CreatorImageProcessingRisk,
+  CreatorImageProcessingSourceKind,
+  CreatorImageProcessingTaskStatus,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
+  CreatorRecipeImageProcessingPackKind,
+  CreatorRecipeOutputKind,
+  CreatorRecipeOutputSchemaVersion,
 } from '@shared/creatorStudio/constants';
 import type {
   CreatorBatchRunRecord,
@@ -52,7 +64,9 @@ const createAsset = (overrides: Partial<CreatorProductionAssetRecord> = {}): Cre
   createdAt: 1,
   updatedAt: 1,
   sourceSessionAvailable: true,
+  imageMetadata: null,
   ...overrides,
+  imageProcessing: overrides.imageProcessing ?? null,
 });
 
 const createRecipe = (overrides: Partial<CreatorRecipeRecord> = {}): CreatorRecipeRecord => ({
@@ -260,5 +274,174 @@ describe('creator production package', () => {
         code: 'missing_production_files',
       }),
     ]));
+  });
+
+  test('includes image processing records with recipe lineage and no base64', () => {
+    const plan = {
+      schemaVersion: CreatorImageProcessingPlanSchemaVersion.V1,
+      id: 'plan-readme',
+      projectId: 'project-1',
+      source: {
+        sourceKind: CreatorImageProcessingSourceKind.CreatorAsset,
+        assetId: 'asset-source',
+        recipeId: 'recipe-readme',
+      },
+      inputItems: [],
+      presetId: CreatorImageProcessingPresetId.ReadmeBanner,
+      operations: [],
+      output: {
+        format: CreatorImageProcessingOutputFormat.Webp,
+        quality: 82,
+        outputDirectory: '/tmp/out',
+        fileNamePattern: '{name}.readme-banner.{format}',
+        overwrite: false as const,
+      },
+      outputItems: [],
+      warnings: [],
+      estimatedRisk: CreatorImageProcessingRisk.Low,
+      createdBy: CreatorImageProcessingCreatedBy.Recipe,
+      recipeId: 'recipe-readme',
+      readmeSuggestions: [{
+        outputPath: '/tmp/out/source.readme-banner.webp',
+        markdown: '![README banner](assets/source.readme-banner.webp)',
+        note: 'Suggestion only.',
+      }],
+      status: CreatorImageProcessingPlanStatus.Completed,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const job = {
+      id: 'job-readme',
+      projectId: 'project-1',
+      planId: plan.id,
+      status: CreatorImageProcessingJobStatus.Completed,
+      totalCount: 1,
+      successCount: 1,
+      failedCount: 0,
+      inputTotalSize: 4000,
+      outputTotalSize: 1200,
+      savedSize: 2800,
+      savedPercentage: 70,
+      runtimeMetrics: null,
+      reportAssetId: 'asset-report',
+      reportPath: '/tmp/out/job-readme-report.md',
+      createdAt: 1,
+      startedAt: 1,
+      completedAt: 2,
+    };
+    const task = {
+      id: 'task-readme',
+      jobId: job.id,
+      projectId: 'project-1',
+      sourceAssetId: 'asset-source',
+      outputAssetId: 'asset-derived',
+      sourceArtifactId: null,
+      sourcePath: '/tmp/source.png',
+      outputPath: '/tmp/out/source.readme-banner.webp',
+      status: CreatorImageProcessingTaskStatus.Completed,
+      inputSize: 4000,
+      outputSize: 1200,
+      durationMs: 10,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: 1,
+      updatedAt: 2,
+      completedAt: 2,
+    };
+    const sourceAsset = createAsset({
+      id: 'asset-source',
+      recipeId: 'recipe-readme',
+      licenseNote: 'Owned',
+      usageNote: 'README',
+      promptText: 'Generate README hero',
+      promptSpec: { schemaVersion: 'creator.prompt.v1', subject: 'README hero' },
+    });
+    const derivedAsset = createAsset({
+      id: 'asset-derived',
+      source: CreatorProductionAssetSource.RecipePostProcessing,
+      variantOfAssetId: 'asset-source',
+      recipeId: 'recipe-readme',
+      licenseNote: 'Owned',
+      usageNote: 'README',
+      mimeType: 'image/webp',
+      filePath: '/tmp/out/source.readme-banner.webp',
+      fileName: 'source.readme-banner.webp',
+      imageProcessing: {
+        sourceAssetId: 'asset-source',
+        recipeId: 'recipe-readme',
+        presetId: CreatorImageProcessingPresetId.ReadmeBanner,
+        operations: [],
+        plan,
+        job,
+        task,
+        readmeSuggestions: plan.readmeSuggestions,
+      },
+    });
+    const reportAsset = createAsset({
+      id: 'asset-report',
+      kind: CreatorProductionAssetKind.Report,
+      source: CreatorProductionAssetSource.ImageProcessingReport,
+      variantOfAssetId: 'asset-source',
+      recipeId: 'recipe-readme',
+      mimeType: 'text/markdown',
+      filePath: '/tmp/out/job-readme-report.md',
+      fileName: 'job-readme-report.md',
+      imageProcessing: {
+        sourceAssetId: 'asset-source',
+        recipeId: 'recipe-readme',
+        presetId: CreatorImageProcessingPresetId.ReadmeBanner,
+        operations: [],
+        plan,
+        job,
+        task: null,
+        tasks: [task],
+        report: {
+          path: '/tmp/out/job-readme-report.md',
+          title: 'Image processing report',
+        },
+        readmeSuggestions: plan.readmeSuggestions,
+      },
+    });
+
+    const manifest = buildCreatorProductionPackage({
+      projectId: 'project-1',
+      project: null,
+      assets: [sourceAsset, derivedAsset, reportAsset],
+      recipes: [createRecipe({
+        id: 'recipe-readme',
+        defaultOutput: {
+          schemaVersion: CreatorRecipeOutputSchemaVersion.ImageProcessingV1,
+          kind: CreatorRecipeOutputKind.ImageProcessing,
+          packKind: CreatorRecipeImageProcessingPackKind.ReadmeBannerPack,
+          rules: [{
+            id: 'readme-banner-webp',
+            title: 'README banner WebP',
+            presetId: CreatorImageProcessingPresetId.ReadmeBanner,
+          }],
+          report: { enabled: true },
+        },
+      })],
+      batchRuns: [],
+    });
+
+    expect(manifest.imageProcessingRecords).toHaveLength(2);
+    expect(manifest.imageProcessingRecords[0]).toMatchObject({
+      sourceAssetId: 'asset-source',
+      outputAssetId: 'asset-derived',
+      recipeId: 'recipe-readme',
+      presetId: CreatorImageProcessingPresetId.ReadmeBanner,
+      licenseNote: 'Owned',
+      usageNote: 'README',
+      lineage: {
+        variantOfAssetId: 'asset-source',
+      },
+    });
+    expect(manifest.imageProcessingRecords[1]).toMatchObject({
+      sourceAssetId: 'asset-source',
+      reportAssetId: 'asset-report',
+      tasks: [expect.objectContaining({ outputAssetId: 'asset-derived' })],
+      report: expect.objectContaining({ title: 'Image processing report' }),
+    });
+    expect(JSON.stringify(manifest)).not.toMatch(/base64,/i);
   });
 });

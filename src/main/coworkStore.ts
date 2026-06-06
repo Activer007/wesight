@@ -12,6 +12,8 @@ import {
   ClaudeCodePermissionMode,
   type ClaudeCodePermissionMode as ClaudeCodePermissionModeType,
   type CoworkAgentEngine,
+  CoworkImageToolName,
+  type CoworkImageToolName as CoworkImageToolNameType,
   CoworkSessionKind,
   type CoworkSessionKind as CoworkSessionKindType,
   DeepSeekTuiPermissionMode,
@@ -34,6 +36,20 @@ import {
 } from '../shared/cowork/constants';
 import type { CoworkSessionRuntimeSnapshot } from '../shared/cowork/runtimeSnapshot';
 import {
+  CreatorFeatureFlag,
+  CreatorImageProcessingOutputFormat,
+  type CreatorImageProcessingPresetId,
+  CreatorImageProcessingTaskStatus,
+  CreatorProductionAssetKind,
+  isCreatorImageProcessingOutputFormat,
+  isCreatorImageProcessingPresetId,
+} from '../shared/creatorStudio/constants';
+import type {
+  CreatorImageProcessingJob,
+  CreatorImageProcessingPlan,
+  CreatorImageProcessingTask,
+} from '../shared/creatorStudio/imageProcessingTypes';
+import {
   type AppendRuntimeEventInput,
   CoworkEventStore,
   ensureCoworkEventSchema,
@@ -48,6 +64,7 @@ import {
   isQuestionLikeMemoryText,
 } from './libs/coworkMemoryExtractor';
 import { judgeMemoryCandidate } from './libs/coworkMemoryJudge';
+import { createCreatorAssetImageProcessingPlan } from './libs/imageProcessing/imageProcessingPlanner';
 import {
   measureDbOperation,
   nowMs,
@@ -114,6 +131,22 @@ function clampMemoryUserMemoriesMaxItems(value: number): number {
 
 function normalizeMemoryText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+function toOptionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function toOptionalNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function resolveCoworkImagePresetId(value: unknown): CreatorImageProcessingPresetId | null {
+  return isCreatorImageProcessingPresetId(value) ? value : null;
+}
+
+function resolveCoworkImageOutputFormat(value: unknown): CreatorImageProcessingOutputFormat | null {
+  return isCreatorImageProcessingOutputFormat(value) ? value : null;
 }
 
 function extractConversationSearchTerms(value: string): string[] {
@@ -810,6 +843,265 @@ export class CoworkStore {
 
   setCreatorAssetStore(creatorAssetStore: CreatorAssetStore): void {
     this.creatorAssetStore = creatorAssetStore;
+  }
+
+  async runCoworkImageTool(
+    sessionId: string,
+    toolName: CoworkImageToolNameType,
+    args: Record<string, unknown>,
+    options: { featureEnabled?: boolean } = {},
+  ): Promise<{ text: string; isError?: boolean }> {
+    if (options.featureEnabled === false) {
+      return {
+        text: `Image processing is disabled by ${CreatorFeatureFlag.ImageProcessingEnabled}.`,
+        isError: true,
+      };
+    }
+    if (!this.creatorAssetStore) {
+      return { text: 'Creator asset store is unavailable.', isError: true };
+    }
+
+    try {
+      switch (toolName) {
+        case CoworkImageToolName.Inspect:
+          return await this.runCoworkImageInspectTool(sessionId, args);
+        case CoworkImageToolName.PlanProcessing:
+          return await this.runCoworkImagePlanTool(sessionId, args);
+        case CoworkImageToolName.ExecuteProcessing:
+          return this.runCoworkImageExecuteTool(sessionId, args);
+        case CoworkImageToolName.GetJobStatus:
+          return this.runCoworkImageJobStatusTool(args);
+        case CoworkImageToolName.RevealOutput:
+          return this.runCoworkImageRevealTool(args);
+        case CoworkImageToolName.AttachToCreatorAsset:
+          return await this.runCoworkImageAttachTool(sessionId, args);
+        default:
+          return { text: 'Unsupported image tool.', isError: true };
+      }
+    } catch (error) {
+      return {
+        text: this.explainImageToolFailure(error),
+        isError: true,
+      };
+    }
+  }
+
+  recordImageProcessingExecutionResult(input: {
+    sessionId: string;
+    plan: CreatorImageProcessingPlan;
+    job: CreatorImageProcessingJob;
+    tasks: CreatorImageProcessingTask[];
+    outputAssetIds: string[];
+    outputAssets?: Array<{ id: string; fileName: string; mimeType: string | null }>;
+    planMessageId?: string | null;
+  }): CoworkMessage {
+    const completedTasks = input.tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Completed);
+    const failedTasks = input.tasks.filter((task) => task.status === CreatorImageProcessingTaskStatus.Failed);
+    const firstInput = input.plan.inputItems[0];
+    const source = firstInput?.source ?? input.plan.source;
+    return this.addMessage(input.sessionId, {
+      type: 'assistant',
+      content: [
+        'Image processing completed.',
+        `Plan: ${input.plan.id}`,
+        `Job: ${input.job.id}`,
+        `Success / failed: ${completedTasks.length} / ${failedTasks.length}`,
+        `Output assets: ${input.outputAssetIds.length > 0 ? input.outputAssetIds.join(', ') : 'none'}`,
+      ].join('\n'),
+      metadata: {
+        kind: 'image_processing_result',
+        imageProcessingPlanId: input.plan.id,
+        imageProcessingJobId: input.job.id,
+        imageProcessingPlanMessageId: input.planMessageId ?? null,
+        imageProcessingSource: {
+          sessionId: input.sessionId,
+          assetId: source.assetId ?? firstInput?.sourceAssetId ?? null,
+          sourceMessageId: source.messageId ?? null,
+        },
+        imageProcessingResult: {
+          planId: input.plan.id,
+          jobId: input.job.id,
+          jobStatus: input.job.status,
+          successCount: input.job.successCount,
+          failedCount: input.job.failedCount,
+          outputAssetIds: input.outputAssetIds,
+          reportAssetId: input.job.reportAssetId,
+          tasks: input.tasks.map((task) => ({
+            taskId: task.id,
+            status: task.status,
+            sourceAssetId: task.sourceAssetId,
+            outputAssetId: task.outputAssetId,
+            errorCode: task.errorCode,
+            errorMessage: task.errorMessage,
+          })),
+          outputAssets: (input.outputAssets ?? []).map((asset) => ({
+            id: asset.id,
+            fileName: asset.fileName,
+            mimeType: asset.mimeType,
+          })),
+        },
+      },
+    });
+  }
+
+  private async runCoworkImageInspectTool(
+    sessionId: string,
+    args: Record<string, unknown>,
+  ): Promise<{ text: string; isError?: boolean }> {
+    const asset = this.resolveCoworkImageToolAsset(sessionId, args);
+    if (!asset) return { text: 'No controlled image asset was found for this Cowork session.', isError: true };
+    const inspected = await this.creatorAssetStore!.inspectImageAsset({ assetId: asset.id });
+    if (!inspected) return { text: 'Image asset could not be inspected.', isError: true };
+    const metadata = inspected.imageMetadata;
+    return {
+      text: [
+        `Image asset: ${inspected.asset.id}`,
+        `Status: ${metadata.status}`,
+        `Format: ${metadata.format ?? 'unknown'} (${metadata.mimeType ?? 'unknown'})`,
+        `Size: ${metadata.width ?? 'unknown'} x ${metadata.height ?? 'unknown'}`,
+        `File size: ${metadata.fileSize}`,
+      ].join('\n'),
+    };
+  }
+
+  private async runCoworkImagePlanTool(
+    sessionId: string,
+    args: Record<string, unknown>,
+  ): Promise<{ text: string; isError?: boolean }> {
+    let asset = this.resolveCoworkImageToolAsset(sessionId, args);
+    if (!asset) return { text: 'No controlled image asset was found for this Cowork session.', isError: true };
+    if (!asset.imageMetadata) {
+      const inspected = await this.creatorAssetStore!.inspectImageAsset({ assetId: asset.id });
+      asset = inspected?.asset ?? asset;
+    }
+    const plan = createCreatorAssetImageProcessingPlan({
+      asset,
+      presetId: resolveCoworkImagePresetId(args.presetId),
+      outputFormat: resolveCoworkImageOutputFormat(args.outputFormat),
+      quality: toOptionalNumber(args.quality),
+      width: toOptionalNumber(args.width),
+      height: toOptionalNumber(args.height),
+      maxWidth: toOptionalNumber(args.maxWidth),
+      maxHeight: toOptionalNumber(args.maxHeight),
+      cropRatio: toOptionalString(args.cropRatio),
+      rotate: toOptionalNumber(args.rotate),
+      outputDirectory: null,
+    });
+    this.creatorAssetStore!.saveImageProcessingPlan(plan);
+    const message = this.addMessage(sessionId, {
+      type: 'assistant',
+      content: 'Image processing plan created. Confirm in the plan card before execution.',
+      metadata: {
+        kind: 'image_processing_plan',
+        imageProcessingPlan: plan,
+        imageProcessingSource: {
+          sessionId,
+          assetId: asset.id,
+          sourceMessageId: asset.messageId,
+        },
+        requiresUserConfirmation: true,
+      },
+    });
+    return {
+      text: [
+        `Created image processing plan: ${plan.id}`,
+        `Source asset: ${asset.id}`,
+        `Preset: ${plan.presetId ?? 'custom'}`,
+        'Execution is blocked until the user confirms the plan card in WeSight.',
+        `Plan message: ${message.id}`,
+      ].join('\n'),
+    };
+  }
+
+  private runCoworkImageExecuteTool(
+    sessionId: string,
+    args: Record<string, unknown>,
+  ): { text: string; isError?: boolean } {
+    const planId = toOptionalString(args.planId);
+    if (!planId) return { text: 'planId is required.', isError: true };
+    this.addMessage(sessionId, {
+      type: 'assistant',
+      content: 'Image processing execution requires user confirmation in WeSight. No files were written.',
+      metadata: {
+        kind: 'image_processing_execute_request',
+        imageProcessingPlanId: planId,
+        requiresUserConfirmation: true,
+      },
+    });
+    return {
+      text: `Execution request recorded for plan ${planId}. The agent cannot execute it without user confirmation, and no file was written.`,
+    };
+  }
+
+  private runCoworkImageJobStatusTool(args: Record<string, unknown>): { text: string; isError?: boolean } {
+    const jobId = toOptionalString(args.jobId);
+    if (!jobId) return { text: 'jobId is required.', isError: true };
+    const record = this.creatorAssetStore!.getImageProcessingJob(jobId);
+    if (!record) return { text: 'Image processing job was not found.', isError: true };
+    return {
+      text: [
+        `Job: ${record.job.id}`,
+        `Status: ${record.job.status}`,
+        `Success / failed: ${record.job.successCount} / ${record.job.failedCount}`,
+        `Report asset: ${record.job.reportAssetId ?? 'none'}`,
+      ].join('\n'),
+    };
+  }
+
+  private runCoworkImageRevealTool(args: Record<string, unknown>): { text: string; isError?: boolean } {
+    const jobId = toOptionalString(args.jobId);
+    if (!jobId) return { text: 'jobId is required.', isError: true };
+    const record = this.creatorAssetStore!.getImageProcessingJob(jobId);
+    if (!record) return { text: 'Image processing job was not found.', isError: true };
+    const outputCount = record.tasks.filter((task) => task.outputPath).length;
+    return {
+      text: `Job ${jobId} has ${outputCount} output file(s). Use the WeSight UI to reveal controlled output directories.`,
+    };
+  }
+
+  private async runCoworkImageAttachTool(
+    sessionId: string,
+    args: Record<string, unknown>,
+  ): Promise<{ text: string; isError?: boolean }> {
+    const asset = this.resolveCoworkImageToolAsset(sessionId, args);
+    if (!asset) return { text: 'No controlled image asset was found for this Cowork session.', isError: true };
+    if (!asset.imageMetadata) {
+      await this.creatorAssetStore!.inspectImageAsset({ assetId: asset.id });
+    }
+    return {
+      text: `Attached controlled Creator image asset ${asset.id}. Use image.planProcessing before execution.`,
+    };
+  }
+
+  private resolveCoworkImageToolAsset(
+    sessionId: string,
+    args: Record<string, unknown>,
+  ) {
+    const assetId = toOptionalString(args.assetId);
+    if (assetId) {
+      const asset = this.creatorAssetStore?.getAsset(assetId);
+      if (asset?.kind === CreatorProductionAssetKind.Image && asset.sessionId === sessionId) {
+        return asset;
+      }
+      return null;
+    }
+    const row = this.db.prepare(`
+      SELECT a.*, 1 AS source_session_available
+      FROM production_assets a
+      WHERE a.kind = ?
+        AND COALESCE(a.source_session_id, a.session_id) = ?
+      ORDER BY a.created_at DESC
+      LIMIT 1
+    `).get(CreatorProductionAssetKind.Image, sessionId) as { id: string } | undefined;
+    return row?.id ? this.creatorAssetStore?.getAsset(row.id) ?? null : null;
+  }
+
+  private explainImageToolFailure(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/not found|missing/i.test(message)) return 'The image could not be found in the controlled Creator asset context.';
+    if (/overwrite|exists/i.test(message)) return 'The output would overwrite an existing file, so execution was blocked.';
+    if (/unsupported|corrupt/i.test(message)) return 'The image format is unsupported or the file is corrupt.';
+    return 'Image processing could not continue. Check the source image and try again.';
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {

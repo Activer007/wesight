@@ -171,6 +171,7 @@ describe('buildCoworkActivitySnapshot', () => {
         type: 'image',
         source: null,
         timestamp: 3,
+        messageId: 'assistant-1',
       },
     ]);
   });

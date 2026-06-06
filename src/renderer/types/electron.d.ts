@@ -16,6 +16,28 @@ import type {
 import type { CoworkSessionRuntimeSnapshot } from '@shared/cowork/runtimeSnapshot';
 import type { CoworkStudioAssetsResult } from '@shared/cowork/studioAssets';
 import type {
+  CreatorImageBatchCreateInput,
+  CreatorImageBatchCreateResult,
+  CreatorImageJobExecuteInput,
+  CreatorImageJobExecuteResult,
+  CreatorImageJobGetInput,
+  CreatorImageJobGetResult,
+  CreatorImageJobListInput,
+  CreatorImageJobListResult,
+  CreatorImageOutputRevealInput,
+  CreatorImagePlanCreateInput,
+  CreatorImagePlanCreateResult,
+  CreatorImagePlanGetInput,
+  CreatorImagePlanGetResult,
+  CreatorImageRecipeExecuteInput,
+  CreatorImageRecipeExecuteResult,
+  CreatorImageReportOpenInput,
+  CreatorImageTaskCancelInput,
+  CreatorImageTaskCancelResult,
+  CreatorImageTaskRetryInput,
+  CreatorImageTaskRetryResult,
+} from '@shared/creatorStudio/imageProcessingTypes';
+import type {
   CreatorAssetCollectionAddInput,
   CreatorAssetCollectionCreateInput,
   CreatorAssetUpdateInput,
@@ -36,6 +58,8 @@ import type {
   CreatorBrandKitUpdateInput,
   CreatorCaseAssetCreateInput,
   CreatorCreativeModelCapability,
+  CreatorImageInspectInput,
+  CreatorImageInspectResult,
   CreatorProductionAssetListInput,
   CreatorProductionAssetListResult,
   CreatorProductionAssetRecord,
@@ -818,6 +842,74 @@ interface IElectronAPI {
       source?: CreatorProductionAssetSourceLookup;
       error?: string;
     }>;
+    inspectImage: (input: CreatorImageInspectInput) => Promise<{
+      success: boolean;
+      asset?: CreatorImageInspectResult['asset'];
+      imageMetadata?: CreatorImageInspectResult['imageMetadata'];
+      error?: string;
+    }>;
+    createImagePlan: (input: CreatorImagePlanCreateInput) => Promise<{
+      success: boolean;
+      plan?: CreatorImagePlanCreateResult['plan'];
+      error?: string;
+    }>;
+    getImagePlan: (input: CreatorImagePlanGetInput) => Promise<{
+      success: boolean;
+      plan?: CreatorImagePlanGetResult['plan'];
+      error?: string;
+    }>;
+    executeImageJob: (input: CreatorImageJobExecuteInput) => Promise<{
+      success: boolean;
+      job?: CreatorImageJobExecuteResult['job'];
+      tasks?: CreatorImageJobExecuteResult['tasks'];
+      outputAssetIds?: CreatorImageJobExecuteResult['outputAssetIds'];
+      outputAssets?: CreatorProductionAssetRecord[];
+      error?: string;
+    }>;
+    getImageJob: (input: CreatorImageJobGetInput) => Promise<{
+      success: boolean;
+      job?: CreatorImageJobGetResult['job'];
+      tasks?: CreatorImageJobGetResult['tasks'];
+      error?: string;
+    }>;
+    listImageJobs: (input: CreatorImageJobListInput) => Promise<{
+      success: boolean;
+      jobs?: CreatorImageJobListResult['jobs'];
+      total?: number;
+      error?: string;
+    }>;
+    createImageBatch: (input: CreatorImageBatchCreateInput) => Promise<{
+      success: boolean;
+      plan?: CreatorImageBatchCreateResult['plan'];
+      job?: CreatorImageBatchCreateResult['job'];
+      tasks?: CreatorImageBatchCreateResult['tasks'];
+      outputAssetIds?: CreatorImageBatchCreateResult['outputAssetIds'];
+      error?: string;
+    }>;
+    executeImageRecipe: (input: CreatorImageRecipeExecuteInput) => Promise<{
+      success: boolean;
+      plan?: CreatorImageRecipeExecuteResult['plan'];
+      job?: CreatorImageRecipeExecuteResult['job'];
+      tasks?: CreatorImageRecipeExecuteResult['tasks'];
+      outputAssetIds?: CreatorImageRecipeExecuteResult['outputAssetIds'];
+      outputAssets?: CreatorProductionAssetRecord[];
+      error?: string;
+    }>;
+    retryImageTask: (input: CreatorImageTaskRetryInput) => Promise<{
+      success: boolean;
+      job?: CreatorImageTaskRetryResult['job'];
+      tasks?: CreatorImageTaskRetryResult['tasks'];
+      outputAssetIds?: CreatorImageTaskRetryResult['outputAssetIds'];
+      error?: string;
+    }>;
+    cancelImageTask: (input: CreatorImageTaskCancelInput) => Promise<{
+      success: boolean;
+      job?: CreatorImageTaskCancelResult['job'];
+      tasks?: CreatorImageTaskCancelResult['tasks'];
+      error?: string;
+    }>;
+    revealImageOutput: (input: CreatorImageOutputRevealInput) => Promise<{ success: boolean; error?: string }>;
+    openImageReport: (input: CreatorImageReportOpenInput) => Promise<{ success: boolean; error?: string }>;
     setAssetFavorite: (input: { assetId: string; favorite: boolean }) => Promise<{
       success: boolean;
       asset?: CreatorProductionAssetRecord;

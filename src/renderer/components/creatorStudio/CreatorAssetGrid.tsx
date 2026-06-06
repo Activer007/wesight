@@ -1,4 +1,5 @@
 import {
+  AdjustmentsHorizontalIcon,
   ArrowTopRightOnSquareIcon,
   CheckCircleIcon,
   ClipboardDocumentIcon,
@@ -15,14 +16,23 @@ import {
 import {
   CreatorAssetAdoptionStatus,
   type CreatorAssetAdoptionStatus as CreatorAssetAdoptionStatusType,
+  CreatorImageMetadataStatus,
+  CreatorImageProcessingOutputFormat,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
   CreatorProductionAssetStatus,
+  CreatorRecipeImageProcessingPackKind,
+  CreatorRecipeOutputKind,
   CreatorStudioDefaultProjectId,
+  isCreatorRecipeImageProcessingPackKind,
+  isCreatorRecipeOutputKind,
+  isCreatorRecipeOutputSchemaVersion,
 } from '@shared/creatorStudio/constants';
+import type { CreatorImageMetadata } from '@shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorProductionAssetRecord,
   CreatorPromptVersionRecord,
+  CreatorRecipeRecord,
   CreatorWorkspaceSnapshot,
 } from '@shared/creatorStudio/types';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -31,16 +41,22 @@ import casesData from '../../data/creatorStudio/cases.json';
 import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
 import type { CreatorStudioCase } from '../../types/creatorStudio';
+import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
+import { ImagePostProcessingDrawer } from './ImagePostProcessingDrawer';
 
 interface CreatorAssetGridProps {
+  recipes?: CreatorRecipeRecord[];
   onOpenCoworkSession: (sessionId: string) => Promise<boolean>;
   onUseAssetAsReference: (asset: CreatorProductionAssetRecord) => void;
   onSendAssetToCowork: (asset: CreatorProductionAssetRecord) => void;
+  onExecuteImageRecipe?: (asset: CreatorProductionAssetRecord, recipe: CreatorRecipeRecord) => Promise<void> | void;
 }
 
 const dispatchToast = (message: string) => {
   window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
 };
+
+const CreatorImageMetadataInspectConcurrency = 2;
 
 const copyText = async (text: string) => {
   await navigator.clipboard.writeText(text);
@@ -163,6 +179,56 @@ const isRenderableImage = (asset: CreatorProductionAssetRecord): boolean => (
   isFileBackedImage(asset) && asset.status === CreatorProductionAssetStatus.Ready
 );
 
+const formatFileSize = (bytes: number | null | undefined): string => {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
+    return i18nService.t('creatorImageUnknown');
+  }
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+};
+
+const getImageMetadataStatusLabel = (metadata: CreatorImageMetadata | null | undefined): string => {
+  if (!metadata) return i18nService.t('creatorImageMetadataNotLoaded');
+  switch (metadata.status) {
+    case CreatorImageMetadataStatus.Ready:
+      return i18nService.t('creatorImageMetadataReady');
+    case CreatorImageMetadataStatus.Missing:
+      return i18nService.t('creatorImageMetadataMissing');
+    case CreatorImageMetadataStatus.Corrupt:
+      return i18nService.t('creatorImageMetadataCorrupt');
+    case CreatorImageMetadataStatus.Unsupported:
+      return i18nService.t('creatorImageMetadataUnsupported');
+    default:
+      return i18nService.t('creatorImageUnknown');
+  }
+};
+
+const formatImageDimensions = (metadata: CreatorImageMetadata | null | undefined): string => (
+  metadata?.width && metadata.height
+    ? `${metadata.width} x ${metadata.height}`
+    : i18nService.t('creatorImageUnknown')
+);
+
+const formatImageType = (metadata: CreatorImageMetadata | null | undefined, fallbackMimeType?: string | null): string => {
+  const format = metadata?.format?.toUpperCase();
+  const mimeType = metadata?.mimeType || fallbackMimeType || null;
+  if (format && mimeType) return `${format} / ${mimeType}`;
+  return format || mimeType || i18nService.t('creatorImageUnknown');
+};
+
+const formatProcessingOperations = (asset: CreatorProductionAssetRecord): string => {
+  const operations = asset.imageProcessing?.operations ?? [];
+  if (!operations.length) return i18nService.t('creatorImageUnknown');
+  return operations.map((item) => item.operation).join(', ');
+};
+
 const getCasePreview = (asset: CreatorProductionAssetRecord): CreatorStudioCase | null => {
   if (asset.kind !== CreatorProductionAssetKind.Case && asset.source !== CreatorProductionAssetSource.CreatorCase) {
     return null;
@@ -236,10 +302,28 @@ const getAssetCases = (asset: CreatorProductionAssetRecord): CreatorStudioCase[]
     .filter((item): item is CreatorStudioCase => Boolean(item))
 );
 
+const isReadmeBannerPackRecipe = (recipe: CreatorRecipeRecord): boolean => {
+  const output = recipe.defaultOutput;
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return false;
+  const record = output as Record<string, unknown>;
+  const candidate = record.imageProcessing && typeof record.imageProcessing === 'object' && !Array.isArray(record.imageProcessing)
+    ? record.imageProcessing as Record<string, unknown>
+    : record;
+  return isCreatorRecipeOutputSchemaVersion(candidate.schemaVersion)
+    && isCreatorRecipeOutputKind(candidate.kind)
+    && candidate.kind === CreatorRecipeOutputKind.ImageProcessing
+    && isCreatorRecipeImageProcessingPackKind(candidate.packKind)
+    && candidate.packKind === CreatorRecipeImageProcessingPackKind.ReadmeBannerPack
+    && Array.isArray(candidate.rules)
+    && candidate.rules.length > 0;
+};
+
 export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
+  recipes = [],
   onOpenCoworkSession,
   onUseAssetAsReference,
   onSendAssetToCowork,
+  onExecuteImageRecipe,
 }) => {
   const [workspace, setWorkspace] = useState<CreatorWorkspaceSnapshot | null>(null);
   const [currentProjectId, setCurrentProjectId] = useState('');
@@ -264,6 +348,14 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   const [promptVersions, setPromptVersions] = useState<CreatorPromptVersionRecord[]>([]);
   const [promptVersionDiff, setPromptVersionDiff] = useState('');
   const [isLoadingPromptVersions, setIsLoadingPromptVersions] = useState(false);
+  const [inspectingImageAssetIds, setInspectingImageAssetIds] = useState<Set<string>>(() => new Set());
+  const [postProcessingAsset, setPostProcessingAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [executingRecipeAssetId, setExecutingRecipeAssetId] = useState<string | null>(null);
+  const [batchImageAssetIds, setBatchImageAssetIds] = useState<Set<string>>(() => new Set());
+  const [isCreatingImageBatch, setIsCreatingImageBatch] = useState(false);
+  const [imageBatchMaxWidth, setImageBatchMaxWidth] = useState('1600');
+  const [imageBatchMaxHeight, setImageBatchMaxHeight] = useState('1600');
+  const imageProcessingEnabled = isCreatorImageProcessingEnabled();
 
   const currentCollections = useMemo(
     () => workspace?.collections.filter((collection) => collection.projectId === currentProjectId) ?? [],
@@ -314,6 +406,49 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
   useEffect(() => {
     void loadAssets();
   }, [loadAssets]);
+
+  useEffect(() => {
+    const pendingAssets = assets.filter((asset) => (
+      asset.kind === CreatorProductionAssetKind.Image
+      && !asset.imageMetadata
+      && !inspectingImageAssetIds.has(asset.id)
+    )).slice(0, CreatorImageMetadataInspectConcurrency);
+    if (pendingAssets.length === 0) return;
+
+    let cancelled = false;
+    setInspectingImageAssetIds((ids) => {
+      const next = new Set(ids);
+      for (const asset of pendingAssets) {
+        next.add(asset.id);
+      }
+      return next;
+    });
+
+    for (const asset of pendingAssets) {
+      void creatorStudioAssetService.inspectImage({ assetId: asset.id })
+        .then((result) => {
+          if (cancelled || !result) return;
+          setAssets((items) => items.map((item) => item.id === result.asset.id ? result.asset : item));
+          setSelectedAsset((selected) => selected?.id === result.asset.id ? result.asset : selected);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          dispatchToast(i18nService.t('creatorImageMetadataInspectFailed'));
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setInspectingImageAssetIds((ids) => {
+            const next = new Set(ids);
+            next.delete(asset.id);
+            return next;
+          });
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assets, inspectingImageAssetIds]);
 
   useEffect(() => {
     if (!selectedAsset) {
@@ -467,6 +602,20 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
     }
   };
 
+  const handleExecuteImageRecipe = async (
+    asset: CreatorProductionAssetRecord,
+    recipe: CreatorRecipeRecord,
+  ) => {
+    if (!onExecuteImageRecipe) return;
+    setExecutingRecipeAssetId(asset.id);
+    try {
+      await onExecuteImageRecipe(asset, recipe);
+      await loadAssets();
+    } finally {
+      setExecutingRecipeAssetId(null);
+    }
+  };
+
   const handleChangeAdoptionStatus = async (
     asset: CreatorProductionAssetRecord,
     nextStatus: CreatorAssetAdoptionStatusType
@@ -570,11 +719,70 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
     setFavoriteOnly(false);
   };
 
+  const handleImageProcessingCompleted = (outputAssets: CreatorProductionAssetRecord[]) => {
+    void loadAssets();
+    if (outputAssets[0]) {
+      setSelectedAsset(outputAssets[0]);
+    }
+  };
+
   const selectedAssetCases = useMemo(
     () => selectedAsset ? getAssetCases(selectedAsset) : [],
     [selectedAsset]
   );
+  const readmeBannerRecipe = useMemo(
+    () => recipes.find(isReadmeBannerPackRecipe) ?? null,
+    [recipes]
+  );
   const selectedAssetCanReveal = Boolean(selectedAsset && isFileBackedImage(selectedAsset));
+  const selectedBatchImageAssetIds = useMemo(
+    () => assets
+      .filter((asset) => (
+        batchImageAssetIds.has(asset.id)
+        && asset.kind === CreatorProductionAssetKind.Image
+        && asset.status === CreatorProductionAssetStatus.Ready
+      ))
+      .map((asset) => asset.id),
+    [assets, batchImageAssetIds]
+  );
+
+  const toggleBatchImageAsset = (asset: CreatorProductionAssetRecord) => {
+    if (asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready) return;
+    setBatchImageAssetIds((ids) => {
+      const next = new Set(ids);
+      if (next.has(asset.id)) {
+        next.delete(asset.id);
+      } else {
+        next.add(asset.id);
+      }
+      return next;
+    });
+  };
+
+  const createImageBatch = async (mode: 'webp' | 'compress' | 'resize') => {
+    if (!currentProjectId || selectedBatchImageAssetIds.length === 0) return;
+    const maxWidth = Number(imageBatchMaxWidth);
+    const maxHeight = Number(imageBatchMaxHeight);
+    setIsCreatingImageBatch(true);
+    try {
+      await creatorStudioAssetService.createImageBatch({
+        projectId: currentProjectId,
+        assetIds: selectedBatchImageAssetIds,
+        waitForCompletion: false,
+        outputFormat: CreatorImageProcessingOutputFormat.Webp,
+        quality: mode === 'compress' ? 72 : 82,
+        ...(mode === 'resize' && Number.isFinite(maxWidth) && maxWidth > 0 ? { maxWidth } : {}),
+        ...(mode === 'resize' && Number.isFinite(maxHeight) && maxHeight > 0 ? { maxHeight } : {}),
+      });
+      setBatchImageAssetIds(new Set());
+      await loadAssets();
+      dispatchToast(i18nService.t('creatorImageBatchCreated'));
+    } catch (batchError) {
+      dispatchToast(batchError instanceof Error ? batchError.message : i18nService.t('creatorImageBatchCreateFailed'));
+    } finally {
+      setIsCreatingImageBatch(false);
+    }
+  };
 
   return (
     <section className="grid min-h-full gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -588,6 +796,22 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <input
+                value={imageBatchMaxWidth}
+                onChange={(event) => setImageBatchMaxWidth(event.target.value)}
+                inputMode="numeric"
+                aria-label={i18nService.t('creatorImageBatchMaxWidth')}
+                placeholder={i18nService.t('creatorImageBatchMaxWidth')}
+                className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary"
+              />
+              <input
+                value={imageBatchMaxHeight}
+                onChange={(event) => setImageBatchMaxHeight(event.target.value)}
+                inputMode="numeric"
+                aria-label={i18nService.t('creatorImageBatchMaxHeight')}
+                placeholder={i18nService.t('creatorImageBatchMaxHeight')}
+                className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary"
+              />
               <button
                 type="button"
                 onClick={() => setIsProjectFormOpen(true)}
@@ -737,6 +961,51 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
           </div>
         )}
 
+        {imageProcessingEnabled && selectedBatchImageAssetIds.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+            <div>
+              <div className="text-sm font-semibold text-primary">
+                {i18nService.t('creatorImageBatchSelected').replace('{count}', String(selectedBatchImageAssetIds.length))}
+              </div>
+              <div className="mt-1 text-xs text-muted">{i18nService.t('creatorImageBatchToolbarHint')}</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={isCreatingImageBatch}
+                onClick={() => void createImageBatch('webp')}
+                className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {i18nService.t('creatorImageBatchWebp')}
+              </button>
+              <button
+                type="button"
+                disabled={isCreatingImageBatch}
+                onClick={() => void createImageBatch('compress')}
+                className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {i18nService.t('creatorImageBatchCompress')}
+              </button>
+              <button
+                type="button"
+                disabled={isCreatingImageBatch}
+                onClick={() => void createImageBatch('resize')}
+                className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {i18nService.t('creatorImageBatchResize')}
+              </button>
+              <button
+                type="button"
+                disabled={isCreatingImageBatch}
+                onClick={() => setBatchImageAssetIds(new Set())}
+                className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {i18nService.t('cancel')}
+              </button>
+            </div>
+          </div>
+        )}
+
         {!isLoading && assets.length === 0 ? (
           <div className="flex min-h-[260px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-surface text-center">
             <PhotoIcon className="h-10 w-10 text-muted" />
@@ -770,6 +1039,17 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   >
                     <StarIcon className="h-4 w-4" />
                   </button>
+                  {imageProcessingEnabled && asset.kind === CreatorProductionAssetKind.Image && asset.status === CreatorProductionAssetStatus.Ready && (
+                    <label className="absolute bottom-2 left-2 inline-flex items-center gap-2 rounded-lg border border-border bg-background/90 px-2 py-1 text-[11px] font-medium text-secondary">
+                      <input
+                        type="checkbox"
+                        checked={batchImageAssetIds.has(asset.id)}
+                        onChange={() => toggleBatchImageAsset(asset)}
+                        className="h-3.5 w-3.5 rounded border-border"
+                      />
+                      {i18nService.t('creatorImageBatchSelect')}
+                    </label>
+                  )}
                 </div>
                 <div className="space-y-2 p-3">
                   <h3 className="truncate text-sm font-semibold">{asset.fileName}</h3>
@@ -797,6 +1077,16 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                       </span>
                     ))}
                   </div>
+                  {asset.kind === CreatorProductionAssetKind.Image && (
+                    <div className="rounded-lg bg-surface-raised px-2 py-1.5 text-[11px] leading-5 text-secondary">
+                      <div>{formatImageDimensions(asset.imageMetadata)}</div>
+                      <div className="truncate">{formatImageType(asset.imageMetadata, asset.mimeType)}</div>
+                      <div className="flex flex-wrap gap-x-2">
+                        <span>{formatFileSize(asset.imageMetadata?.fileSize)}</span>
+                        <span>{getImageMetadataStatusLabel(asset.imageMetadata)}</span>
+                      </div>
+                    </div>
+                  )}
                   <select
                     value={asset.adoptionStatus}
                     onChange={(event) => void handleChangeAdoptionStatus(asset, event.target.value as CreatorAssetAdoptionStatusType)}
@@ -812,7 +1102,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                     <div className="text-xs text-muted">{i18nService.t('creatorAssetSourceMissing')}</div>
                   )}
                 </div>
-                <div className="grid grid-cols-5 gap-1 border-t border-border p-2">
+                <div className="grid grid-cols-6 gap-1 border-t border-border p-2">
                   <IconAction label={i18nService.t('creatorAssetUseAsReference')} onClick={() => onUseAssetAsReference(asset)}>
                     <SparklesIcon className="h-4 w-4" />
                   </IconAction>
@@ -828,6 +1118,15 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   <IconAction label={i18nService.t('creatorAssetDetails')} onClick={() => setSelectedAsset(asset)}>
                     <InformationCircleIcon className="h-4 w-4" />
                   </IconAction>
+                  {imageProcessingEnabled && (
+                    <IconAction
+                      label={i18nService.t('creatorImagePostProcessingAction')}
+                      onClick={() => setPostProcessingAsset(asset)}
+                      disabled={asset.kind !== CreatorProductionAssetKind.Image || asset.status !== CreatorProductionAssetStatus.Ready}
+                    >
+                      <AdjustmentsHorizontalIcon className="h-4 w-4" />
+                    </IconAction>
+                  )}
                 </div>
               </article>
             ))}
@@ -852,6 +1151,39 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
               <AssetPreviewImage asset={selectedAsset} className="aspect-[4/3] w-full rounded-lg bg-surface-raised object-contain" />
               <ProvenanceRow label={i18nService.t('creatorAssetFileName')} value={selectedAsset.fileName} />
+              {selectedAsset.kind === CreatorProductionAssetKind.Image && (
+                <section className="rounded-lg border border-border p-3">
+                  <h3 className="text-xs font-medium text-secondary">{i18nService.t('creatorImageMetadata')}</h3>
+                  <div className="mt-2 space-y-2">
+                    <ProvenanceRow label={i18nService.t('creatorImageDimensions')} value={formatImageDimensions(selectedAsset.imageMetadata)} />
+                    <ProvenanceRow label={i18nService.t('creatorImageFormat')} value={selectedAsset.imageMetadata?.format?.toUpperCase() || i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageMimeType')} value={selectedAsset.imageMetadata?.mimeType || selectedAsset.mimeType || i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageFileSize')} value={formatFileSize(selectedAsset.imageMetadata?.fileSize)} />
+                    <ProvenanceRow label={i18nService.t('creatorImageAlpha')} value={selectedAsset.imageMetadata?.hasAlpha === null || selectedAsset.imageMetadata?.hasAlpha === undefined ? i18nService.t('creatorImageUnknown') : selectedAsset.imageMetadata.hasAlpha ? i18nService.t('creatorImageAlphaPresent') : i18nService.t('creatorImageAlphaAbsent')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageOrientation')} value={selectedAsset.imageMetadata?.exifOrientation ? String(selectedAsset.imageMetadata.exifOrientation) : i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageColorSpace')} value={selectedAsset.imageMetadata?.colorSpace || i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageMetadataStatus')} value={getImageMetadataStatusLabel(selectedAsset.imageMetadata)} />
+                    {selectedAsset.imageMetadata?.warningCodes.length ? (
+                      <ProvenanceRow label={i18nService.t('creatorImageWarnings')} value={selectedAsset.imageMetadata.warningCodes.join(', ')} />
+                    ) : null}
+                  </div>
+                </section>
+              )}
+              {selectedAsset.kind === CreatorProductionAssetKind.Image && selectedAsset.imageProcessing && (
+                <section className="rounded-lg border border-border p-3">
+                  <h3 className="text-xs font-medium text-secondary">{i18nService.t('creatorImageProcessingDetails')}</h3>
+                  <div className="mt-2 space-y-2">
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingSourceAsset')} value={selectedAsset.imageProcessing.sourceAssetId} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingPlanId')} value={selectedAsset.imageProcessing.plan?.id || 'none'} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingPreset')} value={selectedAsset.imageProcessing.presetId || i18nService.t('creatorImageProcessingPresetCustom')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingOutputFormat')} value={selectedAsset.imageProcessing.plan?.output.format?.toUpperCase() || selectedAsset.imageMetadata?.format?.toUpperCase() || i18nService.t('creatorImageUnknown')} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingQuality')} value={selectedAsset.imageProcessing.plan?.output.quality === null || selectedAsset.imageProcessing.plan?.output.quality === undefined ? i18nService.t('creatorImageUnknown') : String(selectedAsset.imageProcessing.plan.output.quality)} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingOperations')} value={formatProcessingOperations(selectedAsset)} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingJobStatus')} value={selectedAsset.imageProcessing.job?.status || 'none'} />
+                    <ProvenanceRow label={i18nService.t('creatorImageProcessingTaskStatus')} value={selectedAsset.imageProcessing.task?.status || 'none'} />
+                  </div>
+                </section>
+              )}
               <ProvenanceRow label={i18nService.t('creatorAssetLocalPath')} value={selectedAsset.filePath} />
               <ProvenanceRow label={i18nService.t('creatorAssetSource')} value={getAssetSourceLabel(selectedAsset.source)} />
               <ProvenanceRow label="templateId" value={selectedAsset.templateId || 'none'} />
@@ -1016,6 +1348,33 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                   <FolderOpenIcon className="h-4 w-4" />
                   {i18nService.t('creatorAssetReveal')}
                 </button>
+                {imageProcessingEnabled && selectedAsset.kind === CreatorProductionAssetKind.Image && (
+                  <button
+                    type="button"
+                    onClick={() => setPostProcessingAsset(selectedAsset)}
+                    disabled={selectedAsset.status !== CreatorProductionAssetStatus.Ready}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AdjustmentsHorizontalIcon className="h-4 w-4" />
+                    {i18nService.t('creatorImagePostProcessingAction')}
+                  </button>
+                )}
+                {imageProcessingEnabled && selectedAsset.kind === CreatorProductionAssetKind.Image && readmeBannerRecipe && (
+                  <button
+                    type="button"
+                    onClick={() => void handleExecuteImageRecipe(selectedAsset, readmeBannerRecipe)}
+                    disabled={
+                      selectedAsset.status !== CreatorProductionAssetStatus.Ready
+                      || executingRecipeAssetId === selectedAsset.id
+                    }
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <SparklesIcon className="h-4 w-4" />
+                    {executingRecipeAssetId === selectedAsset.id
+                      ? i18nService.t('creatorImageRecipeExecuting')
+                      : i18nService.t('creatorImageRecipeReadmeBanner')}
+                  </button>
+                )}
               </div>
 
               <section>
@@ -1034,6 +1393,11 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
           </div>
         )}
       </aside>
+      <ImagePostProcessingDrawer
+        asset={postProcessingAsset}
+        onClose={() => setPostProcessingAsset(null)}
+        onCompleted={handleImageProcessingCompleted}
+      />
     </section>
   );
 };
