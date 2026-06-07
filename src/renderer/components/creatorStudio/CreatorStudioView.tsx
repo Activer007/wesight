@@ -3894,7 +3894,6 @@ const PromptBuilder: React.FC<{
           <BuilderInput label={i18nService.t('creatorFieldPlatform')} value={form.platform} onChange={(value) => updateField('platform', value)} />
           <BuilderInput label={i18nService.t('creatorFieldAspectRatio')} value={form.aspectRatio} onChange={(value) => updateField('aspectRatio', value)} />
           <BuilderInput label={i18nService.t('creatorFieldRequiredText')} value={form.requiredText} onChange={(value) => updateField('requiredText', value)} />
-          <BuilderInput label={i18nService.t('creatorFieldVisualStyle')} value={form.visualStyle} onChange={(value) => updateField('visualStyle', value)} />
         </BuilderSection>
         {isAdvancedOpen && (
           <>
@@ -3925,6 +3924,7 @@ const PromptBuilder: React.FC<{
               </BuilderSection>
             )}
             <BuilderSection title={i18nService.t('creatorBuilderSectionAdvancedPrompt')}>
+              <BuilderInput label={i18nService.t('creatorFieldVisualStyle')} value={form.visualStyle} onChange={(value) => updateField('visualStyle', value)} />
               <BuilderInput label={i18nService.t('creatorFieldTaskType')} value={form.taskType} onChange={(value) => updateField('taskType', value)} />
               <BuilderInput label={i18nService.t('creatorFieldAudience')} value={form.audience} onChange={(value) => updateField('audience', value)} />
               <BuilderInput label={i18nService.t('creatorFieldMainObject')} value={form.mainObject} onChange={(value) => updateField('mainObject', value)} />
@@ -3943,6 +3943,39 @@ const PromptBuilder: React.FC<{
         </BuilderSection>
       </div>
       <div className="min-w-0 space-y-4">
+        <div className="min-w-0 rounded-lg border border-border bg-surface p-4">
+          <h2 className="text-sm font-semibold">{i18nService.t('creatorBuilderNextStepTitle')}</h2>
+          <p className="mt-1 text-xs leading-5 text-muted">{i18nService.t('creatorBuilderNextStepHint')}</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={isSendingToCowork || hasLintErrors}
+              title={hasLintErrors ? i18nService.t('creatorPromptLintBlocksExecution') : undefined}
+              onClick={() => onSendToCowork(promptSpec, prompt, materials)}
+              className="inline-flex items-center gap-2 rounded-lg border border-primary bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RocketLaunchIcon className="h-4 w-4" />
+              {isSendingToCowork ? i18nService.t('creatorSendingToCowork') : i18nService.t('creatorSendToCowork')}
+            </button>
+            <button
+              type="button"
+              disabled={!seedreamReady || isSendingToCowork || hasLintErrors}
+              title={hasLintErrors ? i18nService.t('creatorPromptLintBlocksExecution') : i18nService.t('creatorGenerateWithSeedreamHint')}
+              onClick={() => onSendToCowork(promptSpec, prompt, materials, true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              <SparklesIcon className="h-4 w-4" />
+              {i18nService.t('creatorGenerateWithSeedream')}
+            </button>
+          </div>
+          {hasLintErrors && (
+            <p className="mt-3 text-xs leading-5 text-red-600 dark:text-red-300">
+              {i18nService.t('creatorPromptLintBlocksExecution')}
+            </p>
+          )}
+        </div>
+        {isAdvancedOpen && (
+          <>
         <div className="min-w-0 rounded-lg border border-border bg-surface p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -4060,8 +4093,6 @@ const PromptBuilder: React.FC<{
             {isAdvancedOpen && previewTab === PromptBuilderPreviewTab.Spec ? promptSpecJson : prompt}
           </pre>
         </div>
-        {isAdvancedOpen && (
-          <>
         <div className="min-w-0 rounded-lg border border-border bg-surface">
           <div className="border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">{i18nService.t('creatorContextPack')}</h2>

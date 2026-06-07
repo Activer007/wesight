@@ -72,6 +72,10 @@ export const NanoPromptDetailDrawer: React.FC<NanoPromptDetailDrawerProps> = ({
     ...(prompt?.tagsZh ?? []),
   ].filter(Boolean).slice(0, 18), [prompt]);
   const media = prompt?.media?.length ? prompt.media : prompt?.mediaThumbnails ?? [];
+  const runSecondaryAction = (action: () => void | Promise<void>) => {
+    setIsMoreActionsOpen(false);
+    void action();
+  };
 
   return (
     <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-xl flex-col border-l border-border bg-background shadow-2xl">
@@ -207,19 +211,19 @@ export const NanoPromptDetailDrawer: React.FC<NanoPromptDetailDrawerProps> = ({
             <div className="absolute bottom-12 right-0 z-10 grid w-56 gap-1 rounded-lg border border-border bg-background p-2 shadow-xl">
               {creatorActions && (
                 <>
-                  <ActionButton onClick={() => creatorActions.onSaveAsRecipe(prompt)}>
+                  <ActionButton onClick={() => runSecondaryAction(() => creatorActions.onSaveAsRecipe(prompt))}>
                     {i18nService.t('nanoLibrarySaveAsRecipe')}
                   </ActionButton>
-                  <ActionButton onClick={() => creatorActions.onSaveAsPromptAsset(prompt)}>
+                  <ActionButton onClick={() => runSecondaryAction(() => creatorActions.onSaveAsPromptAsset(prompt))}>
                     {i18nService.t('nanoLibrarySaveAsPromptAsset')}
                   </ActionButton>
-                  <ActionButton onClick={() => creatorActions.onAddToBoard(prompt)}>
+                  <ActionButton onClick={() => runSecondaryAction(() => creatorActions.onAddToBoard(prompt))}>
                     {i18nService.t('nanoLibraryAddToBoard')}
                   </ActionButton>
-                  <ActionButton onClick={() => creatorActions.onSendToCowork(prompt)}>
+                  <ActionButton onClick={() => runSecondaryAction(() => creatorActions.onSendToCowork(prompt))}>
                     {i18nService.t('nanoLibrarySendToCowork')}
                   </ActionButton>
-                  <ActionButton onClick={() => creatorActions.onCreateBatch(prompt)}>
+                  <ActionButton onClick={() => runSecondaryAction(() => creatorActions.onCreateBatch(prompt))}>
                     {i18nService.t('nanoLibraryCreateBatch')}
                   </ActionButton>
                 </>
@@ -227,6 +231,7 @@ export const NanoPromptDetailDrawer: React.FC<NanoPromptDetailDrawerProps> = ({
               <ActionButton
                 disabled={!canOpenSource}
                 onClick={() => {
+                  setIsMoreActionsOpen(false);
                   if (canOpenSource && sourceUrl) onOpenSource(sourceUrl);
                 }}
               >
