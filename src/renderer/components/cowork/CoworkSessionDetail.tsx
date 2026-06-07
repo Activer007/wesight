@@ -11,6 +11,9 @@ import {
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { CoworkAgentEngine } from '@shared/cowork/constants';
 import { CoworkFileActivityStatus } from '@shared/cowork/fileActivity';
+import {
+  CreatorAssetAdoptionStatus,
+} from '@shared/creatorStudio/constants';
 import type {
   CreatorImageMetadata,
   CreatorImageProcessingPlan,
@@ -1291,12 +1294,14 @@ const AssistantMessageItem: React.FC<{
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
   showCopyButton?: boolean;
+  onContinue?: (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]) => boolean | void | Promise<boolean | void>;
 }> = ({
   message,
   sessionId,
   resolveLocalFilePath,
   mapDisplayText,
   showCopyButton = false,
+  onContinue,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedGeneratedImage | null>(null);
@@ -1308,6 +1313,7 @@ const AssistantMessageItem: React.FC<{
   const [quickEditAsset, setQuickEditAsset] = useState<CreatorProductionAssetRecord | null>(null);
   const [isPreparingPostProcessing, setIsPreparingPostProcessing] = useState(false);
   const [postProcessingStatus, setPostProcessingStatus] = useState<ImageDownloadStatus | null>(null);
+  const [resultActionStatus, setResultActionStatus] = useState<ImageDownloadStatus | null>(null);
   const [isExecutingPlanCard, setIsExecutingPlanCard] = useState(false);
   const [planCardStatus, setPlanCardStatus] = useState<ImageDownloadStatus | null>(null);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
@@ -1327,6 +1333,7 @@ const AssistantMessageItem: React.FC<{
     setExpandedImageMetadataError(null);
     setImageDownloadStatus(null);
     setPostProcessingStatus(null);
+    setResultActionStatus(null);
   }, [isDownloadingImage]);
 
   useEffect(() => {
@@ -1435,6 +1442,160 @@ const AssistantMessageItem: React.FC<{
     }
   }, [isPreparingPostProcessing, message.id, sessionId]);
 
+  const ensureGeneratedImageAsset = useCallback(async (image: GeneratedImage): Promise<CreatorProductionAssetRecord | null> => {
+    if (!sessionId) {
+      setResultActionStatus({
+        type: 'error',
+        message: i18nService.t('creatorImageProcessingSourceMapFailed'),
+      });
+      return null;
+    }
+
+    try {
+      const result = await creatorStudioAssetService.inspectImage({
+        source: {
+          sessionId,
+          messageId: message.id,
+          filePath: image.path,
+        },
+      });
+      if (!result?.asset) {
+        setResultActionStatus({
+          type: 'error',
+          message: i18nService.t('creatorImageProcessingSourceMapFailed'),
+        });
+        return null;
+      }
+      return result.asset;
+    } catch (error) {
+      setResultActionStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : i18nService.t('creatorImageProcessingSourceMapFailed'),
+      });
+      return null;
+    }
+  }, [message.id, sessionId]);
+
+  const handleAdoptGeneratedImage = useCallback(async (image: GeneratedImage) => {
+    setResultActionStatus(null);
+    const asset = await ensureGeneratedImageAsset(image);
+    if (!asset) return;
+    try {
+      await creatorStudioAssetService.updateAsset({
+        assetId: asset.id,
+        favorite: true,
+        adoptionStatus: CreatorAssetAdoptionStatus.Adopted,
+      });
+      setResultActionStatus({
+        type: 'success',
+        message: i18nService.t('creatorResultAdopted'),
+      });
+    } catch {
+      setResultActionStatus({
+        type: 'error',
+        message: i18nService.t('creatorAssetUpdateFailed'),
+      });
+    }
+  }, [ensureGeneratedImageAsset]);
+
+  const handleMakeGeneratedImageVariant = useCallback(async (image: GeneratedImage) => {
+    setResultActionStatus(null);
+    const asset = await ensureGeneratedImageAsset(image);
+    if (!asset) return;
+    const prompt = [
+      i18nService.t('creatorResultVariantPromptIntro'),
+      '',
+      `assetId: ${asset.id}`,
+      `sourceImage: ${asset.filePath || image.path}`,
+      asset.promptText ? `sourcePrompt: ${asset.promptText}` : null,
+    ].filter(Boolean).join('\n');
+    const continued = await onContinue?.(prompt);
+    if (continued !== false) {
+      setResultActionStatus({
+        type: 'success',
+        message: i18nService.t('creatorResultVariantSent'),
+      });
+    }
+  }, [ensureGeneratedImageAsset, onContinue]);
+
+  const handleRevealGeneratedImage = useCallback(async (image: GeneratedImage) => {
+    setResultActionStatus(null);
+    const asset = await ensureGeneratedImageAsset(image);
+    if (!asset) return;
+    try {
+      await creatorStudioAssetService.revealAssetInFolder(asset.id);
+    } catch {
+      setResultActionStatus({
+        type: 'error',
+        message: i18nService.t('creatorAssetSourceUnavailable'),
+      });
+    }
+  }, [ensureGeneratedImageAsset]);
+
+  const handleOpenGeneratedImageSource = useCallback(async (image: GeneratedImage) => {
+    setResultActionStatus(null);
+    const asset = await ensureGeneratedImageAsset(image);
+    if (!asset) return;
+    try {
+      const sourceLookup = await creatorStudioAssetService.getAssetSource(asset.id);
+      if (sourceLookup?.sourceAsset) {
+        await creatorStudioAssetService.revealAssetInFolder(sourceLookup.sourceAsset.id);
+        return;
+      }
+      setResultActionStatus({
+        type: 'success',
+        message: i18nService.t('creatorResultSourceCurrentSession'),
+      });
+    } catch {
+      setResultActionStatus({
+        type: 'error',
+        message: i18nService.t('creatorAssetSourceUnavailable'),
+      });
+    }
+  }, [ensureGeneratedImageAsset]);
+
+  const handleSaveGeneratedImageRecipe = useCallback(async (image: GeneratedImage) => {
+    setResultActionStatus(null);
+    const asset = await ensureGeneratedImageAsset(image);
+    if (!asset) return;
+    if (!asset.promptSpec) {
+      setResultActionStatus({
+        type: 'error',
+        message: i18nService.t('creatorResultRecipeUnavailable'),
+      });
+      return;
+    }
+    try {
+      await creatorStudioAssetService.createRecipe({
+        projectId: asset.projectId,
+        title: asset.fileName || i18nService.t('creatorRecipeDefaultTitle'),
+        sourcePromptAssetId: asset.parentPromptAssetId,
+        promptSpec: asset.promptSpec,
+        defaultOutput: {},
+        tags: ['result-card'],
+      });
+      setResultActionStatus({
+        type: 'success',
+        message: i18nService.t('creatorRecipeSaved'),
+      });
+    } catch {
+      setResultActionStatus({
+        type: 'error',
+        message: i18nService.t('creatorRecipeSaveFailed'),
+      });
+    }
+  }, [ensureGeneratedImageAsset]);
+
+  const handleQueueGeneratedImageBatch = useCallback(async (image: GeneratedImage) => {
+    setResultActionStatus(null);
+    const asset = await ensureGeneratedImageAsset(image);
+    if (!asset) return;
+    setResultActionStatus({
+      type: 'success',
+      message: i18nService.t('creatorResultBatchReady'),
+    });
+  }, [ensureGeneratedImageAsset]);
+
   const handlePostProcessGeneratedImage = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     if (!expandedImage) return;
@@ -1537,18 +1698,62 @@ const AssistantMessageItem: React.FC<{
                             : i18nService.t('creatorImageQuickEditAction')}
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => void handleAdoptGeneratedImage(image)}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground"
+                      >
+                        {i18nService.t('creatorResultAdoptFavorite')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleMakeGeneratedImageVariant(image)}
+                        disabled={!onContinue}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {i18nService.t('creatorResultMakeVariant')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleQueueGeneratedImageBatch(image)}
+                        disabled={!imageProcessingEnabled || !sessionId}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {i18nService.t('creatorResultBatchProcess')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveGeneratedImageRecipe(image)}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground"
+                      >
+                        {i18nService.t('creatorResultSaveRecipe')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleRevealGeneratedImage(image)}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground"
+                      >
+                        {i18nService.t('creatorResultOpenFile')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleOpenGeneratedImageSource(image)}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground"
+                      >
+                        {i18nService.t('creatorResultOpenSource')}
+                      </button>
                     </div>
                   </div>
                 </article>
               );
             })}
-            {postProcessingStatus && !expandedImage && (
+            {(postProcessingStatus || resultActionStatus) && !expandedImage && (
               <div className={`sm:col-span-2 rounded-lg px-3 py-2 text-xs ${
-                postProcessingStatus.type === 'success'
+                (postProcessingStatus ?? resultActionStatus)?.type === 'success'
                   ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                   : 'bg-red-500/10 text-red-600 dark:text-red-300'
               }`}>
-                {postProcessingStatus.message}
+                {(postProcessingStatus ?? resultActionStatus)?.message}
               </div>
             )}
           </div>
@@ -1629,13 +1834,13 @@ const AssistantMessageItem: React.FC<{
                     : i18nService.t('creatorImageQuickEditAction')}
                 </button>
               )}
-              {(imageDownloadStatus || postProcessingStatus) && (
+              {(imageDownloadStatus || postProcessingStatus || resultActionStatus) && (
                 <div className={`rounded-full px-3 py-1 text-xs shadow ${
-                  (postProcessingStatus ?? imageDownloadStatus)?.type === 'success'
+                  (postProcessingStatus ?? resultActionStatus ?? imageDownloadStatus)?.type === 'success'
                     ? 'bg-emerald-500/90 text-white'
                     : 'bg-red-500/90 text-white'
                 }`}>
-                  {(postProcessingStatus ?? imageDownloadStatus)?.message}
+                  {(postProcessingStatus ?? resultActionStatus ?? imageDownloadStatus)?.message}
                 </div>
               )}
             </div>
@@ -1874,6 +2079,7 @@ export const AssistantTurnBlock: React.FC<{
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
   onOpenFileChange?: (fileChangeId: string) => void;
+  onContinue?: (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]) => boolean | void | Promise<boolean | void>;
 }> = ({
   turn,
   sessionId,
@@ -1882,6 +2088,7 @@ export const AssistantTurnBlock: React.FC<{
   showTypingIndicator = false,
   showCopyButtons = true,
   onOpenFileChange,
+  onContinue,
 }) => {
   const visibleAssistantItems = getVisibleAssistantItems(turn.assistantItems);
 
@@ -2010,6 +2217,7 @@ export const AssistantTurnBlock: React.FC<{
                     resolveLocalFilePath={resolveLocalFilePath}
                     mapDisplayText={mapDisplayText}
                     showCopyButton={showCopyButtons && !hasToolGroupAfter}
+                    onContinue={onContinue}
                   />
                 );
               }
@@ -3211,6 +3419,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             showTypingIndicator
             showCopyButtons={!isStreaming}
             onOpenFileChange={handleOpenActivityFileChange}
+            onContinue={onContinue}
           />
         </div>
       );

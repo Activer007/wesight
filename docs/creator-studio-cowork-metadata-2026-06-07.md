@@ -30,6 +30,8 @@ Legacy top-level fields (`promptSpec`, `promptText`, `requestedAction`, `source`
 
 This preserves templateId, caseIds, PromptSpec, selected direction, batch task IDs, recipe IDs, and asset lineage even if the user edits the visible Cowork draft before confirming.
 
+Production run metadata also records `requestedAction` from `metadata.creatorStudio.action`, so PromptDraft and StartGeneration stay distinguishable after the user edits the visible Cowork draft.
+
 ## Compatibility
 
 - Existing `[Creator Studio]` text parsing remains in place for historical messages.
@@ -41,5 +43,6 @@ This preserves templateId, caseIds, PromptSpec, selected direction, batch task I
 Coverage now includes:
 
 - Metadata-first run and asset provenance when the visible draft text no longer contains Creator Studio blocks.
+- Distinct PromptDraft and StartGeneration actions in production run metadata.
 - Existing text fallback parsing for historical Creator Studio drafts.
 - Updated generation draft copy requiring user confirmation before execution.

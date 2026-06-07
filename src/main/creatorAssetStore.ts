@@ -10,6 +10,7 @@ import {
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
+  type CreatorCoworkAction,
   CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
@@ -258,6 +259,7 @@ type GeneratedImageInput = {
 };
 
 interface CreatorGeneratedImageContext {
+  requestedAction: CreatorCoworkAction | null;
   templateId: string | null;
   caseIds: string[];
   promptSpec: CreatorPromptSpecSnapshot | null;
@@ -943,6 +945,7 @@ const parseCreatorStudioSourceContextFromMetadata = (metadata?: CoworkMessageMet
     : normalizeMetadataStringArray(source.caseIds);
 
   return {
+    requestedAction: creatorStudio.action,
     templateId,
     caseIds,
     promptSpec,
@@ -1000,6 +1003,7 @@ export const parseCreatorStudioSourceContext = (text: string): CreatorStudioSour
     : parseLineList(text, 'caseIds');
 
   return {
+    requestedAction: null,
     templateId,
     caseIds,
     promptSpec,
@@ -3983,6 +3987,7 @@ export class CreatorAssetStore {
   private getImageAssetContextFromRun(run: CreatorProductionRunRecord | null): CreatorGeneratedImageContext {
     return run
       ? {
+        requestedAction: null,
         templateId: run.templateId,
         caseIds: run.caseIds,
         promptSpec: run.promptSpec,
@@ -3993,6 +3998,7 @@ export class CreatorAssetStore {
         selectedDirectionId: run.selectedDirectionId,
       }
       : {
+        requestedAction: null,
         templateId: null,
         caseIds: [],
         promptSpec: null,
@@ -4109,6 +4115,7 @@ export class CreatorAssetStore {
       promptSpecJson,
       context.promptText,
       JSON.stringify({
+        requestedAction: context.requestedAction,
         sourceTitle: context.sourceTitle,
         batchRunId: context.batchRunId,
         batchTaskId: context.batchTaskId,

@@ -287,12 +287,71 @@ describe('CreatorAssetStore', () => {
     expect(asset.variantOfAssetId).toBe('metadata-parent');
     expect(asset.selectedDirectionId).toBe('metadata-direction');
 
-    const run = db.prepare('SELECT prompt_text, prompt_spec FROM production_runs WHERE session_id = ?').get('session-metadata') as {
+    const run = db.prepare('SELECT prompt_text, prompt_spec, metadata FROM production_runs WHERE session_id = ?').get('session-metadata') as {
       prompt_text: string;
       prompt_spec: string;
+      metadata: string;
     };
     expect(run.prompt_text).toBe('Generate from metadata.');
     expect(JSON.parse(run.prompt_spec).templateId).toBe('metadata-template');
+    expect(JSON.parse(run.metadata).requestedAction).toBe(CreatorCoworkAction.StartGeneration);
+  });
+
+  test('keeps prompt draft and start generation actions distinct in run metadata', () => {
+    db.prepare('INSERT INTO cowork_sessions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('session-action-split', 'Creative Producer', 'running', 1, 1);
+
+    const draftRun = store.createRunFromCoworkUserMessage('session-action-split', {
+      id: 'message-user-draft',
+      type: 'user',
+      content: 'Draft text edited by the user.',
+      timestamp: 10,
+      sequence: 1,
+      metadata: {
+        creatorStudio: {
+          schemaVersion: 'creator.cowork.v1',
+          action: CreatorCoworkAction.PromptDraft,
+          promptSpec: {
+            schemaVersion: CreatorPromptSpecSchemaVersion.V1,
+            templateId: 'draft-template',
+          },
+          promptText: 'Draft only.',
+        },
+      },
+    });
+    expect(draftRun).not.toBeNull();
+
+    const generationRun = store.createRunFromCoworkUserMessage('session-action-split', {
+      id: 'message-user-generation',
+      type: 'user',
+      content: 'Start generation text edited by the user.',
+      timestamp: 20,
+      sequence: 2,
+      metadata: {
+        creatorStudio: {
+          schemaVersion: 'creator.cowork.v1',
+          action: CreatorCoworkAction.StartGeneration,
+          promptSpec: {
+            schemaVersion: CreatorPromptSpecSchemaVersion.V1,
+            templateId: 'generation-template',
+          },
+          promptText: 'Generate now.',
+        },
+      },
+    });
+    expect(generationRun).not.toBeNull();
+
+    const rows = db.prepare(`
+      SELECT template_id, metadata
+      FROM production_runs
+      WHERE session_id = ?
+      ORDER BY created_at ASC
+    `).all('session-action-split') as Array<{ template_id: string; metadata: string }>;
+    expect(rows.map((row) => row.template_id)).toEqual(['draft-template', 'generation-template']);
+    expect(rows.map((row) => JSON.parse(row.metadata).requestedAction)).toEqual([
+      CreatorCoworkAction.PromptDraft,
+      CreatorCoworkAction.StartGeneration,
+    ]);
   });
 
   test('projects image metadata from production asset metadata json', () => {
