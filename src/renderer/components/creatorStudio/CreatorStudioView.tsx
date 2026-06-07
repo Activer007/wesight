@@ -19,6 +19,7 @@ import {
   CreatorBoardCardKind,
   CreatorCoworkAction,
   CreatorImageAssetQuality,
+  CreatorImageMetadataStatus,
   CreatorImageProcessingJobStatus,
   CreatorImageProcessingOutputFormat,
   CreatorImageProcessingTaskStatus,
@@ -156,6 +157,16 @@ const CreatorImageToolBatchMode = {
 } as const;
 
 type CreatorImageToolBatchMode = typeof CreatorImageToolBatchMode[keyof typeof CreatorImageToolBatchMode];
+
+const CreatorImageToolTask = {
+  QuickEdit: 'quick_edit',
+  Compress: 'compress',
+  Webp: 'webp',
+  CoverResize: 'cover_resize',
+  Inspect: 'inspect',
+} as const;
+
+type CreatorImageToolTask = typeof CreatorImageToolTask[keyof typeof CreatorImageToolTask];
 
 const WINNING_ASSET_ADOPTION_STATUSES = new Set<string>([
   CreatorAssetAdoptionStatus.Adopted,
@@ -2604,6 +2615,7 @@ const CreatorImageToolsPanel: React.FC<{
     () => processableAssets.filter((asset) => selectedAssetIds.has(asset.id)),
     [processableAssets, selectedAssetIds]
   );
+  const selectedPrimaryAsset = selectedAssets[0] ?? null;
 
   const toggleAsset = (assetId: string) => {
     setSelectedAssetIds((ids) => {
@@ -2673,6 +2685,26 @@ const CreatorImageToolsPanel: React.FC<{
     setStatus(i18nService.t('creatorImageToolsSourceSelected'));
   };
 
+  const inspectSelectedImages = () => {
+    if (!selectedPrimaryAsset) {
+      setStatus(i18nService.t('creatorImageToolsTaskSelectFirst'));
+      return;
+    }
+    setStatus(formatCreatorImageToolMetadataSummary(selectedPrimaryAsset));
+  };
+
+  const openCoverResizeTask = () => {
+    if (!selectedPrimaryAsset) {
+      setStatus(i18nService.t('creatorImageToolsTaskSelectFirst'));
+      return;
+    }
+    if (selectedAssets.length === 1) {
+      setQuickEditAsset(selectedPrimaryAsset);
+      return;
+    }
+    void createBatch(CreatorImageToolBatchMode.Resize);
+  };
+
   return (
     <section className="grid gap-4 p-4 xl:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
       <div className="space-y-4">
@@ -2695,7 +2727,10 @@ const CreatorImageToolsPanel: React.FC<{
 
         <div className="rounded-lg border border-border bg-surface p-4">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold">{i18nService.t('creatorImageToolsSelectedTitle')}</h3>
+            <div>
+              <h3 className="text-sm font-semibold">{i18nService.t('creatorImageToolsTaskPanelTitle')}</h3>
+              <p className="mt-1 text-xs leading-5 text-muted">{i18nService.t('creatorImageToolsTaskPanelHint')}</p>
+            </div>
             <span className="rounded-md bg-surface-raised px-2 py-1 text-xs text-muted">
               {selectedAssets.length}
             </span>
@@ -2718,46 +2753,79 @@ const CreatorImageToolsPanel: React.FC<{
               {i18nService.t('creatorImageToolsClearSelection')}
             </button>
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <label className="space-y-1 text-xs text-secondary">
-              <span>{i18nService.t('creatorImageProcessingQuality')}</span>
-              <input value={quality} onChange={(event) => setQuality(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary" />
-            </label>
-            <label className="space-y-1 text-xs text-secondary">
-              <span>{i18nService.t('creatorImageBatchMaxWidth')}</span>
-              <input value={maxWidth} onChange={(event) => setMaxWidth(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary" />
-            </label>
-            <label className="space-y-1 text-xs text-secondary">
-              <span>{i18nService.t('creatorImageBatchMaxHeight')}</span>
-              <input value={maxHeight} onChange={(event) => setMaxHeight(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary" />
-            </label>
-          </div>
           <div className="mt-3 grid gap-2">
-            <button
-              type="button"
+            <ImageToolTaskCard
+              task={CreatorImageToolTask.QuickEdit}
+              title={i18nService.t('creatorImageToolsTaskQuickEditTitle')}
+              description={i18nService.t('creatorImageToolsTaskQuickEditHint')}
+              disabled={!selectedPrimaryAsset || isCreatingBatch || isImporting}
+              disabledHint={i18nService.t('creatorImageToolsTaskSelectFirst')}
+              onClick={() => {
+                if (selectedPrimaryAsset) setQuickEditAsset(selectedPrimaryAsset);
+              }}
+            >
+              <SparklesIcon className="h-4 w-4" />
+            </ImageToolTaskCard>
+            <ImageToolTaskCard
+              task={CreatorImageToolTask.Compress}
+              title={i18nService.t('creatorImageToolsTaskCompressTitle')}
+              description={i18nService.t('creatorImageToolsTaskCompressHint')}
+              disabled={selectedAssets.length === 0 || isCreatingBatch || isImporting}
+              disabledHint={i18nService.t('creatorImageToolsTaskSelectImages')}
+              onClick={() => void createBatch(CreatorImageToolBatchMode.Compress)}
+            >
+              <ArrowDownIcon className="h-4 w-4" />
+            </ImageToolTaskCard>
+            <ImageToolTaskCard
+              task={CreatorImageToolTask.Webp}
+              title={i18nService.t('creatorImageToolsTaskWebpTitle')}
+              description={i18nService.t('creatorImageToolsTaskWebpHint')}
               disabled={selectedAssets.length === 0 || isCreatingBatch || isImporting}
               onClick={() => void createBatch(CreatorImageToolBatchMode.Webp)}
-              className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+              disabledHint={i18nService.t('creatorImageToolsTaskSelectImages')}
             >
-              {i18nService.t('creatorImageBatchWebp')}
-            </button>
-            <button
-              type="button"
+              <DocumentDuplicateIcon className="h-4 w-4" />
+            </ImageToolTaskCard>
+            <ImageToolTaskCard
+              task={CreatorImageToolTask.CoverResize}
+              title={i18nService.t('creatorImageToolsTaskCoverResizeTitle')}
+              description={i18nService.t('creatorImageToolsTaskCoverResizeHint')}
               disabled={selectedAssets.length === 0 || isCreatingBatch || isImporting}
-              onClick={() => void createBatch(CreatorImageToolBatchMode.Compress)}
-              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              disabledHint={i18nService.t('creatorImageToolsTaskSelectImages')}
+              onClick={openCoverResizeTask}
             >
-              {i18nService.t('creatorImageBatchCompress')}
-            </button>
-            <button
-              type="button"
+              <PhotoIcon className="h-4 w-4" />
+            </ImageToolTaskCard>
+            <ImageToolTaskCard
+              task={CreatorImageToolTask.Inspect}
+              title={i18nService.t('creatorImageToolsTaskInspectTitle')}
+              description={i18nService.t('creatorImageToolsTaskInspectHint')}
               disabled={selectedAssets.length === 0 || isCreatingBatch || isImporting}
-              onClick={() => void createBatch(CreatorImageToolBatchMode.Resize)}
-              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              disabledHint={i18nService.t('creatorImageToolsTaskSelectImages')}
+              onClick={inspectSelectedImages}
             >
-              {i18nService.t('creatorImageBatchResize')}
-            </button>
+              <MagnifyingGlassIcon className="h-4 w-4" />
+            </ImageToolTaskCard>
           </div>
+          <details className="mt-3 rounded-lg border border-border bg-background p-3">
+            <summary className="cursor-pointer text-xs font-medium text-secondary">
+              {i18nService.t('creatorImageToolsAdvancedSettings')}
+            </summary>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <label className="space-y-1 text-xs text-secondary">
+                <span>{i18nService.t('creatorImageProcessingQuality')}</span>
+                <input value={quality} onChange={(event) => setQuality(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary" />
+              </label>
+              <label className="space-y-1 text-xs text-secondary">
+                <span>{i18nService.t('creatorImageBatchMaxWidth')}</span>
+                <input value={maxWidth} onChange={(event) => setMaxWidth(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary" />
+              </label>
+              <label className="space-y-1 text-xs text-secondary">
+                <span>{i18nService.t('creatorImageBatchMaxHeight')}</span>
+                <input value={maxHeight} onChange={(event) => setMaxHeight(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary" />
+              </label>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -2799,7 +2867,7 @@ const CreatorImageToolsPanel: React.FC<{
                       onClick={() => setQuickEditAsset(asset)}
                       className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
                     >
-                      {i18nService.t('creatorImageQuickEditAction')}
+                      {i18nService.t('creatorImageToolsTaskQuickEditTitle')}
                     </button>
                     <button
                       type="button"
@@ -2857,6 +2925,82 @@ const getImageToolsImportSummary = (
     .replace('{reused}', String(reused))
     .replace('{skipped}', String(skipped))
     .replace('{failures}', String(failures))
+);
+
+const formatCreatorImageToolFileSize = (bytes: number | null | undefined): string => {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
+    return i18nService.t('creatorImageUnknown');
+  }
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+};
+
+const getCreatorImageToolMetadataStatusLabel = (
+  asset: CreatorProductionAssetRecord
+): string => {
+  switch (asset.imageMetadata?.status) {
+    case CreatorImageMetadataStatus.Ready:
+      return i18nService.t('creatorImageMetadataReady');
+    case CreatorImageMetadataStatus.Missing:
+      return i18nService.t('creatorImageMetadataMissing');
+    case CreatorImageMetadataStatus.Corrupt:
+      return i18nService.t('creatorImageMetadataCorrupt');
+    case CreatorImageMetadataStatus.Unsupported:
+      return i18nService.t('creatorImageMetadataUnsupported');
+    default:
+      return i18nService.t('creatorImageMetadataNotLoaded');
+  }
+};
+
+const formatCreatorImageToolMetadataSummary = (
+  asset: CreatorProductionAssetRecord
+): string => {
+  const dimensions = asset.imageMetadata?.width && asset.imageMetadata.height
+    ? `${asset.imageMetadata.width} x ${asset.imageMetadata.height}`
+    : i18nService.t('creatorImageUnknown');
+  const format = asset.imageMetadata?.format?.toUpperCase()
+    || asset.mimeType
+    || i18nService.t('creatorImageUnknown');
+  return i18nService.t('creatorImageToolsInspectStatus')
+    .replace('{file}', asset.fileName)
+    .replace('{dimensions}', dimensions)
+    .replace('{format}', format)
+    .replace('{size}', formatCreatorImageToolFileSize(asset.imageMetadata?.fileSize))
+    .replace('{status}', getCreatorImageToolMetadataStatusLabel(asset));
+};
+
+const ImageToolTaskCard: React.FC<{
+  task: CreatorImageToolTask;
+  title: string;
+  description: string;
+  disabled: boolean;
+  disabledHint: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}> = ({ task, title, description, disabled, disabledHint, onClick, children }) => (
+  <button
+    type="button"
+    disabled={disabled}
+    onClick={onClick}
+    title={disabled ? disabledHint : title}
+    className="rounded-lg border border-border bg-background p-3 text-left transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-55"
+    data-creator-image-tool-task={task}
+  >
+    <div className="flex items-center gap-2 text-sm font-semibold">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        {children}
+      </span>
+      <span className="min-w-0 truncate">{title}</span>
+    </div>
+    <p className="mt-2 text-xs leading-5 text-muted">{disabled ? disabledHint : description}</p>
+  </button>
 );
 
 const Gallery: React.FC<{
