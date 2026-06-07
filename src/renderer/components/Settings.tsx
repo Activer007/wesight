@@ -4827,6 +4827,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
               onSnapshotChange={setAgentEnvironmentSnapshot}
               compact
             />
+            {window.electron?.platform === 'win32' && (
+              <div className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                {i18nService.t('coworkAgentEngineWslUnsupportedHint')}
+              </div>
+            )}
             {expandedCoworkAgentEngine !== coworkAgentEngine && renderCoworkAgentApplyProgress()}
             <div className="space-y-3">
               {COWORK_AGENT_ENGINE_OPTIONS.map(renderAgentEngineOption)}

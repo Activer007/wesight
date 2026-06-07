@@ -782,6 +782,14 @@ const getWindowsSearchPaths = (command: string): string[] => {
   return [];
 };
 
+const isWindowsNetworkPath = (candidate: string): boolean => (
+  /^\\\\/.test(candidate)
+);
+
+const isSafeWindowsFastProbePath = (candidate: string): boolean => (
+  !isWindowsNetworkPath(candidate)
+);
+
 const preferWindowsExecutable = (candidates: string[]): string | null => {
   if (candidates.length === 0) return null;
   return candidates.find((candidate) => /\.(cmd|exe|bat)$/i.test(candidate))
@@ -803,7 +811,7 @@ export const resolveCliCommand = async (
 ): Promise<CliCommandResolution> => {
   if (process.platform === 'win32') {
     for (const candidate of getWindowsSearchPaths(command)) {
-      if (candidate && fs.existsSync(candidate)) {
+      if (candidate && isSafeWindowsFastProbePath(candidate) && fs.existsSync(candidate)) {
         return { found: true, path: candidate, error: null, timedOut: false };
       }
     }
