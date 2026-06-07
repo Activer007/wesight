@@ -49,7 +49,6 @@ import {
 } from '../../utils/renderingGuards';
 import { getAgentEngineLabel } from '../agent/AgentEngineSelect';
 import Modal from '../common/Modal';
-import { ImageQuickEditDrawer } from '../creatorStudio/ImageQuickEditDrawer';
 import ComposeIcon from '../icons/ComposeIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
@@ -95,6 +94,8 @@ const AUTO_SCROLL_THRESHOLD = 120;
 const NAV_SCROLL_LOCK_DURATION = 800;
 const NAV_BOTTOM_SNAP_THRESHOLD = 20;
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
+
+const ImageQuickEditDrawer = React.lazy(() => import('../creatorStudio/ImageQuickEditDrawer').then((module) => ({ default: module.ImageQuickEditDrawer })));
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -1403,9 +1404,8 @@ const AssistantMessageItem: React.FC<{
     }
   }, [expandedImage, isDownloadingImage]);
 
-  const handlePostProcessGeneratedImage = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    if (!expandedImage || !sessionId || isPreparingPostProcessing) return;
+  const prepareGeneratedImagePostProcessing = useCallback(async (image: GeneratedImage) => {
+    if (!sessionId || isPreparingPostProcessing) return;
 
     setIsPreparingPostProcessing(true);
     setPostProcessingStatus(null);
@@ -1414,7 +1414,7 @@ const AssistantMessageItem: React.FC<{
         source: {
           sessionId,
           messageId: message.id,
-          filePath: expandedImage.image.path,
+          filePath: image.path,
         },
       });
       if (!result?.asset) {
@@ -1433,7 +1433,13 @@ const AssistantMessageItem: React.FC<{
     } finally {
       setIsPreparingPostProcessing(false);
     }
-  }, [expandedImage, isPreparingPostProcessing, message.id, sessionId]);
+  }, [isPreparingPostProcessing, message.id, sessionId]);
+
+  const handlePostProcessGeneratedImage = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!expandedImage) return;
+    void prepareGeneratedImagePostProcessing(expandedImage.image);
+  }, [expandedImage, prepareGeneratedImagePostProcessing]);
 
   const handlePostProcessingCompleted = useCallback((assets: CreatorProductionAssetRecord[]) => {
     setPostProcessingStatus({
@@ -1490,22 +1496,61 @@ const AssistantMessageItem: React.FC<{
               const src = encodeLocalFileSrc(image.path);
               const imageName = getGeneratedImageName(image);
               return (
-                <button
+                <article
                   key={`${image.path}-${imageName}`}
-                  type="button"
-                  onClick={() => openGeneratedImage(image, src, imageName)}
-                  className="group overflow-hidden rounded-lg border border-border bg-surface-raised text-left transition-colors hover:border-primary/70"
-                  aria-label={imageName}
+                  className="overflow-hidden rounded-lg border border-border bg-surface-raised"
                 >
-                  <img
-                    src={src}
-                    alt={imageName}
-                    className="block max-h-[420px] w-full object-contain bg-black/[0.03] dark:bg-white/[0.04]"
-                    loading="lazy"
-                  />
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => openGeneratedImage(image, src, imageName)}
+                    className="group block w-full text-left transition-colors hover:bg-surface"
+                    aria-label={imageName}
+                  >
+                    <img
+                      src={src}
+                      alt={imageName}
+                      className="block max-h-[420px] w-full object-contain bg-black/[0.03] dark:bg-white/[0.04]"
+                      loading="lazy"
+                    />
+                  </button>
+                  <div className="border-t border-border p-2">
+                    <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted">
+                      {i18nService.t('creatorResultNextActions')}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openGeneratedImage(image, src, imageName)}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground"
+                      >
+                        {i18nService.t('creatorResultOpenPreview')}
+                      </button>
+                      {imageProcessingEnabled && sessionId && (
+                        <button
+                          type="button"
+                          onClick={() => void prepareGeneratedImagePostProcessing(image)}
+                          disabled={isPreparingPostProcessing}
+                          className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-background hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isPreparingPostProcessing
+                            ? i18nService.t('creatorImageProcessingPreparing')
+                            : i18nService.t('creatorImageQuickEditAction')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </article>
               );
             })}
+            {postProcessingStatus && !expandedImage && (
+              <div className={`sm:col-span-2 rounded-lg px-3 py-2 text-xs ${
+                postProcessingStatus.type === 'success'
+                  ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-red-500/10 text-red-600 dark:text-red-300'
+              }`}>
+                {postProcessingStatus.message}
+              </div>
+            )}
           </div>
         )}
         {imageProcessingPlan && (
@@ -1595,14 +1640,16 @@ const AssistantMessageItem: React.FC<{
               )}
             </div>
           </div>
-          <div onClick={(event) => event.stopPropagation()}>
-            <ImageQuickEditDrawer
-              asset={quickEditAsset}
-              onClose={() => setQuickEditAsset(null)}
-              onCompleted={handlePostProcessingCompleted}
-            />
-          </div>
         </div>
+      )}
+      {quickEditAsset && (
+        <React.Suspense fallback={null}>
+          <ImageQuickEditDrawer
+            asset={quickEditAsset}
+            onClose={() => setQuickEditAsset(null)}
+            onCompleted={handlePostProcessingCompleted}
+          />
+        </React.Suspense>
       )}
       {showCopyButton && (
         <div className="flex items-center gap-1.5 mt-1">

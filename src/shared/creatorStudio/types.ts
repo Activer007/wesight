@@ -4,6 +4,7 @@ import type {
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
+  CreatorCoworkAction,
   CreatorCreativeModelOutputKind,
   CreatorImageAssetQuality,
   CreatorImageProcessingOutputFormat,
@@ -216,6 +217,44 @@ export interface CreatorStudioSourceContext {
   selectedDirectionId: string | null;
 }
 
+export interface CreatorStudioCoworkMetadata {
+  schemaVersion: 'creator.cowork.v1';
+  action: CreatorCoworkAction;
+  promptSpec: CreatorPromptSpecSnapshot | CreatorPromptSpecSnapshot[] | null;
+  promptText?: string | null;
+  activeSkillIds?: string[];
+  source?: {
+    sourceType?: string | null;
+    sourceMode?: string | null;
+    sourceId?: string | null;
+    sourceTitle?: string | null;
+    templateId?: string | null;
+    caseIds?: string[];
+    assetId?: string | null;
+    briefTitle?: string | null;
+    batchRunId?: string | null;
+    batchTaskId?: string | null;
+    taskIds?: string[];
+    taskCount?: number | null;
+    directionId?: string | null;
+    modelId?: string | null;
+    studio?: string | null;
+    templateIdForOutput?: string | null;
+    size?: string | null;
+    [key: string]: unknown;
+  };
+}
+
+export interface CreatorStudioMessageMetadata {
+  creatorStudio: CreatorStudioCoworkMetadata;
+  promptSpec?: CreatorPromptSpecSnapshot | CreatorPromptSpecSnapshot[] | null;
+  promptText?: string | null;
+  activeSkillIds?: string[];
+  requestedAction?: CreatorCoworkAction | string;
+  source?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface CreatorProductionRunRecord {
   id: string;
   source: CreatorProductionRunSource;
@@ -412,6 +451,7 @@ export interface CreatorLocalImageImportInput {
   projectId: string;
   mode?: CreatorLocalImageImportMode | null;
   collectionId?: string | null;
+  filePaths?: string[];
 }
 
 export interface CreatorLocalImageImportFailure {

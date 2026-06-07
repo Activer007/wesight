@@ -36,10 +36,11 @@ import {
 } from '../../utils/coworkActivity';
 import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
 import { getCompactFolderName } from '../../utils/path';
-import { ImageQuickEditDrawer } from '../creatorStudio/ImageQuickEditDrawer';
 import { CoworkActivitySidebarMode } from './activitySidebarConstants';
 import DiffView from './DiffView';
 import { getLiveCodeInitialLineLimit, shouldAutoFollowLiveCodeScroll } from './liveCodePreviewUtils';
+
+const ImageQuickEditDrawer = React.lazy(() => import('../creatorStudio/ImageQuickEditDrawer').then((module) => ({ default: module.ImageQuickEditDrawer })));
 
 interface CoworkActivitySidebarProps {
   snapshot: CoworkActivitySnapshot;
@@ -902,11 +903,15 @@ const CoworkActivitySidebar: React.FC<CoworkActivitySidebarProps> = ({
           {postProcessingStatus}
         </div>
       )}
-      <ImageQuickEditDrawer
-        asset={quickEditAsset}
-        onClose={() => setQuickEditAsset(null)}
-        onCompleted={handlePostProcessingCompleted}
-      />
+      {quickEditAsset && (
+        <React.Suspense fallback={null}>
+          <ImageQuickEditDrawer
+            asset={quickEditAsset}
+            onClose={() => setQuickEditAsset(null)}
+            onCompleted={handlePostProcessingCompleted}
+          />
+        </React.Suspense>
+      )}
 
       <Section
         title={i18nService.t('coworkActivityToolTimeline')}

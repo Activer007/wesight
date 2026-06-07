@@ -29,6 +29,7 @@ import {
   CreatorRecipeOutputKind,
   CreatorRecipeOutputSchemaVersion,
   CreatorStudioDefaultProjectId,
+  isCreatorCoworkAction,
   isCreatorImageMetadataStatus,
   isCreatorImageProcessingJobStatus,
   isCreatorImageProcessingOutputFormat,
@@ -112,6 +113,7 @@ import type {
   CreatorRecipeListInput,
   CreatorRecipeListResult,
   CreatorRecipeRecord,
+  CreatorStudioCoworkMetadata,
   CreatorStudioSourceContext,
   CreatorWorkspaceSnapshot,
 } from '../shared/creatorStudio/types';
@@ -895,11 +897,81 @@ const firstNonEmptyString = (...values: unknown[]): string | null => {
   return null;
 };
 
+const normalizeMetadataStringArray = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+);
+
 const getPromptSpecBatchString = (promptSpec: CreatorPromptSpecSnapshot | null, key: string): string | null => {
   const batch = promptSpec?.batch;
   if (!batch || typeof batch !== 'object' || Array.isArray(batch)) return null;
   const value = (batch as Record<string, unknown>)[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+};
+
+const getFirstPromptSpec = (
+  value: CreatorPromptSpecSnapshot | CreatorPromptSpecSnapshot[] | null | undefined
+): CreatorPromptSpecSnapshot | null => {
+  if (Array.isArray(value)) {
+    return value.find((item): item is CreatorPromptSpecSnapshot => isRecord(item)) ?? null;
+  }
+  return isRecord(value) ? value as CreatorPromptSpecSnapshot : null;
+};
+
+const getCreatorStudioCoworkMetadata = (metadata?: CoworkMessageMetadata): CreatorStudioCoworkMetadata | null => {
+  const creatorStudio = metadata?.creatorStudio;
+  if (!isRecord(creatorStudio)) return null;
+  if (creatorStudio.schemaVersion !== 'creator.cowork.v1') return null;
+  if (!isCreatorCoworkAction(creatorStudio.action)) return null;
+  return creatorStudio as unknown as CreatorStudioCoworkMetadata;
+};
+
+const parseCreatorStudioSourceContextFromMetadata = (metadata?: CoworkMessageMetadata): CreatorStudioSourceContext | null => {
+  const creatorStudio = getCreatorStudioCoworkMetadata(metadata);
+  if (!creatorStudio) return null;
+  const promptSpec = getFirstPromptSpec(creatorStudio.promptSpec);
+  const source = isRecord(creatorStudio.source) ? creatorStudio.source : {};
+  const templateId = firstNonEmptyString(
+    promptSpec?.templateId,
+    promptSpec?.source?.templateId,
+    source.templateId,
+    source.templateIdForOutput
+  );
+  const caseIds = normalizeMetadataStringArray(promptSpec?.caseIds).length > 0
+    ? normalizeMetadataStringArray(promptSpec?.caseIds)
+    : normalizeMetadataStringArray(source.caseIds);
+
+  return {
+    templateId,
+    caseIds,
+    promptSpec,
+    promptText: firstNonEmptyString(creatorStudio.promptText, metadata?.promptText) ?? '',
+    sourceTitle: firstNonEmptyString(promptSpec?.sourceTitle, promptSpec?.source?.sourceTitle, source.sourceTitle),
+    variantOfAssetId: firstNonEmptyString(promptSpec?.variantOfAssetId, promptSpec?.source?.variantOfAssetId, source.assetId),
+    promptVersionId: firstNonEmptyString(
+      typeof promptSpec?.promptVersionId === 'string' ? promptSpec.promptVersionId : null,
+      source.promptVersionId
+    ),
+    recipeId: firstNonEmptyString(
+      typeof promptSpec?.recipeId === 'string' ? promptSpec.recipeId : null,
+      source.recipeId
+    ),
+    selectedDirectionId: firstNonEmptyString(
+      promptSpec?.selectedCreativeDirectionId,
+      typeof promptSpec?.selectedDirectionId === 'string' ? promptSpec.selectedDirectionId : null,
+      source.directionId,
+      source.selectedDirectionId
+    ),
+    batchRunId: firstNonEmptyString(
+      getPromptSpecBatchString(promptSpec, 'batchRunId'),
+      source.batchRunId
+    ),
+    batchTaskId: firstNonEmptyString(
+      getPromptSpecBatchString(promptSpec, 'batchTaskId'),
+      source.batchTaskId
+    ),
+  };
 };
 
 const parseLineList = (text: string, key: string): string[] => {
@@ -993,7 +1065,7 @@ export class CreatorAssetStore {
   handleCoworkMessageInserted(input: { sessionId: string; message: CoworkMessage }): void {
     try {
       if (input.message.type === 'user') {
-        this.createRunFromPrompt(input.sessionId, input.message.content, input.message.timestamp);
+        this.createRunFromCoworkUserMessage(input.sessionId, input.message);
         return;
       }
       if (input.message.type === 'assistant') {
@@ -1008,6 +1080,14 @@ export class CreatorAssetStore {
     const context = parseCreatorStudioSourceContext(prompt);
     if (!context) return null;
     return this.createRun(sessionId, context, createdAt);
+  }
+
+  createRunFromCoworkUserMessage(sessionId: string, message: CoworkMessage): CreatorProductionRunRecord | null {
+    const metadataContext = parseCreatorStudioSourceContextFromMetadata(message.metadata);
+    if (metadataContext) {
+      return this.createRun(sessionId, metadataContext, message.timestamp);
+    }
+    return this.createRunFromPrompt(sessionId, message.content, message.timestamp);
   }
 
   getWorkspace(): CreatorWorkspaceSnapshot {
@@ -3955,6 +4035,22 @@ export class CreatorAssetStore {
   }
 
   private createRunFromLatestPrompt(sessionId: string, createdAt: number): CreatorProductionRunRecord | null {
+    const metadataRow = this.db.prepare(`
+      SELECT id, content, metadata, created_at, sequence
+      FROM cowork_messages
+      WHERE session_id = ?
+        AND type = 'user'
+        AND metadata IS NOT NULL
+      ORDER BY COALESCE(sequence, created_at) DESC, created_at DESC
+      LIMIT 8
+    `).all(sessionId) as Array<{ id: string; content: string; metadata: string | null; created_at: number; sequence?: number | null }>;
+    for (const row of metadataRow) {
+      const context = parseCreatorStudioSourceContextFromMetadata(parseJsonObject(row.metadata) as CoworkMessageMetadata);
+      if (context) {
+        return this.createRun(sessionId, context, row.created_at || createdAt);
+      }
+    }
+
     const row = this.db.prepare(`
       SELECT content, created_at
       FROM cowork_messages
@@ -3975,7 +4071,17 @@ export class CreatorAssetStore {
   ): CreatorProductionRunRecord {
     const id = uuidv4();
     const caseIdsJson = JSON.stringify(context.caseIds);
-    const promptSpecJson = context.promptSpec ? JSON.stringify(context.promptSpec) : null;
+    const promptSpecForRun = context.promptSpec && (context.batchRunId || context.batchTaskId)
+      ? {
+        ...context.promptSpec,
+        batch: {
+          ...(isRecord(context.promptSpec.batch) ? context.promptSpec.batch : {}),
+          ...(context.batchRunId ? { batchRunId: context.batchRunId } : {}),
+          ...(context.batchTaskId ? { batchTaskId: context.batchTaskId } : {}),
+        },
+      }
+      : context.promptSpec;
+    const promptSpecJson = promptSpecForRun ? JSON.stringify(promptSpecForRun) : null;
     this.db.prepare(`
       INSERT INTO production_runs (
         id, source, domain, status, session_id, provider, model, agent_id,

@@ -225,10 +225,10 @@ export const renderCreatorCoworkDraft = ({
     return [
       '[Creator Studio]',
       '',
-      '请作为 Creative Producer 执行下面的创意生产 brief。优先保持 PromptSpec 的结构化约束，不要丢失 templateId、caseIds、风格、场景和负向要求。',
+      '这是一份 Creator Studio 草稿。用户确认发送后，请作为 Creative Producer 执行下面的创意生产 brief。优先保持 PromptSpec 的结构化约束，不要丢失 templateId、caseIds、风格、场景和负向要求。',
       requestImageGeneration
-        ? '执行目标：如果 Seedream skill 和 API 配置可用，请优先生成图片；如果不可用，请不要中断，先输出可复制 prompt 和替代执行步骤。'
-        : '执行目标：先基于 brief 输出专业 prompt、创意方向或可执行方案。',
+        ? '执行目标：用户确认后开始生成。如果 Seedream skill 和 API 配置可用，请优先生成图片；如果不可用，请不要中断，先输出可复制 prompt 和替代执行步骤。'
+        : '执行目标：用户确认后先基于 brief 输出专业 prompt、创意方向或可执行方案。',
       '',
       `来源：${promptSpec.sourceTitle}`,
       `templateId：${promptSpec.templateId || 'none'}`,
@@ -284,10 +284,10 @@ export const renderCreatorCoworkDraft = ({
   return [
     '[Creator Studio]',
     '',
-    'Act as Creative Producer and execute the creative production brief below. Preserve the structured PromptSpec constraints, including templateId, caseIds, styles, scenes, and negative requirements.',
+    'This is a Creator Studio draft. After the user confirms sending, act as Creative Producer and execute the creative production brief below. Preserve the structured PromptSpec constraints, including templateId, caseIds, styles, scenes, and negative requirements.',
     requestImageGeneration
-      ? 'Execution goal: if the Seedream skill and API configuration are available, generate the image first; if not, do not block and produce a copy-ready prompt plus fallback steps.'
-      : 'Execution goal: produce a professional prompt, creative direction, or executable plan from the brief first.',
+      ? 'Execution goal: start generation after the user confirms. If the Seedream skill and API configuration are available, generate the image first; if not, do not block and produce a copy-ready prompt plus fallback steps.'
+      : 'Execution goal: after the user confirms, produce a professional prompt, creative direction, or executable plan from the brief first.',
     '',
     `Source: ${promptSpec.sourceTitle}`,
     `templateId: ${promptSpec.templateId || 'none'}`,
