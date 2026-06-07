@@ -2029,11 +2029,11 @@ const CreatorStart: React.FC<{
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
           className={`rounded-lg border border-dashed p-4 transition-colors ${
-            isDragging ? 'border-primary bg-primary/5' : 'border-border bg-surface'
+            isDragging ? 'border-blue-500 bg-blue-500/10' : 'border-blue-400/70 bg-blue-500/5'
           }`}
         >
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-muted">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-300">
               <PhotoIcon className="h-5 w-5" />
             </div>
             <div className="min-w-0">
@@ -2063,37 +2063,6 @@ const CreatorStart: React.FC<{
       </div>
 
       <div className="space-y-4">
-        <StartSection
-          title={i18nService.t('creatorStartRecentAssets')}
-          actionLabel={i18nService.t('creatorStartOpenAssets')}
-          onAction={onOpenAssets}
-        >
-          {recent.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-background p-4 text-sm text-muted">
-              {i18nService.t('creatorStartNoRecentAssets')}
-            </div>
-          ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {recent.map((asset) => (
-                <button
-                  key={asset.id}
-                  type="button"
-                  onClick={() => onUseAsset(asset)}
-                  className="min-w-0 rounded-lg border border-border bg-background p-3 text-left transition-colors hover:bg-surface-raised"
-                >
-                  <div className="flex items-center gap-2">
-                    <PhotoIcon className="h-4 w-4 shrink-0 text-muted" />
-                    <span className="truncate text-sm font-medium">{asset.fileName}</span>
-                  </div>
-                  <div className="mt-2 truncate text-xs text-muted">
-                    {asset.promptSpec?.sourceTitle ?? (asset.promptText.slice(0, 80) || i18nService.t('creatorStartAssetNoPrompt'))}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </StartSection>
-
         <StartSection
           title={i18nService.t('creatorStartRecommendedInspiration')}
           actionLabel={i18nService.t('creatorStartOpenInspiration')}
@@ -2131,6 +2100,44 @@ const CreatorStart: React.FC<{
           </div>
         </StartSection>
 
+        <StartSection
+          title={i18nService.t('creatorStartRecentAssets')}
+          actionLabel={i18nService.t('creatorStartOpenAssets')}
+          onAction={onOpenAssets}
+        >
+          {recent.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border bg-background p-4 text-sm text-muted">
+              {i18nService.t('creatorStartNoRecentAssets')}
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {recent.map((asset) => {
+                const preview = getImageToolAssetPreview(asset);
+                return (
+                <button
+                  key={asset.id}
+                  type="button"
+                  onClick={() => onUseAsset(asset)}
+                  className="min-w-0 overflow-hidden rounded-lg border border-border bg-background text-left transition-colors hover:bg-surface-raised"
+                >
+                  <PlaceholderImage
+                    src={preview.src}
+                    alt={preview.alt}
+                    className="h-24 w-full border-b border-border bg-surface-raised"
+                  />
+                  <div className="p-3">
+                    <div className="truncate text-sm font-medium">{asset.fileName}</div>
+                    <div className="mt-2 truncate text-xs text-muted">
+                      {asset.promptSpec?.sourceTitle ?? (asset.promptText.slice(0, 80) || i18nService.t('creatorStartAssetNoPrompt'))}
+                    </div>
+                  </div>
+                </button>
+              );
+              })}
+            </div>
+          )}
+        </StartSection>
+
         <StartSection title={i18nService.t('creatorStartAdvancedEntrypoints')}>
           <div className="flex flex-wrap gap-2">
             <StartShortcut label={i18nService.t('creatorInspirationTab')} onClick={onOpenGallery} />
@@ -2153,11 +2160,19 @@ const StartTaskCard: React.FC<{
   <button
     type="button"
     onClick={onClick}
-    className="min-w-0 rounded-lg border border-border bg-background p-3 text-left transition-colors hover:bg-surface-raised"
+    className={`min-w-0 rounded-lg border p-3 text-left transition-colors ${
+      action === CreatorStartAction.FindInspiration
+        ? 'border-primary/50 bg-primary/5 shadow-sm ring-1 ring-primary/10 hover:border-primary/70 hover:bg-primary/10'
+        : 'border-border bg-background hover:bg-surface-raised'
+    }`}
     data-creator-start-action={action}
   >
     <div className="flex items-center gap-2 text-sm font-semibold">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
+        action === CreatorStartAction.FindInspiration
+          ? 'bg-primary/15 text-primary'
+          : 'bg-primary/10 text-primary'
+      }`}>
         {icon}
       </span>
       <span className="min-w-0 truncate">{title}</span>
@@ -2250,7 +2265,7 @@ const CreatorImageToolsPanel: React.FC<{
     };
   }, [onAssetsChanged, onInitialFilePathsConsumed, onRefreshJobs]);
 
-  const processableAssets = useMemo(() => (
+  const imageToolAssets = useMemo(() => (
     assets
       .filter((asset) => (
         asset.kind === CreatorProductionAssetKind.Image
@@ -2258,6 +2273,11 @@ const CreatorImageToolsPanel: React.FC<{
       ))
       .slice(0, 120)
   ), [assets]);
+
+  const selectableImageToolAssets = useMemo(
+    () => imageToolAssets.filter(hasProcessableImageToolSource),
+    [imageToolAssets]
+  );
 
   useEffect(() => {
     if (!projectId || initialFilePaths.length === 0) {
@@ -2306,12 +2326,17 @@ const CreatorImageToolsPanel: React.FC<{
   }, [initialFilePaths, projectId]);
 
   const selectedAssets = useMemo(
-    () => processableAssets.filter((asset) => selectedAssetIds.has(asset.id)),
-    [processableAssets, selectedAssetIds]
+    () => selectableImageToolAssets.filter((asset) => selectedAssetIds.has(asset.id)),
+    [selectableImageToolAssets, selectedAssetIds]
   );
   const selectedPrimaryAsset = selectedAssets[0] ?? null;
 
   const toggleAsset = (assetId: string) => {
+    const asset = imageToolAssets.find((item) => item.id === assetId);
+    if (!asset || !hasProcessableImageToolSource(asset)) {
+      setStatus(i18nService.t('creatorImageToolsAssetNotReady'));
+      return;
+    }
     setSelectedAssetIds((ids) => {
       const next = new Set(ids);
       if (next.has(assetId)) {
@@ -2324,7 +2349,7 @@ const CreatorImageToolsPanel: React.FC<{
   };
 
   const selectRecent = () => {
-    setSelectedAssetIds(new Set(processableAssets.slice(0, 12).map((asset) => asset.id)));
+    setSelectedAssetIds(new Set(selectableImageToolAssets.slice(0, 12).map((asset) => asset.id)));
   };
 
   const createBatch = async (mode: CreatorImageToolBatchMode) => {
@@ -2547,38 +2572,54 @@ const CreatorImageToolsPanel: React.FC<{
               {i18nService.t('creatorAssetsRefresh')}
             </button>
           </div>
-          {processableAssets.length === 0 ? (
+          {imageToolAssets.length === 0 ? (
             <div className="flex min-h-44 items-center justify-center p-4 text-center text-sm text-muted">
               {i18nService.t('creatorImageToolsNoProcessableAssets')}
             </div>
           ) : (
             <div className="grid gap-2 p-3 md:grid-cols-2 2xl:grid-cols-3">
-              {processableAssets.map((asset) => (
-                <div key={asset.id} className="rounded-lg border border-border bg-background p-3">
-                  <label className="flex items-start gap-2">
+              {imageToolAssets.map((asset) => {
+                const preview = getImageToolAssetPreview(asset);
+                const isAssetProcessable = hasProcessableImageToolSource(asset);
+                return (
+                <div key={asset.id} className={`rounded-lg border p-3 ${isAssetProcessable ? 'border-border bg-background' : 'border-border/70 bg-background/60 opacity-80'}`}>
+                  <label className="flex items-start gap-3">
                     <input
                       type="checkbox"
                       checked={selectedAssetIds.has(asset.id)}
                       onChange={() => toggleAsset(asset.id)}
+                      disabled={!isAssetProcessable}
                       className="mt-1 h-4 w-4 rounded border-border"
+                    />
+                    <PlaceholderImage
+                      src={preview.src}
+                      alt={preview.alt}
+                      className="h-16 w-16 shrink-0 rounded-md border border-border bg-surface-raised"
                     />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">{asset.fileName}</div>
                       <div className="mt-1 truncate text-xs text-muted">{asset.filePath}</div>
+                      {!isAssetProcessable && (
+                        <div className="mt-2 text-[11px] leading-4 text-amber-600 dark:text-amber-300">
+                          {i18nService.t('creatorImageToolsAssetNotReady')}
+                        </div>
+                      )}
                     </div>
                   </label>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => setQuickEditAsset(asset)}
-                      className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                      disabled={!isAssetProcessable}
+                      className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {i18nService.t('creatorImageToolsTaskQuickEditTitle')}
                     </button>
                     <button
                       type="button"
                       onClick={() => void revealAsset(asset)}
-                      className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                      disabled={!hasImageToolLocalRevealSource(asset)}
+                      className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {i18nService.t('creatorAssetReveal')}
                     </button>
@@ -2593,7 +2634,8 @@ const CreatorImageToolsPanel: React.FC<{
                     )}
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </div>
@@ -2632,6 +2674,77 @@ const getImageToolsImportSummary = (
     .replace('{skipped}', String(skipped))
     .replace('{failures}', String(failures))
 );
+
+const isCreatorVirtualImagePath = (value: string | null | undefined): boolean => (
+  Boolean(value?.trim().startsWith('creator://'))
+);
+
+const hasImageToolLocalRevealSource = (asset: CreatorProductionAssetRecord): boolean => (
+  Boolean(
+    (asset.filePath && !isCreatorVirtualImagePath(asset.filePath))
+    || (asset.imageSource?.localPath && !isCreatorVirtualImagePath(asset.imageSource.localPath))
+    || asset.imageSource?.originalPath
+    || asset.imageSource?.thumbnailPath
+  )
+);
+
+const hasBundledCreatorImageThumbnail = (value: string | null | undefined): boolean => {
+  const normalized = value?.trim().replace(/\\/g, '/') ?? '';
+  return normalized.startsWith('./creator-studio/images/')
+    || normalized.startsWith('/creator-studio/images/')
+    || normalized.startsWith('creator-studio/images/');
+};
+
+const hasProcessableImageToolSource = (asset: CreatorProductionAssetRecord): boolean => (
+  asset.kind === CreatorProductionAssetKind.Image
+  && asset.status === CreatorProductionAssetStatus.Ready
+  && Boolean(
+    (asset.filePath && !isCreatorVirtualImagePath(asset.filePath))
+    || (asset.imageSource?.localPath && !isCreatorVirtualImagePath(asset.imageSource.localPath))
+    || asset.imageSource?.originalPath
+    || asset.imageSource?.thumbnailPath
+    || asset.imageSource?.originalUrl
+    || hasBundledCreatorImageThumbnail(asset.imageSource?.thumbnailUrl)
+  )
+);
+
+const getImageToolAssetCasePreview = (asset: CreatorProductionAssetRecord): CreatorStudioCase | null => {
+  for (const caseId of asset.caseIds) {
+    const item = cases.find((candidate) => candidate.id === caseId || `case-${candidate.sourceCaseId}` === caseId);
+    if (item?.image) return item;
+  }
+  const sourceId = asset.promptSpec?.sourceId ?? asset.promptSpec?.source?.sourceId ?? null;
+  if (sourceId) {
+    const item = cases.find((candidate) => candidate.id === sourceId || `case-${candidate.sourceCaseId}` === sourceId);
+    if (item?.image) return item;
+  }
+  return null;
+};
+
+const toImageToolPreviewSrc = (value: string | null | undefined): string | null => {
+  const raw = value?.trim();
+  if (!raw || isCreatorVirtualImagePath(raw)) return null;
+  if (/^(https?:|data:|localfile:)/i.test(raw)) return raw;
+  if (/^file:\/\//i.test(raw) || raw.startsWith('/')) return encodeLocalFileSrc(raw);
+  return raw;
+};
+
+const getImageToolAssetPreview = (
+  asset: CreatorProductionAssetRecord
+): { src: string | null; alt: string } => {
+  const source = asset.imageSource;
+  const src = toImageToolPreviewSrc(source?.thumbnailPath)
+    ?? toImageToolPreviewSrc(source?.localPath)
+    ?? toImageToolPreviewSrc(source?.thumbnailUrl)
+    ?? toImageToolPreviewSrc(source?.originalPath)
+    ?? toImageToolPreviewSrc(asset.filePath);
+  if (src) return { src, alt: asset.fileName };
+  const casePreview = getImageToolAssetCasePreview(asset);
+  return {
+    src: casePreview?.image ?? null,
+    alt: casePreview?.imageAlt || casePreview?.title || asset.fileName,
+  };
+};
 
 const getImageToolCompressionOutputFormat = (
   asset: CreatorProductionAssetRecord
