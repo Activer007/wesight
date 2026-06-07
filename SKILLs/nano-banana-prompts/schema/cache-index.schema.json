@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wesight.ai/schemas/nano-banana-cache-index.schema.json",
+  "title": "WeSight Nano Banana read-only cache index",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "exportedAt",
+    "itemCount",
+    "cachedPromptCount",
+    "promptFiles",
+    "indexItems"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "exportedAt": {
+      "type": "integer"
+    },
+    "source": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "status": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "itemCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cachedPromptCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "promptFiles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "indexItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "sourceId",
+          "sourcePromptId",
+          "title",
+          "description",
+          "authorName",
+          "categories",
+          "likes",
+          "resultsCount",
+          "page",
+          "searchTerms"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "sourcePromptId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "authorName": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "publishedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "likes": {
+            "type": "number"
+          },
+          "resultsCount": {
+            "type": "number"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "searchTerms": {
+            "type": "string"
+          },
+          "thumbnailUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "needReferenceImages": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

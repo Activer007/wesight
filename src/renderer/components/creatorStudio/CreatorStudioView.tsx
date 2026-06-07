@@ -15,10 +15,12 @@ import {
 import {
   CreatorAssetAdoptionStatus,
   CreatorBatchTaskStatus,
+  CreatorBoardCardKind,
   CreatorImageAssetQuality,
   CreatorImageProcessingJobStatus,
   CreatorImageProcessingTaskStatus,
   CreatorProductionAssetKind,
+  CreatorProductionAssetSource,
   CreatorStudioDefaultProjectId,
 } from '@shared/creatorStudio/constants';
 import type {
@@ -35,6 +37,11 @@ import type {
   CreatorRecipeRecord,
   CreatorWorkspaceSnapshot,
 } from '@shared/creatorStudio/types';
+import {
+  NanoBananaPromptImportType,
+  NanoBananaUsageEventType,
+} from '@shared/nanoBanana/constants';
+import type { NanoBananaPrompt } from '@shared/nanoBanana/types';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -44,6 +51,7 @@ import manifestData from '../../data/creatorStudio/manifest.json';
 import styleLibraryData from '../../data/creatorStudio/style-library.json';
 import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
+import { nanoBananaService } from '../../services/nanoBanana';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
@@ -85,10 +93,15 @@ import {
   selectCreatorCreativeDirection,
 } from '../../utils/creatorStudio';
 import { getCreatorTemplateFieldSchema } from '../../utils/creatorTemplateFields';
+import {
+  type NanoCreatorPromptSpecConversion,
+  nanoPromptToCreatorPromptSpec,
+} from '../../utils/nanoPromptSpecAdapter';
 import { CreatorAssetGrid } from './CreatorAssetGrid';
 import { CreatorBatchPanel } from './CreatorBatchPanel';
 import { CreatorBoard } from './CreatorBoard';
 import { CreatorImageProcessingBatchPanel } from './CreatorImageProcessingBatchPanel';
+import { NanoLibraryView } from './nano/NanoLibraryView';
 
 const cases = casesData as CreatorStudioCase[];
 const styleLibrary = styleLibraryData as CreatorStudioStyleLibrary;
@@ -96,6 +109,7 @@ const manifest = manifestData as CreatorStudioManifest;
 
 const CreatorStudioTab = {
   Gallery: 'gallery',
+  NanoLibrary: 'nano_library',
   Templates: 'templates',
   Builder: 'builder',
   Assets: 'assets',
@@ -213,6 +227,22 @@ const copyText = async (text: string) => {
   await navigator.clipboard.writeText(text);
   dispatchToast(i18nService.t('copied'));
 };
+
+const getNanoPromptMetadata = (prompt: NanoBananaPrompt): Record<string, unknown> => ({
+  nano: {
+    sourceId: prompt.sourceId,
+    promptId: prompt.id,
+    sourcePromptId: prompt.sourcePromptId,
+    sourceUrl: prompt.sourceLink ?? null,
+    sourcePlatform: prompt.sourcePlatform ?? null,
+    authorName: prompt.author?.name ?? null,
+    needReferenceImages: prompt.needReferenceImages,
+  },
+});
+
+const getNanoBatchSizes = (aspectRatio?: string): string[] => (
+  [...new Set([aspectRatio || '1:1', '16:9', '9:16'])].slice(0, 2)
+);
 
 const encodeTextBase64 = (text: string): string => {
   const bytes = new TextEncoder().encode(text);
@@ -696,6 +726,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       templateGuidance: Array.isArray(asset.promptSpec?.templateGuidance) ? asset.promptSpec.templateGuidance : [],
       templatePitfalls: Array.isArray(asset.promptSpec?.templatePitfalls) ? asset.promptSpec.templatePitfalls : [],
       variantOfAssetId: asset.id,
+      provenance: asset.promptSpec?.provenance as CreatorPromptSpec['provenance'],
     });
     setBuilderForm({
       taskType: typeof asset.promptSpec?.taskType === 'string' ? asset.promptSpec.taskType : '',
@@ -746,6 +777,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       scenes: Array.isArray(promptSpec.scenes) ? promptSpec.scenes : [],
       templateGuidance: Array.isArray(promptSpec.templateGuidance) ? promptSpec.templateGuidance : [],
       templatePitfalls: Array.isArray(promptSpec.templatePitfalls) ? promptSpec.templatePitfalls : [],
+      provenance: promptSpec.provenance as CreatorPromptSpec['provenance'],
     });
     setBuilderForm(buildFormFromPromptSpec(promptSpec));
     setActiveTab(CreatorStudioTab.Builder);
@@ -771,6 +803,10 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     }
     if (seed.sourceMode === CreatorPromptSourceMode.AssetVariant) {
       setActiveTab(CreatorStudioTab.Assets);
+      return;
+    }
+    if (seed.sourceMode === CreatorPromptSourceMode.NanoRemix) {
+      setActiveTab(CreatorStudioTab.NanoLibrary);
     }
   };
 
@@ -834,7 +870,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     promptText: string,
     materials: CreatorBuilderMaterial[],
     requestImageGeneration = false
-  ) => {
+  ): Promise<boolean> => {
     setIsSendingToCowork(true);
     try {
       dispatch(setActiveSkillIds(installedRecommendedSkillIds));
@@ -867,8 +903,10 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
           },
         }),
       });
+      return true;
     } catch {
       dispatchToast(i18nService.t('creatorSendToCoworkFailed'));
+      return false;
     } finally {
       setIsSendingToCowork(false);
     }
@@ -894,6 +932,233 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     } catch (error) {
       dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorProjectSwitchFailed'));
     }
+  };
+
+  const getNanoConversion = (prompt: NanoBananaPrompt): NanoCreatorPromptSpecConversion => (
+    nanoPromptToCreatorPromptSpec(prompt, i18nService.t('creatorBlankBuilder'))
+  );
+
+  const recordNanoCreatorAction = async ({
+    prompt,
+    importType,
+    eventType,
+    projectId,
+    targetId,
+    metadata = {},
+  }: {
+    prompt: NanoBananaPrompt;
+    importType: NanoBananaPromptImportType;
+    eventType: NanoBananaUsageEventType;
+    projectId?: string | null;
+    targetId?: string | null;
+    metadata?: Record<string, unknown>;
+  }) => {
+    await Promise.allSettled([
+      nanoBananaService.recordImport({
+        sourceId: prompt.sourceId,
+        promptId: prompt.id,
+        sourcePromptId: prompt.sourcePromptId,
+        importType,
+        projectId,
+        targetId,
+        metadata,
+      }),
+      nanoBananaService.recordUsage({
+        sourceId: prompt.sourceId,
+        promptId: prompt.id,
+        sourcePromptId: prompt.sourcePromptId,
+        eventType,
+        importType,
+        projectId,
+        targetId,
+        metadata,
+      }),
+    ]);
+  };
+
+  const useNanoPromptInBuilder = async (prompt: NanoBananaPrompt) => {
+    const conversion = getNanoConversion(prompt);
+    setBuilderSeed(conversion.seed);
+    setBuilderForm(conversion.form);
+    setActiveTab(CreatorStudioTab.Builder);
+    dispatchToast(i18nService.t('nanoLibraryUsedInBuilder'));
+    await recordNanoCreatorAction({
+      prompt,
+      importType: NanoBananaPromptImportType.Builder,
+      eventType: NanoBananaUsageEventType.UseInBuilder,
+      projectId: currentProjectId || workspace?.currentProjectId || null,
+      targetId: conversion.promptSpec.sourceId,
+      metadata: getNanoPromptMetadata(prompt),
+    });
+  };
+
+  const saveNanoPromptAsRecipe = async (prompt: NanoBananaPrompt) => {
+    const projectId = currentProjectId || workspace?.currentProjectId;
+    if (!projectId) {
+      dispatchToast(i18nService.t('creatorWorkspaceLoadFailed'));
+      return;
+    }
+    const conversion = getNanoConversion(prompt);
+    try {
+      const recipe = await creatorStudioAssetService.createRecipe({
+        projectId,
+        title: prompt.title,
+        description: prompt.description || null,
+        promptSpec: toCreatorPromptSpecSnapshot(conversion.promptSpec),
+        defaultRuntime: {
+          activeSkillIds: installedRecommendedSkillIds,
+          requestImageGeneration: false,
+        },
+        defaultOutput: {
+          aspectRatio: conversion.promptSpec.constraints.aspectRatio ?? '',
+          outputCount: conversion.promptSpec.outputCount,
+        },
+        tags: ['nano', ...prompt.promptCategories, ...prompt.tags, ...prompt.tagsZh],
+      });
+      await loadRecipes(projectId);
+      dispatchToast(i18nService.t('creatorRecipeSaved'));
+      await recordNanoCreatorAction({
+        prompt,
+        importType: NanoBananaPromptImportType.Recipe,
+        eventType: NanoBananaUsageEventType.SaveAsRecipe,
+        projectId,
+        targetId: recipe.id,
+        metadata: getNanoPromptMetadata(prompt),
+      });
+    } catch (error) {
+      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorRecipeSaveFailed'));
+    }
+  };
+
+  const saveNanoPromptAsPromptAsset = async (prompt: NanoBananaPrompt) => {
+    const projectId = currentProjectId || workspace?.currentProjectId;
+    if (!projectId) {
+      dispatchToast(i18nService.t('creatorWorkspaceLoadFailed'));
+      return;
+    }
+    const conversion = getNanoConversion(prompt);
+    try {
+      const asset = await creatorStudioAssetService.createPromptAsset({
+        projectId,
+        title: prompt.title,
+        promptText: renderCreatorPrompt(conversion.promptSpec),
+        promptSpec: toCreatorPromptSpecSnapshot(conversion.promptSpec),
+        source: CreatorProductionAssetSource.NanoPrompt,
+        licenseNote: conversion.licenseNote,
+        usageNote: conversion.usageNote,
+        tags: ['nano', ...prompt.promptCategories, ...prompt.tags, ...prompt.tagsZh],
+        metadata: getNanoPromptMetadata(prompt),
+      });
+      dispatchToast(i18nService.t('creatorPromptAssetSaved'));
+      await loadProjectAssets(projectId);
+      await recordNanoCreatorAction({
+        prompt,
+        importType: NanoBananaPromptImportType.PromptAsset,
+        eventType: NanoBananaUsageEventType.SaveAsPromptAsset,
+        projectId,
+        targetId: asset?.id ?? null,
+        metadata: getNanoPromptMetadata(prompt),
+      });
+    } catch (error) {
+      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorPromptAssetSaveFailed'));
+    }
+  };
+
+  const addNanoPromptToBoard = async (prompt: NanoBananaPrompt) => {
+    const projectId = currentProjectId || workspace?.currentProjectId;
+    if (!projectId) {
+      dispatchToast(i18nService.t('creatorWorkspaceLoadFailed'));
+      return;
+    }
+    const activeBoardWorkspace = boardWorkspace ?? await loadBoardWorkspace(projectId);
+    if (!activeBoardWorkspace.currentBoardId) {
+      dispatchToast(i18nService.t('creatorBoardLoadFailed'));
+      return;
+    }
+    const conversion = getNanoConversion(prompt);
+    try {
+      const card = await creatorStudioAssetService.addBoardCard({
+        boardId: activeBoardWorkspace.currentBoardId,
+        kind: CreatorBoardCardKind.Prompt,
+        title: prompt.title,
+        promptText: renderCreatorPrompt(conversion.promptSpec),
+        promptSpec: toCreatorPromptSpecSnapshot(conversion.promptSpec),
+        groupName: i18nService.t('creatorNanoLibraryTab'),
+        notes: prompt.description,
+        metadata: getNanoPromptMetadata(prompt),
+      });
+      await loadBoardWorkspace(projectId);
+      dispatchToast(i18nService.t('nanoLibraryAddedToBoard'));
+      await recordNanoCreatorAction({
+        prompt,
+        importType: NanoBananaPromptImportType.BoardCard,
+        eventType: NanoBananaUsageEventType.AddToBoard,
+        projectId,
+        targetId: card?.id ?? null,
+        metadata: getNanoPromptMetadata(prompt),
+      });
+    } catch (error) {
+      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorBoardAddFailed'));
+    }
+  };
+
+  const sendNanoPromptToCowork = async (prompt: NanoBananaPrompt) => {
+    const conversion = getNanoConversion(prompt);
+    const promptText = renderCreatorPrompt(conversion.promptSpec);
+    const sent = await sendToCowork(conversion.promptSpec, promptText, [], false);
+    if (!sent) return;
+    dispatchToast(i18nService.t('nanoLibrarySentToCowork'));
+    await recordNanoCreatorAction({
+      prompt,
+      importType: NanoBananaPromptImportType.Cowork,
+      eventType: NanoBananaUsageEventType.SendToCowork,
+      projectId: currentProjectId || workspace?.currentProjectId || null,
+      targetId: prompt.id,
+      metadata: getNanoPromptMetadata(prompt),
+    });
+  };
+
+  const createNanoPromptBatchRun = async (prompt: NanoBananaPrompt) => {
+    const projectId = currentProjectId || workspace?.currentProjectId;
+    if (!projectId) {
+      dispatchToast(i18nService.t('creatorWorkspaceLoadFailed'));
+      return;
+    }
+    const conversion = getNanoConversion(prompt);
+    const models = modelCapabilities.filter((model) => model.supportsBatch).slice(0, 2);
+    if (models.length === 0) {
+      dispatchToast(i18nService.t('creatorBatchModelLoadFailed'));
+      return;
+    }
+    const templateIds = styleLibrary.templates.slice(0, 2).map((template) => template.id);
+    const sizes = getNanoBatchSizes(conversion.promptSpec.constraints.aspectRatio);
+    const directions = (conversion.promptSpec.creativeDirections ?? []).slice(0, 6).map((direction) => {
+      const directionSpec = selectCreatorCreativeDirection(conversion.promptSpec, direction.id);
+      return {
+        ...direction,
+        promptSpec: toCreatorPromptSpecSnapshot(directionSpec),
+        promptText: renderCreatorPrompt(directionSpec),
+      };
+    });
+    if (directions.length === 0) {
+      dispatchToast(i18nService.t('creatorBatchCreateFailed'));
+      return;
+    }
+    const batchRunInput: CreatorBatchRunCreateInput = {
+      projectId,
+      briefTitle: prompt.title,
+      promptSpec: toCreatorPromptSpecSnapshot(conversion.promptSpec),
+      promptText: renderCreatorPrompt(conversion.promptSpec),
+      directions,
+      modelIds: models.map((model) => model.id),
+      templateIds: templateIds.length > 0 ? templateIds : ['default-template'],
+      sizes,
+    };
+    setActiveTab(CreatorStudioTab.Batch);
+    setBatchSubview(CreatorBatchSubview.Generation);
+    const batchRun = await createBatchRun(batchRunInput);
+    if (!batchRun) return;
+    dispatchToast(i18nService.t('nanoLibraryBatchCreated'));
   };
 
   const savePromptAsset = async (promptSpec: CreatorPromptSpec, promptText: string) => {
@@ -1096,8 +1361,42 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       setActiveBatchRun(batchRun);
       await loadBatchRuns(input.projectId);
       dispatchToast(i18nService.t('creatorBatchCreated'));
+      const nano = input.promptSpec.provenance?.nano;
+      if (nano) {
+        const metadata = {
+          taskMatrix: {
+            directions: input.directions.length,
+            models: input.modelIds.length,
+            templates: input.templateIds.length,
+            sizes: input.sizes.length,
+          },
+        };
+        await Promise.allSettled([
+          nanoBananaService.recordImport({
+            sourceId: nano.sourceId,
+            promptId: nano.promptId,
+            sourcePromptId: nano.sourcePromptId,
+            importType: NanoBananaPromptImportType.Batch,
+            projectId: input.projectId,
+            targetId: batchRun.id,
+            metadata,
+          }),
+          nanoBananaService.recordUsage({
+            sourceId: nano.sourceId,
+            promptId: nano.promptId,
+            sourcePromptId: nano.sourcePromptId,
+            eventType: NanoBananaUsageEventType.CreateBatch,
+            importType: NanoBananaPromptImportType.Batch,
+            projectId: input.projectId,
+            targetId: batchRun.id,
+            metadata,
+          }),
+        ]);
+      }
+      return batchRun;
     } catch (error) {
       dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorBatchCreateFailed'));
+      return null;
     } finally {
       setIsCreatingBatchRun(false);
     }
@@ -1379,6 +1678,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         <TabButton active={activeTab === CreatorStudioTab.Gallery} onClick={() => setActiveTab(CreatorStudioTab.Gallery)}>
           {i18nService.t('creatorGalleryTab')}
         </TabButton>
+        <TabButton active={activeTab === CreatorStudioTab.NanoLibrary} onClick={() => setActiveTab(CreatorStudioTab.NanoLibrary)}>
+          {i18nService.t('creatorNanoLibraryTab')}
+        </TabButton>
         <TabButton active={activeTab === CreatorStudioTab.Templates} onClick={() => setActiveTab(CreatorStudioTab.Templates)}>
           {i18nService.t('creatorTemplatesTab')}
         </TabButton>
@@ -1427,6 +1729,18 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
             templateCasesById={templateCasesById}
             onSelectTemplate={setSelectedTemplate}
             onUseTemplate={startFromTemplate}
+          />
+        )}
+        {activeTab === CreatorStudioTab.NanoLibrary && (
+          <NanoLibraryView
+            creatorActions={{
+              onUseInBuilder: useNanoPromptInBuilder,
+              onSaveAsRecipe: saveNanoPromptAsRecipe,
+              onSaveAsPromptAsset: saveNanoPromptAsPromptAsset,
+              onAddToBoard: addNanoPromptToBoard,
+              onSendToCowork: sendNanoPromptToCowork,
+              onCreateBatch: createNanoPromptBatchRun,
+            }}
           />
         )}
         {activeTab === CreatorStudioTab.Builder && (
@@ -1859,6 +2173,8 @@ const getSourceModeLabel = (mode: CreatorPromptSourceMode): string => {
       return i18nService.t('creatorSourceModeRecipeDraft');
     case CreatorPromptSourceMode.AssetVariant:
       return i18nService.t('creatorSourceModeAssetVariant');
+    case CreatorPromptSourceMode.NanoRemix:
+      return i18nService.t('creatorSourceModeNanoRemix');
     case CreatorPromptSourceMode.Blank:
     default:
       return i18nService.t('creatorSourceModeBlank');
@@ -1875,6 +2191,8 @@ const getSourceModeHint = (mode: CreatorPromptSourceMode): string => {
       return i18nService.t('creatorSourceModeRecipeDraftHint');
     case CreatorPromptSourceMode.AssetVariant:
       return i18nService.t('creatorSourceModeAssetVariantHint');
+    case CreatorPromptSourceMode.NanoRemix:
+      return i18nService.t('creatorSourceModeNanoRemixHint');
     case CreatorPromptSourceMode.Blank:
     default:
       return i18nService.t('creatorSourceModeBlankHint');
@@ -2014,7 +2332,8 @@ const PromptBuilder: React.FC<{
   const templateFieldSchema = seed?.templateFieldSchema ?? [];
   const sourceCanOpen = sourceMode === CreatorPromptSourceMode.CaseRemix
     || sourceMode === CreatorPromptSourceMode.TemplateDraft
-    || sourceMode === CreatorPromptSourceMode.AssetVariant;
+    || sourceMode === CreatorPromptSourceMode.AssetVariant
+    || sourceMode === CreatorPromptSourceMode.NanoRemix;
   const templateUseWhen = seed?.templateUseWhen?.trim() ?? '';
   const templateGuidance = seed?.templateGuidance?.filter((item) => item.trim().length > 0) ?? [];
   const templatePitfalls = seed?.templatePitfalls?.filter((item) => item.trim().length > 0) ?? [];

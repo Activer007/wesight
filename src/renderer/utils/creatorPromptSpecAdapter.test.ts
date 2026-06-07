@@ -85,4 +85,38 @@ describe('creator prompt spec adapter', () => {
       }],
     });
   });
+
+  test('preserves Nano provenance in PromptSpecV1', () => {
+    const snapshot = toCreatorPromptSpecSnapshot(createPromptSpec({
+      provenance: {
+        templateId: null,
+        caseIds: [],
+        variantOfAssetId: null,
+        nano: {
+          sourceId: 'nano-supai',
+          promptId: 'nano-supai:6845',
+          sourcePromptId: '6845',
+          sourceUrl: 'https://example.com/source',
+          sourcePlatform: 'x',
+          sourcePublishedAt: '2026-01-22T12:29:35Z',
+          authorName: 'Nano Author',
+          title: 'Nano prompt',
+          media: [],
+          mediaThumbnails: [],
+          tags: ['editorial'],
+          tagsZh: ['编辑感'],
+          promptCategories: ['portrait'],
+          needReferenceImages: true,
+          licenseNote: 'external source',
+          usageNote: 'keep source',
+        },
+      },
+    }));
+
+    expect(snapshot.provenance?.nano).toMatchObject({
+      sourceId: 'nano-supai',
+      sourcePromptId: '6845',
+      needReferenceImages: true,
+    });
+  });
 });

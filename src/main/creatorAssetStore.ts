@@ -326,6 +326,7 @@ interface BoardCardRow {
   group_name: string | null;
   notes: string | null;
   position: number;
+  metadata_json: string | null;
   created_at: number;
   updated_at: number;
   selected?: number | null;
@@ -594,6 +595,22 @@ const getGeneratedImageSourceMetadata = (image: GeneratedImageInput): Record<str
   return {
     generatedImageSource: image.source || null,
     imageSource,
+  };
+};
+
+const getNanoAssetMetadata = (promptSpec: CreatorPromptSpecSnapshot | null): Record<string, unknown> => {
+  const nano = promptSpec?.provenance?.nano;
+  if (!nano) return {};
+  return {
+    nano: {
+      sourceId: nano.sourceId,
+      promptId: nano.promptId,
+      sourcePromptId: nano.sourcePromptId,
+      sourceUrl: nano.sourceUrl,
+      sourcePlatform: nano.sourcePlatform,
+      authorName: nano.authorName,
+      needReferenceImages: nano.needReferenceImages,
+    },
   };
 };
 
@@ -1278,6 +1295,10 @@ export class CreatorAssetStore {
     }, title);
     const promptSpecJson = JSON.stringify(promptSpec);
     const caseIdsJson = JSON.stringify(caseIds);
+    const metadata = {
+      sourceTitle: promptSpec.sourceTitle ?? title,
+      ...(input.metadata ?? {}),
+    };
     this.db.prepare(`
       INSERT INTO production_assets (
         id, project_id, kind, title, status, source, run_id, source_run_id, variant_of_asset_id, session_id,
@@ -1287,14 +1308,14 @@ export class CreatorAssetStore {
         file_path, file_name, mime_type,
         favorite, adoption_status, tags_json, license_note, usage_note, metadata, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, 0, ?, ?, NULL, NULL, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       projectId,
       CreatorProductionAssetKind.Prompt,
       title,
       CreatorProductionAssetStatus.Ready,
-      CreatorProductionAssetSource.CreatorPrompt,
+      input.source ?? CreatorProductionAssetSource.CreatorPrompt,
       input.parentPromptAssetId ?? null,
       input.templateId ?? null,
       caseIdsJson,
@@ -1309,7 +1330,9 @@ export class CreatorAssetStore {
       `${title}.prompt.txt`,
       CreatorAssetAdoptionStatus.Unset,
       JSON.stringify(tags),
-      JSON.stringify({ sourceTitle: promptSpec.sourceTitle ?? title }),
+      input.licenseNote ?? null,
+      input.usageNote ?? null,
+      JSON.stringify(metadata),
       now,
       now
     );
@@ -3381,6 +3404,7 @@ export class CreatorAssetStore {
     const promptSpecJson = input.promptSpec ? JSON.stringify(input.promptSpec) : asset?.promptSpec ? JSON.stringify(asset.promptSpec) : null;
     const directionJson = input.direction ? JSON.stringify(input.direction) : null;
     const promptText = (input.promptText ?? asset?.promptText ?? '').trim();
+    const metadataJson = JSON.stringify(input.metadata ?? {});
     const id = uuidv4();
     this.db.prepare(`
       INSERT INTO creator_board_cards (
@@ -3402,7 +3426,7 @@ export class CreatorAssetStore {
       normalizeOptionalText(input.groupName),
       normalizeOptionalText(input.notes),
       positionRow.position,
-      '{}',
+      metadataJson,
       now,
       now
     );
@@ -3849,7 +3873,10 @@ export class CreatorAssetStore {
           '[]',
           null,
           null,
-          JSON.stringify(getGeneratedImageSourceMetadata(image)),
+          JSON.stringify({
+            ...getGeneratedImageSourceMetadata(image),
+            ...getNanoAssetMetadata(context.promptSpec),
+          }),
           now,
           now,
         );
@@ -4521,6 +4548,7 @@ export class CreatorAssetStore {
       notes: row.notes,
       position: row.position,
       selected: Boolean(row.selected),
+      metadata: parseJsonObject(row.metadata_json),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

@@ -812,6 +812,10 @@ export const registerCreatorStudioIpcHandlers = (
         ...(record.recipeId === null ? { recipeId: null } : toTrimmedString(record.recipeId) ? { recipeId: toTrimmedString(record.recipeId)! } : {}),
         ...(toTrimmedString(record.selectedDirectionId) ? { selectedDirectionId: toTrimmedString(record.selectedDirectionId)! } : {}),
         ...(record.changeNote === null ? { changeNote: null } : toTrimmedString(record.changeNote) ? { changeNote: toTrimmedString(record.changeNote)! } : {}),
+        ...(isCreatorProductionAssetSource(record.source) ? { source: record.source } : {}),
+        ...(record.licenseNote === null ? { licenseNote: null } : toTrimmedString(record.licenseNote) ? { licenseNote: toTrimmedString(record.licenseNote)! } : {}),
+        ...(record.usageNote === null ? { usageNote: null } : toTrimmedString(record.usageNote) ? { usageNote: toTrimmedString(record.usageNote)! } : {}),
+        ...(normalizeObject(record.metadata) ? { metadata: normalizeObject(record.metadata)! } : {}),
       } satisfies CreatorPromptAssetCreateInput);
       return { success: true, asset };
     } catch (error) {
@@ -1266,6 +1270,7 @@ export const registerCreatorStudioIpcHandlers = (
         ...(direction ? { direction } : {}),
         ...(groupName !== undefined ? { groupName } : {}),
         ...(notes !== undefined ? { notes } : {}),
+        ...(normalizeObject(record.metadata) ? { metadata: normalizeObject(record.metadata)! } : {}),
       };
       const card = getCreatorAssetStore().addBoardCard(createInput);
       return { success: true, card };

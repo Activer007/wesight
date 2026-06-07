@@ -181,6 +181,25 @@ export interface CreatorPromptSpecProvenanceV1 {
   templateId: string | null;
   caseIds: string[];
   variantOfAssetId: string | null;
+  nano?: {
+    sourceId: string;
+    promptId: string;
+    sourcePromptId: string;
+    sourceUrl: string | null;
+    sourcePlatform: string | null;
+    sourcePublishedAt: string | null;
+    authorName: string | null;
+    authorLink?: string | null;
+    title: string;
+    media: string[];
+    mediaThumbnails: string[];
+    tags: string[];
+    tagsZh: string[];
+    promptCategories: string[];
+    needReferenceImages: boolean;
+    licenseNote: string | null;
+    usageNote: string | null;
+  };
 }
 
 export interface CreatorStudioSourceContext {
@@ -421,6 +440,10 @@ export interface CreatorPromptAssetCreateInput {
   recipeId?: string | null;
   selectedDirectionId?: string | null;
   changeNote?: string | null;
+  source?: CreatorProductionAssetSource;
+  licenseNote?: string | null;
+  usageNote?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface CreatorRecipeImageProcessingReadmeSuggestion {
@@ -628,6 +651,7 @@ export interface CreatorBoardCardRecord {
   notes: string | null;
   position: number;
   selected: boolean;
+  metadata?: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
 }
@@ -670,6 +694,7 @@ export interface CreatorBoardCardCreateInput {
   direction?: CreatorBoardDirectionSnapshot | null;
   groupName?: string | null;
   notes?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface CreatorBoardCardUpdateInput {

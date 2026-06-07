@@ -623,6 +623,62 @@ describe('CreatorAssetStore', () => {
     expect(store.listAssets({ projectId, tag: 'typography' }).total).toBe(1);
   });
 
+  test('stores Nano prompt asset provenance, license, usage, and board metadata', () => {
+    const workspace = store.createProject({ name: 'Nano Project' });
+    const projectId = workspace.currentProjectId;
+    const nanoPromptSpec = {
+      sourceType: 'nano_prompt',
+      sourceMode: 'nano-remix',
+      sourceId: 'nano-supai:6845',
+      sourceTitle: 'Nano prompt',
+      caseIds: [],
+      provenance: {
+        nano: {
+          sourceId: 'nano-supai',
+          promptId: 'nano-supai:6845',
+          sourcePromptId: '6845',
+          sourceUrl: 'https://example.com/source',
+          needReferenceImages: true,
+        },
+      },
+    };
+
+    const asset = store.createPromptAsset({
+      projectId,
+      title: 'Nano prompt',
+      promptText: 'Generate a Nano-inspired image.',
+      promptSpec: nanoPromptSpec,
+      source: CreatorProductionAssetSource.NanoPrompt,
+      licenseNote: 'Keep source attribution.',
+      usageNote: 'Needs reference images.',
+      metadata: {
+        nano: {
+          sourcePromptId: '6845',
+        },
+      },
+    });
+
+    expect(asset.source).toBe(CreatorProductionAssetSource.NanoPrompt);
+    expect(asset.licenseNote).toBe('Keep source attribution.');
+    expect(asset.usageNote).toBe('Needs reference images.');
+    expect(asset.promptSpec?.provenance).toMatchObject(nanoPromptSpec.provenance);
+
+    const board = store.getBoardWorkspace(projectId);
+    const card = store.addBoardCard({
+      boardId: board.currentBoardId,
+      kind: CreatorBoardCardKind.Prompt,
+      title: 'Nano board card',
+      promptText: asset.promptText,
+      promptSpec: asset.promptSpec,
+      metadata: {
+        nanoPromptId: 'nano-supai:6845',
+      },
+    });
+
+    expect(card.metadata).toMatchObject({ nanoPromptId: 'nano-supai:6845' });
+    expect(card.promptSpec?.provenance).toMatchObject(nanoPromptSpec.provenance);
+  });
+
   test('creates reusable creator case image assets for processing', () => {
     const workspace = store.createProject({ name: 'Case Image Project' });
     const projectId = workspace.currentProjectId;
@@ -1243,6 +1299,29 @@ describe('CreatorAssetStore', () => {
         templateId: 'poster-system',
         caseIds: ['case-1'],
         constraints: { aspectRatio: '1:1' },
+        provenance: {
+          templateId: 'poster-system',
+          caseIds: ['case-1'],
+          variantOfAssetId: null,
+          nano: {
+            sourceId: 'nano-supai',
+            promptId: 'nano-supai:6845',
+            sourcePromptId: '6845',
+            sourceUrl: 'https://example.com/source',
+            sourcePlatform: 'x',
+            sourcePublishedAt: null,
+            authorName: 'Nano Author',
+            title: 'Nano prompt',
+            media: [],
+            mediaThumbnails: [],
+            tags: ['editorial'],
+            tagsZh: ['编辑感'],
+            promptCategories: ['portrait'],
+            needReferenceImages: true,
+            licenseNote: 'external',
+            usageNote: 'keep source',
+          },
+        },
       },
       promptText: 'Generate a launch visual.',
       directions: [
@@ -1254,7 +1333,33 @@ describe('CreatorAssetStore', () => {
           reason: 'Awareness',
           promptFocus: 'Use a large headline.',
           promptText: 'Generate a bold launch visual.',
-          promptSpec: { sourceTitle: 'Bold route', constraints: { aspectRatio: '1:1' } },
+          promptSpec: {
+            sourceTitle: 'Bold route',
+            constraints: { aspectRatio: '1:1' },
+            provenance: {
+              templateId: null,
+              caseIds: [],
+              variantOfAssetId: null,
+              nano: {
+                sourceId: 'nano-supai',
+                promptId: 'nano-supai:6845',
+                sourcePromptId: '6845',
+                sourceUrl: 'https://example.com/source',
+                sourcePlatform: 'x',
+                sourcePublishedAt: null,
+                authorName: 'Nano Author',
+                title: 'Nano prompt',
+                media: [],
+                mediaThumbnails: [],
+                tags: ['editorial'],
+                tagsZh: ['编辑感'],
+                promptCategories: ['portrait'],
+                needReferenceImages: true,
+                licenseNote: 'external',
+                usageNote: 'keep source',
+              },
+            },
+          },
         },
         {
           id: 'detail',
@@ -1290,6 +1395,8 @@ describe('CreatorAssetStore', () => {
       batchTaskId: batchRun.tasks[0].id,
       modelId: batchRun.tasks[0].modelId,
     });
+    expect(batchRun.promptSpec.provenance?.nano?.sourcePromptId).toBe('6845');
+    expect(batchRun.tasks[0].promptSpec.provenance?.nano?.sourcePromptId).toBe('6845');
     expect(batchRun.tasks[0].promptSpec.schemaVersion).toBe(CreatorPromptSpecSchemaVersion.V1);
 
     const context = parseCreatorStudioSourceContext(batchRun.tasks[0].promptText);
@@ -1389,7 +1496,33 @@ describe('CreatorAssetStore', () => {
     const batchRun = store.createBatchRun({
       projectId: workspace.currentProjectId,
       briefTitle: 'Completion batch',
-      promptSpec: { sourceTitle: 'Completion batch', constraints: { aspectRatio: '1:1' } },
+      promptSpec: {
+        sourceTitle: 'Completion batch',
+        constraints: { aspectRatio: '1:1' },
+        provenance: {
+          templateId: null,
+          caseIds: [],
+          variantOfAssetId: null,
+          nano: {
+            sourceId: 'nano-supai',
+            promptId: 'nano-supai:9000',
+            sourcePromptId: '9000',
+            sourceUrl: 'https://example.com/nano',
+            sourcePlatform: 'x',
+            sourcePublishedAt: null,
+            authorName: 'Nano Author',
+            title: 'Nano completion prompt',
+            media: [],
+            mediaThumbnails: [],
+            tags: [],
+            tagsZh: [],
+            promptCategories: ['poster'],
+            needReferenceImages: false,
+            licenseNote: 'external',
+            usageNote: 'batch test',
+          },
+        },
+      },
       promptText: 'Generate a completion visual.',
       directions: [{
         id: 'route-a',
@@ -1399,7 +1532,33 @@ describe('CreatorAssetStore', () => {
         reason: 'Baseline',
         promptFocus: 'Simple layout.',
         promptText: 'Generate route A.',
-        promptSpec: { sourceTitle: 'Route A', constraints: { aspectRatio: '1:1' } },
+        promptSpec: {
+          sourceTitle: 'Route A',
+          constraints: { aspectRatio: '1:1' },
+          provenance: {
+            templateId: null,
+            caseIds: [],
+            variantOfAssetId: null,
+            nano: {
+              sourceId: 'nano-supai',
+              promptId: 'nano-supai:9000',
+              sourcePromptId: '9000',
+              sourceUrl: 'https://example.com/nano',
+              sourcePlatform: 'x',
+              sourcePublishedAt: null,
+              authorName: 'Nano Author',
+              title: 'Nano completion prompt',
+              media: [],
+              mediaThumbnails: [],
+              tags: [],
+              tagsZh: [],
+              promptCategories: ['poster'],
+              needReferenceImages: false,
+              licenseNote: 'external',
+              usageNote: 'batch test',
+            },
+          },
+        },
       }],
       modelIds: ['seedream-image'],
       templateIds: ['poster-system'],
@@ -1451,6 +1610,9 @@ describe('CreatorAssetStore', () => {
     const completedTask = completed?.tasks.find((task) => task.id === firstTask.id);
     expect(completedTask?.status).toBe(CreatorBatchTaskStatus.Completed);
     expect(completedTask?.assetIds).toHaveLength(1);
+    const outputAsset = completedTask?.assetIds[0] ? store.getAsset(completedTask.assetIds[0]) : null;
+    expect(outputAsset?.promptSpec?.provenance?.nano?.sourcePromptId).toBe('9000');
+    expect(outputAsset?.imageSource?.provider).toBeNull();
     expect(completed?.status).toBe(CreatorBatchRunStatus.Running);
 
     const failed = store.failBatchTask({ taskId: secondTask.id, error: 'Provider timeout' });

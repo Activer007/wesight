@@ -44,6 +44,7 @@ test('accepts creator image processing constants through type guards', () => {
   expect(isCreatorLocalImageImportMode(CreatorLocalImageImportMode.Reference)).toBe(true);
   expect(isCreatorLocalImageImportMode(CreatorLocalImageImportMode.Copy)).toBe(true);
   expect(isCreatorProductionAssetSource(CreatorProductionAssetSource.LocalImageImport)).toBe(true);
+  expect(isCreatorProductionAssetSource(CreatorProductionAssetSource.NanoPrompt)).toBe(true);
   expect(isCreatorProductionAssetSource(CreatorProductionAssetSource.LocalImageProcessing)).toBe(true);
   expect(isCreatorProductionAssetSource(CreatorProductionAssetSource.RecipePostProcessing)).toBe(true);
   expect(isCreatorBatchRunKind(CreatorBatchRunKind.ImageProcessing)).toBe(true);

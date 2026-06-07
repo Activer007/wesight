@@ -1,0 +1,22 @@
+{
+  "name": "@wesight/skill-nano-banana-prompts",
+  "version": "0.1.0",
+  "description": "Read-only Nano Banana prompt search and Creator PromptSpec conversion skill for WeSight",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "search": "node scripts/nano-search.mjs",
+    "get": "node scripts/nano-get.mjs",
+    "recommend": "node scripts/nano-recommend.mjs",
+    "convert": "node scripts/nano-convert-spec.mjs"
+  },
+  "keywords": [
+    "wesight",
+    "skill",
+    "nano-banana",
+    "prompts",
+    "creator-studio"
+  ],
+  "author": "WeSight",
+  "license": "MIT"
+}

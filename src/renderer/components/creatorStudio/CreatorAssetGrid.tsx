@@ -39,11 +39,16 @@ import type {
   CreatorRecipeRecord,
   CreatorWorkspaceSnapshot,
 } from '@shared/creatorStudio/types';
+import {
+  NanoBananaPromptImportType,
+  NanoBananaUsageEventType,
+} from '@shared/nanoBanana/constants';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import casesData from '../../data/creatorStudio/cases.json';
 import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
+import { nanoBananaService } from '../../services/nanoBanana';
 import type { CreatorStudioCase } from '../../types/creatorStudio';
 import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
 import { ImageQuickEditDrawer } from './ImageQuickEditDrawer';
@@ -167,6 +172,49 @@ const getAdoptionStatusLabel = (status: CreatorAssetAdoptionStatusType): string 
 const getProjectLabel = (projectId: string, name: string): string => (
   projectId === CreatorStudioDefaultProjectId ? i18nService.t('creatorDefaultProject') : name
 );
+
+const getNanoFeedbackEventType = (
+  status: CreatorAssetAdoptionStatusType,
+): NanoBananaUsageEventType | null => {
+  if (status === CreatorAssetAdoptionStatus.Adopted) return NanoBananaUsageEventType.AdoptAsset;
+  if (status === CreatorAssetAdoptionStatus.Rejected) return NanoBananaUsageEventType.RejectAsset;
+  return null;
+};
+
+const getPromptSpecBatchRecord = (value: unknown): Record<string, unknown> | null => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+);
+
+const recordNanoAssetFeedback = async (
+  asset: CreatorProductionAssetRecord,
+  status: CreatorAssetAdoptionStatusType,
+) => {
+  const nano = asset.promptSpec?.provenance?.nano;
+  const eventType = getNanoFeedbackEventType(status);
+  if (!nano || !eventType) return;
+  const batch = getPromptSpecBatchRecord(asset.promptSpec?.batch);
+  await nanoBananaService.recordUsage({
+    sourceId: nano.sourceId,
+    promptId: nano.promptId,
+    sourcePromptId: nano.sourcePromptId,
+    eventType,
+    importType: batch ? NanoBananaPromptImportType.Batch : NanoBananaPromptImportType.PromptAsset,
+    projectId: asset.projectId,
+    targetId: asset.id,
+    metadata: {
+      assetId: asset.id,
+      assetKind: asset.kind,
+      assetSource: asset.source,
+      batchRunId: typeof batch?.batchRunId === 'string' ? batch.batchRunId : null,
+      batchTaskId: typeof batch?.batchTaskId === 'string' ? batch.batchTaskId : null,
+      modelId: typeof batch?.modelId === 'string' ? batch.modelId : null,
+      templateId: asset.templateId,
+      selectedDirectionId: asset.selectedDirectionId,
+    },
+  });
+};
 
 const creatorCases = casesData as CreatorStudioCase[];
 const creatorCaseMap = new Map<string, CreatorStudioCase>();
@@ -799,6 +847,7 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
         adoptionStatus: nextStatus,
         favorite: nextStatus === CreatorAssetAdoptionStatus.Favorite ? true : asset.favorite,
       }));
+      await recordNanoAssetFeedback(asset, nextStatus).catch(() => undefined);
     } catch {
       dispatchToast(i18nService.t('creatorAssetUpdateFailed'));
     }
