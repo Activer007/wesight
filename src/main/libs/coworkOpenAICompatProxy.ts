@@ -1001,6 +1001,48 @@ function remapMessageRolesForMiniMax(
   }
 }
 
+function normalizeMiniMaxModelId(model: string): string {
+  const normalized = model.trim();
+  if (normalized.toLowerCase() === 'minimax-m3.0') {
+    return 'MiniMax-M3';
+  }
+  return normalized;
+}
+
+function normalizeProviderModelId(model: string, provider?: string): string {
+  if (provider === 'minimax') {
+    return normalizeMiniMaxModelId(model);
+  }
+  return model;
+}
+
+function getUpstreamRequestModel(config: OpenAICompatUpstreamConfig): string {
+  return normalizeProviderModelId(config.model, config.provider);
+}
+
+function remapOpenAIRequestModelToUpstream(
+  openAIRequest: Record<string, unknown>,
+  config: OpenAICompatUpstreamConfig,
+): void {
+  const upstreamModel = getUpstreamRequestModel(config);
+  if (!openAIRequest.model) {
+    openAIRequest.model = upstreamModel;
+    return;
+  }
+
+  if (!config.provider || config.provider === 'anthropic' || config.provider === 'openai') {
+    return;
+  }
+
+  const requestModel = typeof openAIRequest.model === 'string' ? openAIRequest.model : '';
+  if (requestModel !== upstreamModel) {
+    console.info(
+      `[CoworkProxy] Remapping model: ${requestModel} -> ${upstreamModel} (provider: ${config.provider})`
+    );
+    openAIRequest.model = upstreamModel;
+  }
+}
+
 function extractMaxTokensRange(errorMessage: string): { min: number; max: number } | null {
   if (!errorMessage) {
     return null;
@@ -2728,7 +2770,7 @@ async function handleRequest(
 
     const wantsStream = Boolean(responsesRequest.stream);
     const chatRequest = convertResponsesRequestToChatCompletionsRequest(responsesRequest);
-    chatRequest.model = upstreamConfig.model;
+    chatRequest.model = getUpstreamRequestModel(upstreamConfig);
     chatRequest.stream = false;
     filterOpenAIToolsForProvider(chatRequest, upstreamConfig.provider);
     remapMessageRolesForMiniMax(chatRequest, upstreamConfig.provider);
@@ -2812,6 +2854,19 @@ async function handleRequest(
       writeJSON(res, 400, createAnthropicErrorBody(message, 'invalid_request_error'));
       return;
     }
+    let parsedBody: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(body);
+      parsedBody = toOptionalObject(parsed) ?? {};
+    } catch {
+      writeJSON(res, 400, createAnthropicErrorBody('Request body must be valid JSON', 'invalid_request_error'));
+      return;
+    }
+    remapOpenAIRequestModelToUpstream(parsedBody, upstreamConfig);
+    remapMessageRolesForMiniMax(parsedBody, upstreamConfig.provider);
+    normalizeMaxTokensFieldForOpenAIProvider(parsedBody, upstreamConfig.provider);
+    mergeSystemMessagesForProvider(parsedBody);
+    body = JSON.stringify(parsedBody);
     const upstreamHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
     };
@@ -2939,21 +2994,13 @@ async function handleRequest(
   }
 
   if (!openAIRequest.model) {
-    openAIRequest.model = upstreamConfig.model;
+    openAIRequest.model = getUpstreamRequestModel(upstreamConfig);
   }
 
   // Force-remap model name to the user-configured upstream model.
   // The Claude Agent SDK may emit internal model names (e.g. claude-haiku-4-5-20251001)
   // for probe/warmup requests, which non-Anthropic providers don't recognize.
-  if (upstreamConfig.provider && upstreamConfig.provider !== 'anthropic' && upstreamConfig.provider !== 'openai') {
-    const requestModel = typeof openAIRequest.model === 'string' ? openAIRequest.model : '';
-    if (requestModel !== upstreamConfig.model) {
-      console.info(
-        `[CoworkProxy] Remapping model: ${requestModel} -> ${upstreamConfig.model} (provider: ${upstreamConfig.provider})`
-      );
-      openAIRequest.model = upstreamConfig.model;
-    }
-  }
+  remapOpenAIRequestModelToUpstream(openAIRequest, upstreamConfig);
   filterOpenAIToolsForProvider(openAIRequest, upstreamConfig.provider);
   remapMessageRolesForMiniMax(openAIRequest, upstreamConfig.provider);
   hydrateOpenAIRequestToolCalls(openAIRequest, upstreamConfig.provider, upstreamConfig.baseURL);
@@ -3209,6 +3256,7 @@ export const __openAICompatProxyTestUtils = {
   convertResponsesRequestToChatCompletionsRequest,
   convertOpenAIResponseToResponses,
   filterOpenAIToolsForProvider,
+  normalizeProviderModelId,
   isGeminiProvider,
   sanitizeToolsForGemini,
 };

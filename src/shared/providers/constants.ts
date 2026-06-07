@@ -266,7 +266,7 @@ const PROVIDER_DEFINITIONS = [
     enPriority: 0,
     defaultModels: [
       { id: 'MiniMax-M2.7', name: 'MiniMax M2.7', supportsImage: false },
-      { id: 'MiniMax-M3.0', name: 'MiniMax M3.0', supportsImage: false },
+      { id: 'MiniMax-M3', name: 'MiniMax M3', supportsImage: false },
     ],
   },
   {

@@ -161,6 +161,13 @@ test('isGeminiProvider detects explicit provider and Google base URL', () => {
   expect(__openAICompatProxyTestUtils.isGeminiProvider('openai', 'https://api.openai.com/v1')).toBe(false);
 });
 
+test('normalizeProviderModelId maps legacy MiniMax M3 alias to official model id', () => {
+  expect(__openAICompatProxyTestUtils.normalizeProviderModelId('MiniMax-M3.0', 'minimax')).toBe('MiniMax-M3');
+  expect(__openAICompatProxyTestUtils.normalizeProviderModelId('minimax-m3.0', 'minimax')).toBe('MiniMax-M3');
+  expect(__openAICompatProxyTestUtils.normalizeProviderModelId('MiniMax-M2.7', 'minimax')).toBe('MiniMax-M2.7');
+  expect(__openAICompatProxyTestUtils.normalizeProviderModelId('MiniMax-M3.0', 'openai')).toBe('MiniMax-M3.0');
+});
+
 test('sanitizeToolsForGemini removes unsupported schema keys', () => {
   const request = {
     tools: [
