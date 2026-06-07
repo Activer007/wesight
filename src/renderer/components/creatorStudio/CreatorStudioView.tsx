@@ -142,8 +142,9 @@ const CreatorBatchSubview = {
 type CreatorBatchSubview = typeof CreatorBatchSubview[keyof typeof CreatorBatchSubview];
 
 const CreatorStartAction = {
-  OpenBuilderDraft: 'open_builder_draft',
-  OpenImageTools: 'open_image_tools',
+  GenerateImage: 'generate_image',
+  ProcessImages: 'process_images',
+  FindInspiration: 'find_inspiration',
 } as const;
 
 type CreatorStartAction = typeof CreatorStartAction[keyof typeof CreatorStartAction];
@@ -2217,10 +2218,6 @@ const CreatorStart: React.FC<{
     [recentAssets]
   );
 
-  const startAction: CreatorStartAction = brief.trim()
-    ? CreatorStartAction.OpenBuilderDraft
-    : CreatorStartAction.OpenImageTools;
-
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
@@ -2241,6 +2238,37 @@ const CreatorStart: React.FC<{
               <h2 className="text-base font-semibold">{i18nService.t('creatorStartTitle')}</h2>
               <p className="mt-1 text-sm leading-6 text-secondary">{i18nService.t('creatorStartSubtitle')}</p>
             </div>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <StartTaskCard
+              icon={<RocketLaunchIcon className="h-4 w-4" />}
+              title={i18nService.t('creatorStartGenerateImageTitle')}
+              description={i18nService.t('creatorStartGenerateImageHint')}
+              onClick={() => {
+                if (brief.trim()) {
+                  onStartBrief(brief);
+                  return;
+                }
+                const scenarioBrief = i18nService.t('creatorStartScenarioSocialCoverBrief');
+                setBrief(scenarioBrief);
+                onUseScenario(scenarioBrief);
+              }}
+              action={CreatorStartAction.GenerateImage}
+            />
+            <StartTaskCard
+              icon={<WrenchScrewdriverIcon className="h-4 w-4" />}
+              title={i18nService.t('creatorStartProcessImagesTitle')}
+              description={i18nService.t('creatorStartProcessImagesHint')}
+              onClick={onOpenImageTools}
+              action={CreatorStartAction.ProcessImages}
+            />
+            <StartTaskCard
+              icon={<MagnifyingGlassIcon className="h-4 w-4" />}
+              title={i18nService.t('creatorStartFindInspirationTitle')}
+              description={i18nService.t('creatorStartFindInspirationHint')}
+              onClick={onOpenGallery}
+              action={CreatorStartAction.FindInspiration}
+            />
           </div>
           <label className="mt-4 block">
             <span className="text-xs font-medium text-secondary">{i18nService.t('creatorStartBriefLabel')}</span>
@@ -2320,7 +2348,7 @@ const CreatorStart: React.FC<{
               type="button"
               onClick={onOpenImageTools}
               className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-              data-creator-start-action={startAction}
+              data-creator-start-action={CreatorStartAction.ProcessImages}
             >
               <WrenchScrewdriverIcon className="h-4 w-4" />
               {i18nService.t('creatorStartOpenImageTools')}
@@ -2409,6 +2437,29 @@ const CreatorStart: React.FC<{
     </section>
   );
 };
+
+const StartTaskCard: React.FC<{
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  onClick: () => void;
+  action: CreatorStartAction;
+}> = ({ icon, title, description, onClick, action }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="min-w-0 rounded-lg border border-border bg-background p-3 text-left transition-colors hover:bg-surface-raised"
+    data-creator-start-action={action}
+  >
+    <div className="flex items-center gap-2 text-sm font-semibold">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        {icon}
+      </span>
+      <span className="min-w-0 truncate">{title}</span>
+    </div>
+    <p className="mt-2 text-xs leading-5 text-muted">{description}</p>
+  </button>
+);
 
 const StartSection: React.FC<{
   title: string;
