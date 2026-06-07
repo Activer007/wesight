@@ -87,10 +87,14 @@ const normalizeLocalImageImportInput = (input: unknown): CreatorLocalImageImport
   const record = normalizeObject(input);
   const projectId = toTrimmedString(record?.projectId);
   if (!projectId) return null;
+  const filePaths = Array.isArray(record?.filePaths)
+    ? record.filePaths.map(toTrimmedString).filter((item): item is string => Boolean(item))
+    : [];
   return {
     projectId,
     mode: isCreatorLocalImageImportMode(record?.mode) ? record.mode : CreatorLocalImageImportMode.Reference,
     ...(toTrimmedString(record?.collectionId) ? { collectionId: toTrimmedString(record?.collectionId)! } : {}),
+    ...(filePaths.length > 0 ? { filePaths } : {}),
   };
 };
 
@@ -322,6 +326,16 @@ export const registerCreatorStudioIpcHandlers = (
       const normalized = normalizeLocalImageImportInput(input);
       if (!normalized) {
         return { success: false, error: 'projectId is required' };
+      }
+      if (normalized.filePaths?.length) {
+        return {
+          success: true,
+          ...await getCreatorAssetStore().importLocalImages({
+            ...normalized,
+            filePaths: normalized.filePaths,
+            managedDirectory: getLocalImageManagedDirectory(normalized.projectId),
+          }),
+        };
       }
       const ownerWindow = BrowserWindow.fromWebContents(event.sender);
       const dialogOptions = {

@@ -10,6 +10,7 @@ import {
   RocketLaunchIcon,
   SparklesIcon,
   TrashIcon,
+  WrenchScrewdriverIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -18,13 +19,17 @@ import {
   CreatorBoardCardKind,
   CreatorImageAssetQuality,
   CreatorImageProcessingJobStatus,
+  CreatorImageProcessingOutputFormat,
   CreatorImageProcessingTaskStatus,
+  CreatorLocalImageImportMode,
   CreatorProductionAssetKind,
   CreatorProductionAssetSource,
+  CreatorProductionAssetStatus,
   CreatorStudioDefaultProjectId,
 } from '@shared/creatorStudio/constants';
 import type {
   CreatorImageJobListResult,
+  CreatorImageOutputRevealInput,
 } from '@shared/creatorStudio/imageProcessingTypes';
 import type {
   CreatorBatchRunCreateInput,
@@ -42,7 +47,7 @@ import {
   NanoBananaUsageEventType,
 } from '@shared/nanoBanana/constants';
 import type { NanoBananaPrompt } from '@shared/nanoBanana/types';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { DeliveryMode, PayloadKind, ScheduleKind, SessionTarget, WakeMode } from '../../../scheduledTask/constants';
@@ -101,6 +106,7 @@ import { CreatorAssetGrid } from './CreatorAssetGrid';
 import { CreatorBatchPanel } from './CreatorBatchPanel';
 import { CreatorBoard } from './CreatorBoard';
 import { CreatorImageProcessingBatchPanel } from './CreatorImageProcessingBatchPanel';
+import { ImageQuickEditDrawer } from './ImageQuickEditDrawer';
 import { NanoLibraryView } from './nano/NanoLibraryView';
 
 const cases = casesData as CreatorStudioCase[];
@@ -108,16 +114,24 @@ const styleLibrary = styleLibraryData as CreatorStudioStyleLibrary;
 const manifest = manifestData as CreatorStudioManifest;
 
 const CreatorStudioTab = {
-  Gallery: 'gallery',
-  NanoLibrary: 'nano_library',
-  Templates: 'templates',
+  Start: 'start',
+  Inspiration: 'inspiration',
   Builder: 'builder',
   Assets: 'assets',
+  ImageTools: 'image_tools',
   Board: 'board',
   Batch: 'batch',
 } as const;
 
 type CreatorStudioTab = typeof CreatorStudioTab[keyof typeof CreatorStudioTab];
+
+const CreatorInspirationSubview = {
+  Gallery: 'gallery',
+  Templates: 'templates',
+  NanoLibrary: 'nano_library',
+} as const;
+
+type CreatorInspirationSubview = typeof CreatorInspirationSubview[keyof typeof CreatorInspirationSubview];
 
 const CreatorBatchSubview = {
   Generation: 'generation',
@@ -125,6 +139,21 @@ const CreatorBatchSubview = {
 } as const;
 
 type CreatorBatchSubview = typeof CreatorBatchSubview[keyof typeof CreatorBatchSubview];
+
+const CreatorStartAction = {
+  OpenBuilderDraft: 'open_builder_draft',
+  OpenImageTools: 'open_image_tools',
+} as const;
+
+type CreatorStartAction = typeof CreatorStartAction[keyof typeof CreatorStartAction];
+
+const CreatorImageToolBatchMode = {
+  Webp: 'webp',
+  Compress: 'compress',
+  Resize: 'resize',
+} as const;
+
+type CreatorImageToolBatchMode = typeof CreatorImageToolBatchMode[keyof typeof CreatorImageToolBatchMode];
 
 const WINNING_ASSET_ADOPTION_STATUSES = new Set<string>([
   CreatorAssetAdoptionStatus.Adopted,
@@ -190,6 +219,33 @@ const defaultBuilderForm: CreatorPromptForm = {
   negativeRequirements: '',
   templateFieldValues: {},
 };
+
+const CREATOR_START_SCENARIOS: Array<{
+  id: string;
+  labelKey: string;
+  briefKey: string;
+}> = [
+  {
+    id: 'social-cover',
+    labelKey: 'creatorStartScenarioSocialCover',
+    briefKey: 'creatorStartScenarioSocialCoverBrief',
+  },
+  {
+    id: 'product-visual',
+    labelKey: 'creatorStartScenarioProductVisual',
+    briefKey: 'creatorStartScenarioProductVisualBrief',
+  },
+  {
+    id: 'campaign-poster',
+    labelKey: 'creatorStartScenarioCampaignPoster',
+    briefKey: 'creatorStartScenarioCampaignPosterBrief',
+  },
+  {
+    id: 'image-variant',
+    labelKey: 'creatorStartScenarioImageVariant',
+    briefKey: 'creatorStartScenarioImageVariantBrief',
+  },
+] as const;
 
 const buildFormFromPromptSpec = (promptSpec: Partial<CreatorPromptSpec>): CreatorPromptForm => ({
   taskType: typeof promptSpec.taskType === 'string' ? promptSpec.taskType : '',
@@ -384,7 +440,8 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
 }) => {
   const dispatch = useDispatch();
   const skills = useSelector((state: RootState) => state.skill.skills);
-  const [activeTab, setActiveTab] = useState<CreatorStudioTab>(CreatorStudioTab.Gallery);
+  const [activeTab, setActiveTab] = useState<CreatorStudioTab>(CreatorStudioTab.Start);
+  const [inspirationSubview, setInspirationSubview] = useState<CreatorInspirationSubview>(CreatorInspirationSubview.Gallery);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('');
   const [style, setStyle] = useState('');
@@ -409,6 +466,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const [imageProcessingJobs, setImageProcessingJobs] = useState<CreatorImageJobListResult['jobs']>([]);
   const [recipes, setRecipes] = useState<CreatorRecipeRecord[]>([]);
   const [projectAssets, setProjectAssets] = useState<CreatorProductionAssetRecord[]>([]);
+  const [imageToolsInitialFilePaths, setImageToolsInitialFilePaths] = useState<string[]>([]);
 
   useEffect(() => {
     void skillService.loadSkills().then((loadedSkills) => {
@@ -703,12 +761,17 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     setActiveTab(CreatorStudioTab.Builder);
   };
 
+  const openInspiration = (subview: CreatorInspirationSubview = CreatorInspirationSubview.Gallery) => {
+    setInspirationSubview(subview);
+    setActiveTab(CreatorStudioTab.Inspiration);
+  };
+
   const openExampleCase = (sourceCaseId: number) => {
     const item = templateCasesById.get(sourceCaseId);
     if (!item) return;
     setSelectedTemplate(null);
     setSelectedCase(item);
-    setActiveTab(CreatorStudioTab.Gallery);
+    openInspiration(CreatorInspirationSubview.Gallery);
   };
 
   const useAssetAsReference = (asset: CreatorProductionAssetRecord) => {
@@ -790,7 +853,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       if (!item) return;
       setSelectedTemplate(null);
       setSelectedCase(item);
-      setActiveTab(CreatorStudioTab.Gallery);
+      openInspiration(CreatorInspirationSubview.Gallery);
       return;
     }
     if (seed.sourceMode === CreatorPromptSourceMode.TemplateDraft) {
@@ -798,7 +861,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       if (!template) return;
       setSelectedCase(null);
       setSelectedTemplate(template);
-      setActiveTab(CreatorStudioTab.Templates);
+      openInspiration(CreatorInspirationSubview.Templates);
       return;
     }
     if (seed.sourceMode === CreatorPromptSourceMode.AssetVariant) {
@@ -806,7 +869,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       return;
     }
     if (seed.sourceMode === CreatorPromptSourceMode.NanoRemix) {
-      setActiveTab(CreatorStudioTab.NanoLibrary);
+      openInspiration(CreatorInspirationSubview.NanoLibrary);
     }
   };
 
@@ -1354,6 +1417,43 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     }
   };
 
+  const startFromBrief = (brief: string, materials: CreatorBuilderMaterial[] = []) => {
+    const result = applyCreatorBriefAutofill(defaultBuilderForm, brief);
+    setBuilderSeed(null);
+    setBuilderForm(result.form);
+    setBuilderMaterials(materials);
+    setBoardContextPack('');
+    setActiveTab(CreatorStudioTab.Builder);
+  };
+
+  const startFromLocalImages = async (files: File[], brief: string) => {
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+    if (imageFiles.length === 0 && !brief.trim()) return;
+    try {
+      const materials = await Promise.all(imageFiles.map((file) => createMaterialFromFile(file, CreatorMaterialSource.File)));
+      const filePaths = imageFiles.map(getFileSystemPath).filter((path): path is string => Boolean(path));
+      if (filePaths.length > 0) {
+        setImageToolsInitialFilePaths(filePaths);
+        setActiveTab(CreatorStudioTab.ImageTools);
+        if (brief.trim()) {
+          const result = applyCreatorBriefAutofill(defaultBuilderForm, brief);
+          setBuilderSeed(null);
+          setBuilderForm(result.form);
+          setBuilderMaterials(materials);
+          setBoardContextPack('');
+        }
+        return;
+      }
+      startFromBrief(brief, materials);
+    } catch {
+      dispatchToast(i18nService.t('creatorStartMaterialImportFailed'));
+    }
+  };
+
+  const openStartImageTools = () => {
+    setActiveTab(CreatorStudioTab.ImageTools);
+  };
+
   const createBatchRun = async (input: CreatorBatchRunCreateInput) => {
     setIsCreatingBatchRun(true);
     try {
@@ -1675,14 +1775,11 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       </header>
 
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2">
-        <TabButton active={activeTab === CreatorStudioTab.Gallery} onClick={() => setActiveTab(CreatorStudioTab.Gallery)}>
-          {i18nService.t('creatorGalleryTab')}
+        <TabButton active={activeTab === CreatorStudioTab.Start} onClick={() => setActiveTab(CreatorStudioTab.Start)}>
+          {i18nService.t('creatorStartTab')}
         </TabButton>
-        <TabButton active={activeTab === CreatorStudioTab.NanoLibrary} onClick={() => setActiveTab(CreatorStudioTab.NanoLibrary)}>
-          {i18nService.t('creatorNanoLibraryTab')}
-        </TabButton>
-        <TabButton active={activeTab === CreatorStudioTab.Templates} onClick={() => setActiveTab(CreatorStudioTab.Templates)}>
-          {i18nService.t('creatorTemplatesTab')}
+        <TabButton active={activeTab === CreatorStudioTab.Inspiration} onClick={() => openInspiration(inspirationSubview)}>
+          {i18nService.t('creatorInspirationTab')}
         </TabButton>
         <TabButton active={activeTab === CreatorStudioTab.Builder} onClick={() => setActiveTab(CreatorStudioTab.Builder)}>
           {i18nService.t('creatorBuilderTab')}
@@ -1690,57 +1787,74 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         <TabButton active={activeTab === CreatorStudioTab.Assets} onClick={() => setActiveTab(CreatorStudioTab.Assets)}>
           {i18nService.t('creatorAssetsTab')}
         </TabButton>
-        <TabButton active={activeTab === CreatorStudioTab.Board} onClick={() => setActiveTab(CreatorStudioTab.Board)}>
-          {i18nService.t('creatorBoardTab')}
-        </TabButton>
-        <TabButton active={activeTab === CreatorStudioTab.Batch} onClick={() => setActiveTab(CreatorStudioTab.Batch)}>
-          {i18nService.t('creatorBatchTab')}
-        </TabButton>
       </div>
 
       <main className="min-h-0 flex-1 overflow-y-auto">
-        {activeTab === CreatorStudioTab.Gallery && (
-          <Gallery
-            query={query}
-            category={category}
-            style={style}
-            scene={scene}
-            cases={visibleCases}
-            totalCount={filteredCases.length}
-            hasMore={visibleCaseCount < filteredCases.length}
-            onQueryChange={setQuery}
-            onCategoryChange={setCategory}
-            onStyleChange={setStyle}
-            onSceneChange={setScene}
-            onClearFilters={() => {
-              setQuery('');
-              setCategory('');
-              setStyle('');
-              setScene('');
-            }}
-            onSelectCase={setSelectedCase}
+        {activeTab === CreatorStudioTab.Start && (
+          <CreatorStart
+            recentAssets={projectAssets}
+            featuredCases={cases.slice(0, 6)}
+            featuredTemplates={styleLibrary.templates.slice(0, 4)}
+            onStartBrief={startFromBrief}
+            onStartImages={(files, brief) => void startFromLocalImages(files, brief)}
+            onUseScenario={startFromBrief}
             onUseCase={startFromCase}
-            onLoadMore={() => setVisibleCaseCount((count) => count + CASE_PAGE_SIZE)}
-          />
-        )}
-        {activeTab === CreatorStudioTab.Templates && (
-          <TemplateLibrary
-            templates={styleLibrary.templates}
-            templateCasesById={templateCasesById}
-            onSelectTemplate={setSelectedTemplate}
             onUseTemplate={startFromTemplate}
+            onUseAsset={useAssetAsReference}
+            onOpenGallery={() => openInspiration(CreatorInspirationSubview.Gallery)}
+            onOpenNano={() => openInspiration(CreatorInspirationSubview.NanoLibrary)}
+            onOpenAssets={() => setActiveTab(CreatorStudioTab.Assets)}
+            onOpenImageTools={openStartImageTools}
           />
         )}
-        {activeTab === CreatorStudioTab.NanoLibrary && (
-          <NanoLibraryView
-            creatorActions={{
-              onUseInBuilder: useNanoPromptInBuilder,
-              onSaveAsRecipe: saveNanoPromptAsRecipe,
-              onSaveAsPromptAsset: saveNanoPromptAsPromptAsset,
-              onAddToBoard: addNanoPromptToBoard,
-              onSendToCowork: sendNanoPromptToCowork,
-              onCreateBatch: createNanoPromptBatchRun,
-            }}
+        {activeTab === CreatorStudioTab.Inspiration && (
+          <CreatorInspiration
+            activeSubview={inspirationSubview}
+            onSubviewChange={setInspirationSubview}
+            gallery={(
+              <Gallery
+                query={query}
+                category={category}
+                style={style}
+                scene={scene}
+                cases={visibleCases}
+                totalCount={filteredCases.length}
+                hasMore={visibleCaseCount < filteredCases.length}
+                onQueryChange={setQuery}
+                onCategoryChange={setCategory}
+                onStyleChange={setStyle}
+                onSceneChange={setScene}
+                onClearFilters={() => {
+                  setQuery('');
+                  setCategory('');
+                  setStyle('');
+                  setScene('');
+                }}
+                onSelectCase={setSelectedCase}
+                onUseCase={startFromCase}
+                onLoadMore={() => setVisibleCaseCount((count) => count + CASE_PAGE_SIZE)}
+              />
+            )}
+            templates={(
+              <TemplateLibrary
+                templates={styleLibrary.templates}
+                templateCasesById={templateCasesById}
+                onSelectTemplate={setSelectedTemplate}
+                onUseTemplate={startFromTemplate}
+              />
+            )}
+            nano={(
+              <NanoLibraryView
+                creatorActions={{
+                  onUseInBuilder: useNanoPromptInBuilder,
+                  onSaveAsRecipe: saveNanoPromptAsRecipe,
+                  onSaveAsPromptAsset: saveNanoPromptAsPromptAsset,
+                  onAddToBoard: addNanoPromptToBoard,
+                  onSendToCowork: sendNanoPromptToCowork,
+                  onCreateBatch: createNanoPromptBatchRun,
+                }}
+              />
+            )}
           />
         )}
         {activeTab === CreatorStudioTab.Builder && (
@@ -1750,6 +1864,21 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
             onFormChange={setBuilderForm}
             materials={builderMaterials}
             onMaterialsChange={setBuilderMaterials}
+            onOpenMaterialsInImageTools={(materials) => {
+              const filePaths = materials.map((material) => material.path).filter(isImportableLocalPath);
+              if (filePaths.length === 0) {
+                dispatchToast(i18nService.t('creatorImageToolsNoLocalMaterialPaths'));
+                return;
+              }
+              setImageToolsInitialFilePaths(filePaths);
+              setActiveTab(CreatorStudioTab.ImageTools);
+            }}
+            onOpenBoard={() => setActiveTab(CreatorStudioTab.Board)}
+            onOpenBatch={() => {
+              setBatchSubview(CreatorBatchSubview.Generation);
+              setActiveTab(CreatorStudioTab.Batch);
+            }}
+            onOpenImageTools={openStartImageTools}
             installedSkillIds={installedRecommendedSkillIds}
             missingSkillIds={missingRecommendedSkillIds}
             seedreamStatus={seedreamStatus}
@@ -1785,6 +1914,27 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
             onUseAssetAsReference={useAssetAsReference}
             onSendAssetToCowork={sendAssetToCowork}
             onExecuteImageRecipe={(asset, recipe) => void executeImageRecipe(asset, recipe)}
+          />
+        )}
+        {activeTab === CreatorStudioTab.ImageTools && (
+          <CreatorImageToolsPanel
+            projectId={currentProjectId}
+            assets={projectAssets}
+            jobs={imageProcessingJobs}
+            initialFilePaths={imageToolsInitialFilePaths}
+            onInitialFilePathsConsumed={() => setImageToolsInitialFilePaths([])}
+            onAssetsChanged={() => {
+              if (currentProjectId) void loadProjectAssets(currentProjectId);
+            }}
+            onRefreshJobs={() => {
+              if (currentProjectId) void loadImageProcessingJobs(currentProjectId);
+            }}
+            onRevealOutput={(input) => void creatorStudioAssetService.revealImageOutput(input).catch((error) => {
+              dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingRevealFailed'));
+            })}
+            onOpenReport={(jobId) => void openImageProcessingReport(jobId)}
+            onRetryTask={(taskId) => void retryImageProcessingTask(taskId)}
+            onCancelTask={(taskId) => void cancelImageProcessingTask(taskId)}
           />
         )}
         {activeTab === CreatorStudioTab.Board && (
@@ -1915,6 +2065,691 @@ const TabButton: React.FC<{
   >
     {children}
   </button>
+);
+
+const CreatorInspiration: React.FC<{
+  activeSubview: CreatorInspirationSubview;
+  onSubviewChange: (subview: CreatorInspirationSubview) => void;
+  gallery: React.ReactNode;
+  templates: React.ReactNode;
+  nano: React.ReactNode;
+}> = ({ activeSubview, onSubviewChange, gallery, templates, nano }) => (
+  <section className="min-h-full bg-background">
+    <div className="border-b border-border bg-background px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold">{i18nService.t('creatorInspirationTitle')}</h2>
+          <p className="mt-1 text-xs leading-5 text-muted">{i18nService.t('creatorInspirationSubtitle')}</p>
+        </div>
+        <div className="inline-flex rounded-lg border border-border bg-surface p-1">
+          <SegmentButton
+            active={activeSubview === CreatorInspirationSubview.Gallery}
+            onClick={() => onSubviewChange(CreatorInspirationSubview.Gallery)}
+          >
+            {i18nService.t('creatorGalleryTab')}
+          </SegmentButton>
+          <SegmentButton
+            active={activeSubview === CreatorInspirationSubview.Templates}
+            onClick={() => onSubviewChange(CreatorInspirationSubview.Templates)}
+          >
+            {i18nService.t('creatorTemplatesTab')}
+          </SegmentButton>
+          <SegmentButton
+            active={activeSubview === CreatorInspirationSubview.NanoLibrary}
+            onClick={() => onSubviewChange(CreatorInspirationSubview.NanoLibrary)}
+          >
+            {i18nService.t('creatorNanoLibraryTab')}
+          </SegmentButton>
+        </div>
+      </div>
+    </div>
+    {activeSubview === CreatorInspirationSubview.Gallery && gallery}
+    {activeSubview === CreatorInspirationSubview.Templates && templates}
+    {activeSubview === CreatorInspirationSubview.NanoLibrary && nano}
+  </section>
+);
+
+const SegmentButton: React.FC<{
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}> = ({ active, onClick, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+      active ? 'bg-primary text-white' : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+    }`}
+  >
+    {children}
+  </button>
+);
+
+const CreatorStart: React.FC<{
+  recentAssets: CreatorProductionAssetRecord[];
+  featuredCases: CreatorStudioCase[];
+  featuredTemplates: CreatorStudioTemplate[];
+  onStartBrief: (brief: string) => void;
+  onStartImages: (files: File[], brief: string) => void;
+  onUseScenario: (brief: string) => void;
+  onUseCase: (item: CreatorStudioCase) => void;
+  onUseTemplate: (template: CreatorStudioTemplate) => void;
+  onUseAsset: (asset: CreatorProductionAssetRecord) => void;
+  onOpenGallery: () => void;
+  onOpenNano: () => void;
+  onOpenAssets: () => void;
+  onOpenImageTools: () => void;
+}> = ({
+  recentAssets,
+  featuredCases,
+  featuredTemplates,
+  onStartBrief,
+  onStartImages,
+  onUseScenario,
+  onUseCase,
+  onUseTemplate,
+  onUseAsset,
+  onOpenGallery,
+  onOpenNano,
+  onOpenAssets,
+  onOpenImageTools,
+}) => {
+  const [brief, setBrief] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const recent = useMemo(
+    () => [...recentAssets].sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 6),
+    [recentAssets]
+  );
+
+  const startAction: CreatorStartAction = brief.trim()
+    ? CreatorStartAction.OpenBuilderDraft
+    : CreatorStartAction.OpenImageTools;
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(event.dataTransfer.files).filter((file) => file.type.startsWith('image/'));
+    if (files.length === 0) return;
+    onStartImages(files, brief);
+  };
+
+  return (
+    <section className="grid gap-4 p-4 xl:grid-cols-[minmax(360px,520px)_minmax(0,1fr)]">
+      <div className="space-y-4">
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <SparklesIcon className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold">{i18nService.t('creatorStartTitle')}</h2>
+              <p className="mt-1 text-sm leading-6 text-secondary">{i18nService.t('creatorStartSubtitle')}</p>
+            </div>
+          </div>
+          <label className="mt-4 block">
+            <span className="text-xs font-medium text-secondary">{i18nService.t('creatorStartBriefLabel')}</span>
+            <textarea
+              value={brief}
+              onChange={(event) => setBrief(event.target.value)}
+              rows={5}
+              placeholder={i18nService.t('creatorStartBriefPlaceholder')}
+              className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 outline-none focus:border-primary"
+            />
+          </label>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {CREATOR_START_SCENARIOS.map((scenario) => (
+              <button
+                key={scenario.id}
+                type="button"
+                onClick={() => {
+                  const scenarioBrief = i18nService.t(scenario.briefKey);
+                  setBrief(scenarioBrief);
+                  onUseScenario(scenarioBrief);
+                }}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+              >
+                {i18nService.t(scenario.labelKey)}
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!brief.trim()}
+              onClick={() => onStartBrief(brief)}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RocketLaunchIcon className="h-4 w-4" />
+              {i18nService.t('creatorStartCreateDraft')}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenGallery}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            >
+              {i18nService.t('creatorStartBrowseCases')}
+            </button>
+          </div>
+        </div>
+
+        <div
+          onDragOver={(event) => {
+            event.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          className={`rounded-lg border border-dashed p-4 transition-colors ${
+            isDragging ? 'border-primary bg-primary/5' : 'border-border bg-surface'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-muted">
+              <PhotoIcon className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold">{i18nService.t('creatorStartDropTitle')}</h3>
+              <p className="mt-1 text-xs leading-5 text-muted">{i18nService.t('creatorStartDropHint')}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold">{i18nService.t('creatorStartImageToolsTitle')}</h3>
+              <p className="mt-1 text-xs leading-5 text-muted">{i18nService.t('creatorStartImageToolsHint')}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenImageTools}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+              data-creator-start-action={startAction}
+            >
+              <WrenchScrewdriverIcon className="h-4 w-4" />
+              {i18nService.t('creatorStartOpenImageTools')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <StartSection
+          title={i18nService.t('creatorStartRecentAssets')}
+          actionLabel={i18nService.t('creatorStartOpenAssets')}
+          onAction={onOpenAssets}
+        >
+          {recent.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border bg-background p-4 text-sm text-muted">
+              {i18nService.t('creatorStartNoRecentAssets')}
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {recent.map((asset) => (
+                <button
+                  key={asset.id}
+                  type="button"
+                  onClick={() => onUseAsset(asset)}
+                  className="min-w-0 rounded-lg border border-border bg-background p-3 text-left transition-colors hover:bg-surface-raised"
+                >
+                  <div className="flex items-center gap-2">
+                    <PhotoIcon className="h-4 w-4 shrink-0 text-muted" />
+                    <span className="truncate text-sm font-medium">{asset.fileName}</span>
+                  </div>
+                  <div className="mt-2 truncate text-xs text-muted">
+                    {asset.promptSpec?.sourceTitle ?? (asset.promptText.slice(0, 80) || i18nService.t('creatorStartAssetNoPrompt'))}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </StartSection>
+
+        <StartSection
+          title={i18nService.t('creatorStartRecommendedInspiration')}
+          actionLabel={i18nService.t('creatorStartOpenInspiration')}
+          onAction={onOpenNano}
+        >
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {featuredCases.slice(0, 3).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onUseCase(item)}
+                className="overflow-hidden rounded-lg border border-border bg-background text-left transition-colors hover:bg-surface-raised"
+              >
+                <PlaceholderImage src={item.image} alt={item.imageAlt} className="h-28 w-full" />
+                <div className="p-3">
+                  <div className="line-clamp-2 text-sm font-medium">{item.title}</div>
+                  <div className="mt-2 text-xs text-muted">{i18nService.t('creatorStartCaseSource')}</div>
+                </div>
+              </button>
+            ))}
+            {featuredTemplates.slice(0, 3).map((template) => (
+              <button
+                key={template.id}
+                type="button"
+                onClick={() => onUseTemplate(template)}
+                className="overflow-hidden rounded-lg border border-border bg-background text-left transition-colors hover:bg-surface-raised"
+              >
+                <PlaceholderImage src={template.cover} alt={getText(template.title)} className="h-28 w-full" />
+                <div className="p-3">
+                  <div className="line-clamp-2 text-sm font-medium">{getText(template.title)}</div>
+                  <div className="mt-2 text-xs text-muted">{i18nService.t('creatorStartTemplateSource')}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </StartSection>
+
+        <StartSection title={i18nService.t('creatorStartAdvancedEntrypoints')}>
+          <div className="flex flex-wrap gap-2">
+            <StartShortcut label={i18nService.t('creatorInspirationTab')} onClick={onOpenGallery} />
+            <StartShortcut label={i18nService.t('creatorAssetsTab')} onClick={onOpenAssets} />
+            <StartShortcut label={i18nService.t('creatorImageToolsTab')} onClick={onOpenImageTools} />
+          </div>
+        </StartSection>
+      </div>
+    </section>
+  );
+};
+
+const StartSection: React.FC<{
+  title: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  children: React.ReactNode;
+}> = ({ title, actionLabel, onAction, children }) => (
+  <section className="rounded-lg border border-border bg-surface p-4">
+    <div className="mb-3 flex items-center justify-between gap-3">
+      <h3 className="text-sm font-semibold">{title}</h3>
+      {actionLabel && onAction && (
+        <button
+          type="button"
+          onClick={onAction}
+          className="text-xs font-medium text-primary hover:underline"
+        >
+          {actionLabel}
+        </button>
+      )}
+    </div>
+    {children}
+  </section>
+);
+
+const StartShortcut: React.FC<{
+  label: string;
+  onClick: () => void;
+}> = ({ label, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+  >
+    {label}
+  </button>
+);
+
+const CreatorImageToolsPanel: React.FC<{
+  projectId: string;
+  assets: CreatorProductionAssetRecord[];
+  jobs: CreatorImageJobListResult['jobs'];
+  initialFilePaths: string[];
+  onInitialFilePathsConsumed: () => void;
+  onAssetsChanged: () => void;
+  onRefreshJobs: () => void;
+  onRevealOutput: (input: CreatorImageOutputRevealInput) => void;
+  onOpenReport: (jobId: string) => void;
+  onRetryTask: (taskId: string) => void;
+  onCancelTask: (taskId: string) => void;
+}> = ({
+  projectId,
+  assets,
+  jobs,
+  initialFilePaths,
+  onInitialFilePathsConsumed,
+  onAssetsChanged,
+  onRefreshJobs,
+  onRevealOutput,
+  onOpenReport,
+  onRetryTask,
+  onCancelTask,
+}) => {
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
+  const [quickEditAsset, setQuickEditAsset] = useState<CreatorProductionAssetRecord | null>(null);
+  const [status, setStatus] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const [isCreatingBatch, setIsCreatingBatch] = useState(false);
+  const [maxWidth, setMaxWidth] = useState('1600');
+  const [maxHeight, setMaxHeight] = useState('1600');
+  const [quality, setQuality] = useState('82');
+  const handledImportKeyRef = useRef('');
+  const importCallbacksRef = useRef({
+    onAssetsChanged,
+    onInitialFilePathsConsumed,
+    onRefreshJobs,
+  });
+
+  useEffect(() => {
+    importCallbacksRef.current = {
+      onAssetsChanged,
+      onInitialFilePathsConsumed,
+      onRefreshJobs,
+    };
+  }, [onAssetsChanged, onInitialFilePathsConsumed, onRefreshJobs]);
+
+  const processableAssets = useMemo(() => (
+    assets
+      .filter((asset) => (
+        asset.kind === CreatorProductionAssetKind.Image
+        && asset.status === CreatorProductionAssetStatus.Ready
+      ))
+      .slice(0, 120)
+  ), [assets]);
+
+  useEffect(() => {
+    if (!projectId || initialFilePaths.length === 0) {
+      handledImportKeyRef.current = '';
+      return undefined;
+    }
+    const importableFilePaths = initialFilePaths.filter(isImportableLocalPath);
+    const importKey = `${projectId}:${importableFilePaths.join('\n')}`;
+    if (handledImportKeyRef.current === importKey) return undefined;
+    handledImportKeyRef.current = importKey;
+    if (importableFilePaths.length === 0) {
+      setStatus(i18nService.t('creatorImageToolsNoLocalMaterialPaths'));
+      importCallbacksRef.current.onInitialFilePathsConsumed();
+      return undefined;
+    }
+    let cancelled = false;
+    setIsImporting(true);
+    setStatus(i18nService.t('creatorImageToolsImporting'));
+    void creatorStudioAssetService.importLocalImages({
+      projectId,
+      mode: CreatorLocalImageImportMode.Reference,
+      filePaths: importableFilePaths,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        const importedImageIds = result.assets
+          .filter((asset) => asset.kind === CreatorProductionAssetKind.Image)
+          .map((asset) => asset.id);
+        setSelectedAssetIds(new Set(importedImageIds));
+        setStatus(getImageToolsImportSummary(result.imported, result.reused, result.skipped, result.failures.length));
+        importCallbacksRef.current.onAssetsChanged();
+        importCallbacksRef.current.onRefreshJobs();
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setStatus(error instanceof Error ? error.message : i18nService.t('creatorLocalImageImportFailed'));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setIsImporting(false);
+        importCallbacksRef.current.onInitialFilePathsConsumed();
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialFilePaths, projectId]);
+
+  const selectedAssets = useMemo(
+    () => processableAssets.filter((asset) => selectedAssetIds.has(asset.id)),
+    [processableAssets, selectedAssetIds]
+  );
+
+  const toggleAsset = (assetId: string) => {
+    setSelectedAssetIds((ids) => {
+      const next = new Set(ids);
+      if (next.has(assetId)) {
+        next.delete(assetId);
+      } else {
+        next.add(assetId);
+      }
+      return next;
+    });
+  };
+
+  const selectRecent = () => {
+    setSelectedAssetIds(new Set(processableAssets.slice(0, 12).map((asset) => asset.id)));
+  };
+
+  const createBatch = async (mode: CreatorImageToolBatchMode) => {
+    if (!projectId || selectedAssets.length === 0) return;
+    const parsedQuality = Number(quality);
+    const parsedMaxWidth = Number(maxWidth);
+    const parsedMaxHeight = Number(maxHeight);
+    setIsCreatingBatch(true);
+    setStatus('');
+    try {
+      await creatorStudioAssetService.createImageBatch({
+        projectId,
+        assetIds: selectedAssets.map((asset) => asset.id),
+        waitForCompletion: false,
+        outputFormat: CreatorImageProcessingOutputFormat.Webp,
+        quality: mode === CreatorImageToolBatchMode.Compress
+          ? 72
+          : Number.isFinite(parsedQuality) && parsedQuality > 0 ? parsedQuality : 82,
+        ...(mode === CreatorImageToolBatchMode.Resize && Number.isFinite(parsedMaxWidth) && parsedMaxWidth > 0 ? { maxWidth: parsedMaxWidth } : {}),
+        ...(mode === CreatorImageToolBatchMode.Resize && Number.isFinite(parsedMaxHeight) && parsedMaxHeight > 0 ? { maxHeight: parsedMaxHeight } : {}),
+      });
+      setStatus(i18nService.t('creatorImageBatchCreated'));
+      setSelectedAssetIds(new Set());
+      onAssetsChanged();
+      onRefreshJobs();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : i18nService.t('creatorImageBatchCreateFailed'));
+    } finally {
+      setIsCreatingBatch(false);
+    }
+  };
+
+  const revealAsset = async (asset: CreatorProductionAssetRecord) => {
+    try {
+      await creatorStudioAssetService.revealAssetInFolder(asset.id);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : i18nService.t('creatorAssetFileUnavailable'));
+    }
+  };
+
+  const openSourceAsset = async (asset: CreatorProductionAssetRecord) => {
+    if (!asset.imageProcessing?.sourceAssetId) {
+      setStatus(i18nService.t('creatorImageToolsSourceUnavailable'));
+      return;
+    }
+    const sourceAsset = assets.find((item) => item.id === asset.imageProcessing?.sourceAssetId);
+    if (!sourceAsset) {
+      setStatus(i18nService.t('creatorImageToolsSourceUnavailable'));
+      return;
+    }
+    setSelectedAssetIds(new Set([sourceAsset.id]));
+    setStatus(i18nService.t('creatorImageToolsSourceSelected'));
+  };
+
+  return (
+    <section className="grid gap-4 p-4 xl:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
+      <div className="space-y-4">
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <WrenchScrewdriverIcon className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold">{i18nService.t('creatorImageToolsTitle')}</h2>
+              <p className="mt-1 text-sm leading-6 text-secondary">{i18nService.t('creatorImageToolsSubtitle')}</p>
+            </div>
+          </div>
+          {status && (
+            <div className="mt-3 rounded-lg border border-border bg-background px-3 py-2 text-xs leading-5 text-secondary">
+              {status}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold">{i18nService.t('creatorImageToolsSelectedTitle')}</h3>
+            <span className="rounded-md bg-surface-raised px-2 py-1 text-xs text-muted">
+              {selectedAssets.length}
+            </span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              disabled={isImporting}
+              onClick={selectRecent}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {i18nService.t('creatorImageToolsSelectRecent')}
+            </button>
+            <button
+              type="button"
+              disabled={isImporting}
+              onClick={() => setSelectedAssetIds(new Set())}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {i18nService.t('creatorImageToolsClearSelection')}
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <label className="space-y-1 text-xs text-secondary">
+              <span>{i18nService.t('creatorImageProcessingQuality')}</span>
+              <input value={quality} onChange={(event) => setQuality(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary" />
+            </label>
+            <label className="space-y-1 text-xs text-secondary">
+              <span>{i18nService.t('creatorImageBatchMaxWidth')}</span>
+              <input value={maxWidth} onChange={(event) => setMaxWidth(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary" />
+            </label>
+            <label className="space-y-1 text-xs text-secondary">
+              <span>{i18nService.t('creatorImageBatchMaxHeight')}</span>
+              <input value={maxHeight} onChange={(event) => setMaxHeight(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary" />
+            </label>
+          </div>
+          <div className="mt-3 grid gap-2">
+            <button
+              type="button"
+              disabled={selectedAssets.length === 0 || isCreatingBatch || isImporting}
+              onClick={() => void createBatch(CreatorImageToolBatchMode.Webp)}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {i18nService.t('creatorImageBatchWebp')}
+            </button>
+            <button
+              type="button"
+              disabled={selectedAssets.length === 0 || isCreatingBatch || isImporting}
+              onClick={() => void createBatch(CreatorImageToolBatchMode.Compress)}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {i18nService.t('creatorImageBatchCompress')}
+            </button>
+            <button
+              type="button"
+              disabled={selectedAssets.length === 0 || isCreatingBatch || isImporting}
+              onClick={() => void createBatch(CreatorImageToolBatchMode.Resize)}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {i18nService.t('creatorImageBatchResize')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="min-w-0 space-y-4">
+        <div className="rounded-lg border border-border bg-surface">
+          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <h3 className="text-sm font-semibold">{i18nService.t('creatorImageToolsAssetPicker')}</h3>
+            <button
+              type="button"
+              onClick={onAssetsChanged}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            >
+              {i18nService.t('creatorAssetsRefresh')}
+            </button>
+          </div>
+          {processableAssets.length === 0 ? (
+            <div className="flex min-h-44 items-center justify-center p-4 text-center text-sm text-muted">
+              {i18nService.t('creatorImageToolsNoProcessableAssets')}
+            </div>
+          ) : (
+            <div className="grid gap-2 p-3 md:grid-cols-2 2xl:grid-cols-3">
+              {processableAssets.map((asset) => (
+                <div key={asset.id} className="rounded-lg border border-border bg-background p-3">
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedAssetIds.has(asset.id)}
+                      onChange={() => toggleAsset(asset.id)}
+                      className="mt-1 h-4 w-4 rounded border-border"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{asset.fileName}</div>
+                      <div className="mt-1 truncate text-xs text-muted">{asset.filePath}</div>
+                    </div>
+                  </label>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setQuickEditAsset(asset)}
+                      className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                    >
+                      {i18nService.t('creatorImageQuickEditAction')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void revealAsset(asset)}
+                      className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                    >
+                      {i18nService.t('creatorAssetReveal')}
+                    </button>
+                    {asset.imageProcessing?.sourceAssetId && (
+                      <button
+                        type="button"
+                        onClick={() => void openSourceAsset(asset)}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                      >
+                        {i18nService.t('creatorImageToolsTraceSource')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <CreatorImageProcessingBatchPanel
+          jobs={jobs}
+          onRefresh={onRefreshJobs}
+          onRevealOutput={onRevealOutput}
+          onOpenReport={onOpenReport}
+          onRetryTask={onRetryTask}
+          onCancelTask={onCancelTask}
+        />
+      </div>
+      <ImageQuickEditDrawer
+        asset={quickEditAsset}
+        onClose={() => setQuickEditAsset(null)}
+        onCompleted={() => {
+          setQuickEditAsset(null);
+          onAssetsChanged();
+          onRefreshJobs();
+        }}
+      />
+    </section>
+  );
+};
+
+const getImageToolsImportSummary = (
+  imported: number,
+  reused: number,
+  skipped: number,
+  failures: number
+): string => (
+  i18nService.t('creatorImageToolsImportSummary')
+    .replace('{imported}', String(imported))
+    .replace('{reused}', String(reused))
+    .replace('{skipped}', String(skipped))
+    .replace('{failures}', String(failures))
 );
 
 const Gallery: React.FC<{
@@ -2245,6 +3080,10 @@ const PromptBuilder: React.FC<{
   onFormChange: (form: CreatorPromptForm) => void;
   materials: CreatorBuilderMaterial[];
   onMaterialsChange: (materials: CreatorBuilderMaterial[]) => void;
+  onOpenMaterialsInImageTools: (materials: CreatorBuilderMaterial[]) => void;
+  onOpenBoard: () => void;
+  onOpenBatch: () => void;
+  onOpenImageTools: () => void;
   installedSkillIds: readonly string[];
   missingSkillIds: readonly string[];
   seedreamStatus: SeedreamStatus;
@@ -2277,6 +3116,10 @@ const PromptBuilder: React.FC<{
   onFormChange,
   materials,
   onMaterialsChange,
+  onOpenMaterialsInImageTools,
+  onOpenBoard,
+  onOpenBatch,
+  onOpenImageTools,
   installedSkillIds,
   missingSkillIds,
   seedreamStatus,
@@ -2311,6 +3154,7 @@ const PromptBuilder: React.FC<{
   const [recipeScheduleId, setRecipeScheduleId] = useState<string | null>(null);
   const [recipeScheduleCron, setRecipeScheduleCron] = useState(CreatorRecipeAutomationDefaultCron);
   const [isSchedulingRecipe, setIsSchedulingRecipe] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const promptLanguage = normalizePromptLanguage(i18nService.getLanguage(), form);
   const rawPromptSpec: CreatorPromptSpec = buildPromptSpec(seed, form, promptLanguage, i18nService.t('creatorBlankBuilder'), materials);
   const basePromptSpec = applyBoardAndBrandKit(rawPromptSpec, brandKit, boardContextPack);
@@ -2426,16 +3270,18 @@ const PromptBuilder: React.FC<{
               )}
             </div>
             <div className="flex shrink-0 gap-1">
-              <button
-                type="button"
-                disabled={!currentProjectId}
-                onClick={() => onSaveRecipe(promptSpec)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label={i18nService.t('creatorSaveAsRecipe')}
-                title={i18nService.t('creatorSaveAsRecipe')}
-              >
-                <DocumentDuplicateIcon className="h-4 w-4" />
-              </button>
+              {isAdvancedOpen && (
+                <button
+                  type="button"
+                  disabled={!currentProjectId}
+                  onClick={() => onSaveRecipe(promptSpec)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label={i18nService.t('creatorSaveAsRecipe')}
+                  title={i18nService.t('creatorSaveAsRecipe')}
+                >
+                  <DocumentDuplicateIcon className="h-4 w-4" />
+                </button>
+              )}
               {sourceMode !== CreatorPromptSourceMode.Blank && (
                 <>
                   {sourceCanOpen && (
@@ -2463,6 +3309,18 @@ const PromptBuilder: React.FC<{
             </div>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => setIsAdvancedOpen((open) => !open)}
+          className="flex w-full items-center justify-between rounded-lg border border-border bg-background px-3 py-2 text-left text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+        >
+          <span>{i18nService.t('creatorBuilderAdvancedToggle')}</span>
+          <span className="text-xs text-muted">
+            {isAdvancedOpen ? i18nService.t('hide') : i18nService.t('show')}
+          </span>
+        </button>
+        {isAdvancedOpen && (
+          <>
         <div className="rounded-lg border border-border bg-background p-3">
           <div className="text-xs font-medium text-secondary">{i18nService.t('creatorBuilderProject')}</div>
           <div className="mt-2 flex gap-2">
@@ -2726,6 +3584,34 @@ const PromptBuilder: React.FC<{
             )}
           </div>
         </div>
+        <div className="rounded-lg border border-border bg-background p-3">
+          <div className="text-xs font-medium text-secondary">{i18nService.t('creatorBuilderAdvancedEntrypoints')}</div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <button
+              type="button"
+              onClick={onOpenBoard}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            >
+              {i18nService.t('creatorBoardTab')}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenBatch}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            >
+              {i18nService.t('creatorBatchTab')}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenImageTools}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            >
+              {i18nService.t('creatorImageToolsTab')}
+            </button>
+          </div>
+        </div>
+          </>
+        )}
         <BuilderSection title={i18nService.t('creatorBuilderSectionBrief')}>
           <label className="block">
             <span className="text-xs font-medium text-secondary">{i18nService.t('creatorBriefAutofill')}</span>
@@ -2751,52 +3637,58 @@ const PromptBuilder: React.FC<{
             </button>
             {briefAutofillMessage && <span className="text-xs text-muted">{briefAutofillMessage}</span>}
           </div>
-          <BuilderInput label={i18nService.t('creatorFieldTaskType')} value={form.taskType} onChange={(value) => updateField('taskType', value)} />
+        </BuilderSection>
+        <BuilderSection title={i18nService.t('creatorBuilderSectionCoreInputs')}>
           <BuilderInput label={i18nService.t('creatorFieldSubject')} value={form.subject} onChange={(value) => updateField('subject', value)} />
           <BuilderInput label={i18nService.t('creatorFieldPlatform')} value={form.platform} onChange={(value) => updateField('platform', value)} />
-          <BuilderInput label={i18nService.t('creatorFieldAudience')} value={form.audience} onChange={(value) => updateField('audience', value)} />
-        </BuilderSection>
-        {templateFieldSchema.length > 0 && (
-          <BuilderSection title={i18nService.t('creatorBuilderSectionTemplateFields')}>
-            <p className="text-xs leading-5 text-muted">{i18nService.t('creatorBuilderTemplateFieldsHint')}</p>
-            {templateFieldSchema.map((field) => (
-              <TemplateFieldInput
-                key={field.id}
-                field={field}
-                value={form.templateFieldValues[field.id] ?? ''}
-                onChange={(value) => updateTemplateField(field.id, value)}
-              />
-            ))}
-          </BuilderSection>
-        )}
-        {hasTemplateMethodNotes && (
-          <BuilderSection title={i18nService.t('creatorBuilderSectionTemplateMethod')}>
-            {templateUseWhen && (
-              <BuilderNoteList title={i18nService.t('creatorUseWhen')} items={[templateUseWhen]} />
-            )}
-            {templateGuidance.length > 0 && (
-              <BuilderNoteList title={i18nService.t('creatorGuidance')} items={templateGuidance} />
-            )}
-            {templatePitfalls.length > 0 && (
-              <BuilderNoteList title={i18nService.t('creatorPitfalls')} items={templatePitfalls} />
-            )}
-          </BuilderSection>
-        )}
-        <BuilderSection title={i18nService.t('creatorBuilderSectionComposition')}>
-          <BuilderInput label={i18nService.t('creatorFieldMainObject')} value={form.mainObject} onChange={(value) => updateField('mainObject', value)} />
           <BuilderInput label={i18nService.t('creatorFieldAspectRatio')} value={form.aspectRatio} onChange={(value) => updateField('aspectRatio', value)} />
-        </BuilderSection>
-        <BuilderSection title={i18nService.t('creatorBuilderSectionOutput')}>
-          <BuilderInput label={i18nService.t('creatorFieldOutputCount')} value={form.outputCount} onChange={(value) => updateField('outputCount', value)} />
-        </BuilderSection>
-        <BuilderSection title={i18nService.t('creatorBuilderSectionStyle')}>
-          <BuilderInput label={i18nService.t('creatorFieldVisualStyle')} value={form.visualStyle} onChange={(value) => updateField('visualStyle', value)} />
-          <BuilderInput label={i18nService.t('creatorFieldColorPreference')} value={form.colorPreference} onChange={(value) => updateField('colorPreference', value)} />
           <BuilderInput label={i18nService.t('creatorFieldRequiredText')} value={form.requiredText} onChange={(value) => updateField('requiredText', value)} />
-          <BuilderTextarea label={i18nService.t('creatorFieldNegative')} value={form.negativeRequirements} onChange={(value) => updateField('negativeRequirements', value)} />
+          <BuilderInput label={i18nService.t('creatorFieldVisualStyle')} value={form.visualStyle} onChange={(value) => updateField('visualStyle', value)} />
         </BuilderSection>
+        {isAdvancedOpen && (
+          <>
+            {templateFieldSchema.length > 0 && (
+              <BuilderSection title={i18nService.t('creatorBuilderSectionTemplateFields')}>
+                <p className="text-xs leading-5 text-muted">{i18nService.t('creatorBuilderTemplateFieldsHint')}</p>
+                {templateFieldSchema.map((field) => (
+                  <TemplateFieldInput
+                    key={field.id}
+                    field={field}
+                    value={form.templateFieldValues[field.id] ?? ''}
+                    onChange={(value) => updateTemplateField(field.id, value)}
+                  />
+                ))}
+              </BuilderSection>
+            )}
+            {hasTemplateMethodNotes && (
+              <BuilderSection title={i18nService.t('creatorBuilderSectionTemplateMethod')}>
+                {templateUseWhen && (
+                  <BuilderNoteList title={i18nService.t('creatorUseWhen')} items={[templateUseWhen]} />
+                )}
+                {templateGuidance.length > 0 && (
+                  <BuilderNoteList title={i18nService.t('creatorGuidance')} items={templateGuidance} />
+                )}
+                {templatePitfalls.length > 0 && (
+                  <BuilderNoteList title={i18nService.t('creatorPitfalls')} items={templatePitfalls} />
+                )}
+              </BuilderSection>
+            )}
+            <BuilderSection title={i18nService.t('creatorBuilderSectionAdvancedPrompt')}>
+              <BuilderInput label={i18nService.t('creatorFieldTaskType')} value={form.taskType} onChange={(value) => updateField('taskType', value)} />
+              <BuilderInput label={i18nService.t('creatorFieldAudience')} value={form.audience} onChange={(value) => updateField('audience', value)} />
+              <BuilderInput label={i18nService.t('creatorFieldMainObject')} value={form.mainObject} onChange={(value) => updateField('mainObject', value)} />
+              <BuilderInput label={i18nService.t('creatorFieldOutputCount')} value={form.outputCount} onChange={(value) => updateField('outputCount', value)} />
+              <BuilderInput label={i18nService.t('creatorFieldColorPreference')} value={form.colorPreference} onChange={(value) => updateField('colorPreference', value)} />
+              <BuilderTextarea label={i18nService.t('creatorFieldNegative')} value={form.negativeRequirements} onChange={(value) => updateField('negativeRequirements', value)} />
+            </BuilderSection>
+          </>
+        )}
         <BuilderSection title={i18nService.t('creatorBuilderSectionMaterials')}>
-          <MaterialTray materials={materials} onMaterialsChange={onMaterialsChange} />
+          <MaterialTray
+            materials={materials}
+            onMaterialsChange={onMaterialsChange}
+            onOpenMaterialsInImageTools={onOpenMaterialsInImageTools}
+          />
         </BuilderSection>
       </div>
       <div className="min-w-0 space-y-4">
@@ -2816,7 +3708,7 @@ const PromptBuilder: React.FC<{
               {lintResult.score}/100
             </span>
           </div>
-          {lintResult.issues.length > 0 ? (
+          {isAdvancedOpen && lintResult.issues.length > 0 ? (
             <div className="mt-3 space-y-2">
               {lintResult.issues.map((issue) => (
                 <div key={`${issue.code}-${issue.fieldPath}`} className="rounded-lg border border-border bg-background p-3">
@@ -2831,15 +3723,16 @@ const PromptBuilder: React.FC<{
                 </div>
               ))}
             </div>
-          ) : (
+          ) : isAdvancedOpen ? (
             <p className="mt-3 text-xs leading-5 text-muted">{i18nService.t('creatorPromptQualityClean')}</p>
-          )}
+          ) : null}
         </div>
         <div className="min-w-0 rounded-lg border border-border bg-surface">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-semibold">{i18nService.t('creatorPromptPreview')}</h2>
-              <div className="inline-flex rounded-lg border border-border bg-background p-1">
+              {isAdvancedOpen && (
+                <div className="inline-flex rounded-lg border border-border bg-background p-1">
                 <button
                   type="button"
                   onClick={() => setPreviewTab(PromptBuilderPreviewTab.Prompt)}
@@ -2854,35 +3747,40 @@ const PromptBuilder: React.FC<{
                 >
                   {i18nService.t('creatorPromptPreviewSpec')}
                 </button>
-              </div>
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => void copyText(previewTab === PromptBuilderPreviewTab.Prompt ? prompt : promptSpecJson)}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover"
-              >
-                <ClipboardDocumentIcon className="h-4 w-4" />
-                {previewTab === PromptBuilderPreviewTab.Prompt ? i18nService.t('creatorCopyPrompt') : i18nService.t('copy')}
-              </button>
-              <button
-                type="button"
-                disabled={!currentProjectId}
-                onClick={() => onSavePromptAsset(promptSpec, prompt)}
-                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                <DocumentDuplicateIcon className="h-4 w-4" />
-                {i18nService.t('creatorSavePromptAsset')}
-              </button>
-              <button
-                type="button"
-                disabled={!currentProjectId}
-                onClick={() => onSaveRecipe(promptSpec)}
-                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                <DocumentDuplicateIcon className="h-4 w-4" />
-                {i18nService.t('creatorSaveAsRecipe')}
-              </button>
+              {isAdvancedOpen && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void copyText(previewTab === PromptBuilderPreviewTab.Prompt ? prompt : promptSpecJson)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                  >
+                    <ClipboardDocumentIcon className="h-4 w-4" />
+                    {previewTab === PromptBuilderPreviewTab.Prompt ? i18nService.t('creatorCopyPrompt') : i18nService.t('copy')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!currentProjectId}
+                    onClick={() => onSavePromptAsset(promptSpec, prompt)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
+                  >
+                    <DocumentDuplicateIcon className="h-4 w-4" />
+                    {i18nService.t('creatorSavePromptAsset')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!currentProjectId}
+                    onClick={() => onSaveRecipe(promptSpec)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
+                  >
+                    <DocumentDuplicateIcon className="h-4 w-4" />
+                    {i18nService.t('creatorSaveAsRecipe')}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 disabled={isSendingToCowork || hasLintErrors}
@@ -2893,22 +3791,26 @@ const PromptBuilder: React.FC<{
                 <RocketLaunchIcon className="h-4 w-4" />
                 {isSendingToCowork ? i18nService.t('creatorSendingToCowork') : i18nService.t('creatorSendToCowork')}
               </button>
-              <button
-                type="button"
-                disabled={!seedreamReady || isSendingToCowork || hasLintErrors}
-                title={hasLintErrors ? i18nService.t('creatorPromptLintBlocksExecution') : seedreamHint}
-                onClick={() => onSendToCowork(promptSpec, prompt, materials, true)}
-                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                <SparklesIcon className="h-4 w-4" />
-                {i18nService.t('creatorGenerateWithSeedream')}
-              </button>
+              {isAdvancedOpen && (
+                <button
+                  type="button"
+                  disabled={!seedreamReady || isSendingToCowork || hasLintErrors}
+                  title={hasLintErrors ? i18nService.t('creatorPromptLintBlocksExecution') : seedreamHint}
+                  onClick={() => onSendToCowork(promptSpec, prompt, materials, true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  <SparklesIcon className="h-4 w-4" />
+                  {i18nService.t('creatorGenerateWithSeedream')}
+                </button>
+              )}
             </div>
           </div>
           <pre className="max-h-[420px] max-w-full whitespace-pre-wrap break-words overflow-auto p-4 text-sm leading-6 text-foreground">
-            {previewTab === PromptBuilderPreviewTab.Prompt ? prompt : promptSpecJson}
+            {isAdvancedOpen && previewTab === PromptBuilderPreviewTab.Spec ? promptSpecJson : prompt}
           </pre>
         </div>
+        {isAdvancedOpen && (
+          <>
         <div className="min-w-0 rounded-lg border border-border bg-surface">
           <div className="border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">{i18nService.t('creatorContextPack')}</h2>
@@ -2977,6 +3879,8 @@ const PromptBuilder: React.FC<{
           </div>
           <p className="mt-3 text-xs leading-5 text-muted">{seedreamHint}</p>
         </div>
+          </>
+        )}
       </div>
     </section>
   );
@@ -3065,6 +3969,22 @@ const getFilePath = (file: File, source: CreatorMaterialSource): string => {
     return fileWithPath.path.trim();
   }
   return `${source}:${file.name || `image-${Date.now()}`}`;
+};
+
+const getFileSystemPath = (file: File): string | null => {
+  const fileWithPath = file as File & { path?: string };
+  const filePath = fileWithPath.path?.trim();
+  return filePath || null;
+};
+
+const isImportableLocalPath = (filePath: string): boolean => {
+  const value = filePath.trim();
+  return Boolean(value)
+    && !value.startsWith('file:')
+    && !value.startsWith('data:')
+    && !value.startsWith('http:')
+    && !value.startsWith('https:')
+    && (!/^[a-z_]+:/i.test(value) || /^[a-z]:[\\/]/i.test(value));
 };
 
 const encodeLocalFileSrc = (filePath: string): string => {
@@ -3226,7 +4146,8 @@ const createMaterialFromFile = async (
 const MaterialTray: React.FC<{
   materials: CreatorBuilderMaterial[];
   onMaterialsChange: (materials: CreatorBuilderMaterial[]) => void;
-}> = ({ materials, onMaterialsChange }) => {
+  onOpenMaterialsInImageTools?: (materials: CreatorBuilderMaterial[]) => void;
+}> = ({ materials, onMaterialsChange, onOpenMaterialsInImageTools }) => {
   const language = i18nService.getLanguage();
   const roleOptions = Object.values(CreatorMaterialRole);
 
@@ -3286,6 +4207,18 @@ const MaterialTray: React.FC<{
       </div>
       {materials.length > 0 && (
         <div className="space-y-2">
+          {onOpenMaterialsInImageTools && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => onOpenMaterialsInImageTools(materials)}
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+              >
+                <WrenchScrewdriverIcon className="h-4 w-4" />
+                {i18nService.t('creatorMaterialOpenImageTools')}
+              </button>
+            </div>
+          )}
           {materials.map((material, index) => (
             <div key={material.id} className="grid grid-cols-[56px_1fr_auto] gap-2 rounded-lg border border-border bg-background p-2">
               <img

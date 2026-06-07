@@ -412,6 +412,7 @@ export interface CreatorLocalImageImportInput {
   projectId: string;
   mode?: CreatorLocalImageImportMode | null;
   collectionId?: string | null;
+  filePaths?: string[];
 }
 
 export interface CreatorLocalImageImportFailure {

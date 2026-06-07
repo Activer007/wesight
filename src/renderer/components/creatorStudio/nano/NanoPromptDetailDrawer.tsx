@@ -1,6 +1,7 @@
 import {
   ArrowTopRightOnSquareIcon,
   ClipboardDocumentIcon,
+  EllipsisHorizontalIcon,
   PhotoIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -64,6 +65,7 @@ export const NanoPromptDetailDrawer: React.FC<NanoPromptDetailDrawerProps> = ({
   const title = prompt?.title ?? indexItem?.title ?? i18nService.t('nanoLibraryDetail');
   const sourceUrl = prompt?.sourceLink ?? null;
   const canOpenSource = isHttpUrl(sourceUrl);
+  const [isMoreActionsOpen, setIsMoreActionsOpen] = useState(false);
   const tags = useMemo(() => [
     ...(prompt?.promptCategories ?? []),
     ...(prompt?.tags ?? []),
@@ -182,40 +184,59 @@ export const NanoPromptDetailDrawer: React.FC<NanoPromptDetailDrawerProps> = ({
         <div className="min-w-0 truncate text-xs text-muted">
           {prompt?.sourcePublishedAt || indexItem?.publishedAt || ''}
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="relative flex flex-wrap justify-end gap-2">
           {prompt && creatorActions && (
-            <>
-              <ActionButton onClick={() => creatorActions.onUseInBuilder(prompt)}>
-                {i18nService.t('nanoLibraryUseInBuilder')}
-              </ActionButton>
-              <ActionButton onClick={() => creatorActions.onSaveAsRecipe(prompt)}>
-                {i18nService.t('nanoLibrarySaveAsRecipe')}
-              </ActionButton>
-              <ActionButton onClick={() => creatorActions.onSaveAsPromptAsset(prompt)}>
-                {i18nService.t('nanoLibrarySaveAsPromptAsset')}
-              </ActionButton>
-              <ActionButton onClick={() => creatorActions.onAddToBoard(prompt)}>
-                {i18nService.t('nanoLibraryAddToBoard')}
-              </ActionButton>
-              <ActionButton onClick={() => creatorActions.onSendToCowork(prompt)}>
-                {i18nService.t('nanoLibrarySendToCowork')}
-              </ActionButton>
-              <ActionButton onClick={() => creatorActions.onCreateBatch(prompt)}>
-                {i18nService.t('nanoLibraryCreateBatch')}
-              </ActionButton>
-            </>
+            <button
+              type="button"
+              onClick={() => void creatorActions.onUseInBuilder(prompt)}
+              className="inline-flex items-center rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/90"
+            >
+              {i18nService.t('nanoLibraryUseInBuilder')}
+            </button>
           )}
           <button
             type="button"
-            onClick={() => {
-              if (canOpenSource && sourceUrl) onOpenSource(sourceUrl);
-            }}
-            disabled={!canOpenSource}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted"
+            onClick={() => setIsMoreActionsOpen((open) => !open)}
+            disabled={!prompt}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-            {i18nService.t('nanoLibraryOpenSource')}
+            <EllipsisHorizontalIcon className="h-4 w-4" />
+            {i18nService.t('nanoLibraryMoreActions')}
           </button>
+          {prompt && isMoreActionsOpen && (
+            <div className="absolute bottom-12 right-0 z-10 grid w-56 gap-1 rounded-lg border border-border bg-background p-2 shadow-xl">
+              {creatorActions && (
+                <>
+                  <ActionButton onClick={() => creatorActions.onSaveAsRecipe(prompt)}>
+                    {i18nService.t('nanoLibrarySaveAsRecipe')}
+                  </ActionButton>
+                  <ActionButton onClick={() => creatorActions.onSaveAsPromptAsset(prompt)}>
+                    {i18nService.t('nanoLibrarySaveAsPromptAsset')}
+                  </ActionButton>
+                  <ActionButton onClick={() => creatorActions.onAddToBoard(prompt)}>
+                    {i18nService.t('nanoLibraryAddToBoard')}
+                  </ActionButton>
+                  <ActionButton onClick={() => creatorActions.onSendToCowork(prompt)}>
+                    {i18nService.t('nanoLibrarySendToCowork')}
+                  </ActionButton>
+                  <ActionButton onClick={() => creatorActions.onCreateBatch(prompt)}>
+                    {i18nService.t('nanoLibraryCreateBatch')}
+                  </ActionButton>
+                </>
+              )}
+              <ActionButton
+                disabled={!canOpenSource}
+                onClick={() => {
+                  if (canOpenSource && sourceUrl) onOpenSource(sourceUrl);
+                }}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                  {i18nService.t('nanoLibraryOpenSource')}
+                </span>
+              </ActionButton>
+            </div>
+          )}
         </div>
       </footer>
     </aside>
@@ -225,11 +246,13 @@ export const NanoPromptDetailDrawer: React.FC<NanoPromptDetailDrawerProps> = ({
 const ActionButton: React.FC<{
   children: React.ReactNode;
   onClick: () => void | Promise<void>;
-}> = ({ children, onClick }) => (
+  disabled?: boolean;
+}> = ({ children, onClick, disabled = false }) => (
   <button
     type="button"
+    disabled={disabled}
     onClick={() => void onClick()}
-    className="inline-flex items-center rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-raised"
+    className="inline-flex items-center rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
   >
     {children}
   </button>
