@@ -24,7 +24,13 @@ import type {
 import { t } from '../../i18n';
 import { type ApiConfigOverride,resolveCodexWesightApiConfig, resolveRawApiConfig } from '../claudeSettings';
 import { getElectronNodeRuntimePath, getEnhancedEnvWithTmpdir } from '../coworkUtil';
-import { cleanupWesightManagedCodexConfig } from '../externalAgentConfigSync';
+import {
+  acquireWesightClaudeRuntimeConfig,
+  applySingleClaudeCredentialEnv,
+  type ClaudeRuntimeConfigLease,
+  cleanupWesightManagedCodexConfig,
+  releaseWesightClaudeRuntimeConfig,
+} from '../externalAgentConfigSync';
 import {
   buildWindowsCommandShimArgs,
   isWindowsCommandShim,
@@ -163,6 +169,7 @@ type ActiveCliSession = {
   noContentTimeoutTimer: ReturnType<typeof setTimeout> | null;
   imagePaths: string[];
   codexHomeDir: string | null;
+  claudeRuntimeConfigLease: ClaudeRuntimeConfigLease | null;
   localClaudeConfig: LocalClaudeCodeEnvLoadResult | null;
   configSource: ExternalAgentConfigSource;
   codexGeneratedImageIds: Set<string>;
@@ -366,6 +373,22 @@ export class ExternalCliRuntimeAdapter extends EventEmitter implements CoworkRun
   private releaseActiveSession(active: ActiveCliSession): void {
     if (this.activeSessions.get(active.sessionId) === active) {
       this.activeSessions.delete(active.sessionId);
+      this.releaseClaudeRuntimeConfig(active);
+    }
+  }
+
+  private releaseClaudeRuntimeConfig(active: ActiveCliSession): void {
+    if (!active.claudeRuntimeConfigLease) return;
+    try {
+      const restored = releaseWesightClaudeRuntimeConfig(active.claudeRuntimeConfigLease);
+      console.log('[ExternalCliRuntimeAdapter] released Claude Code runtime settings.', {
+        settingsPath: active.claudeRuntimeConfigLease.settingsPath,
+        restored,
+      });
+    } catch (error) {
+      console.warn('[ExternalCliRuntimeAdapter] failed to restore Claude Code runtime settings:', error);
+    } finally {
+      active.claudeRuntimeConfigLease = null;
     }
   }
 
@@ -469,6 +492,42 @@ export class ExternalCliRuntimeAdapter extends EventEmitter implements CoworkRun
       claudeCodePermissionMode,
     );
     const spawnSpec = await this.resolveSpawnCommandSpec(command, args, env);
+    let claudeRuntimeConfigLease: ClaudeRuntimeConfigLease | null = null;
+    if (this.engine === CoworkAgentEngine.ClaudeCode && configSource === ExternalAgentConfigSource.WesightModel) {
+      const apiKey = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY || '';
+      const baseURL = env.ANTHROPIC_BASE_URL || '';
+      const model = env.ANTHROPIC_MODEL
+        || env.ANTHROPIC_DEFAULT_SONNET_MODEL
+        || env.ANTHROPIC_SMALL_FAST_MODEL
+        || '';
+      if (!apiKey || !baseURL || !model) {
+        this.cleanupImagePaths(imagePaths);
+        this.cleanupCodexHomeDir(codexHomeDir);
+        this.handleError(sessionId, 'Claude Code could not use WeSight model config: missing API key, base URL, or model.');
+        return;
+      }
+      try {
+        claudeRuntimeConfigLease = acquireWesightClaudeRuntimeConfig({
+          apiKey,
+          baseURL,
+          model,
+          apiType: 'anthropic',
+        });
+        applySingleClaudeCredentialEnv(env, apiKey, claudeRuntimeConfigLease.credentialKey);
+        console.log('[ExternalCliRuntimeAdapter] prepared Claude Code runtime settings.', {
+          settingsPath: claudeRuntimeConfigLease.settingsPath,
+          credentialKey: claudeRuntimeConfigLease.credentialKey,
+          baseUrl: claudeRuntimeConfigLease.baseURL,
+          model: claudeRuntimeConfigLease.model,
+        });
+      } catch (error) {
+        this.cleanupImagePaths(imagePaths);
+        this.cleanupCodexHomeDir(codexHomeDir);
+        const message = error instanceof Error ? error.message : 'Failed to prepare Claude Code runtime settings.';
+        this.handleError(sessionId, message);
+        return;
+      }
+    }
     if (this.engine === CoworkAgentEngine.ClaudeCode) {
       console.log('[ExternalCliRuntimeAdapter] starting Claude Code CLI.', {
         command: spawnSpec.command,
@@ -509,13 +568,29 @@ export class ExternalCliRuntimeAdapter extends EventEmitter implements CoworkRun
         promptChars: effectivePrompt.length,
       });
     }
-    const child = spawn(spawnSpec.command, spawnSpec.args, {
-      cwd,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: process.platform === 'win32',
-      windowsVerbatimArguments: spawnSpec.windowsVerbatimArguments,
-    });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(spawnSpec.command, spawnSpec.args, {
+        cwd,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: process.platform === 'win32',
+        windowsVerbatimArguments: spawnSpec.windowsVerbatimArguments,
+      });
+    } catch (error) {
+      this.cleanupImagePaths(imagePaths);
+      this.cleanupCodexHomeDir(codexHomeDir);
+      if (claudeRuntimeConfigLease) {
+        try {
+          releaseWesightClaudeRuntimeConfig(claudeRuntimeConfigLease);
+        } catch (releaseError) {
+          console.warn('[ExternalCliRuntimeAdapter] failed to restore Claude Code runtime settings after spawn failure:', releaseError);
+        }
+      }
+      const message = error instanceof Error ? error.message : 'Failed to spawn external CLI.';
+      this.handleError(sessionId, `${this.getEngineDisplayName()} failed to start: ${message}`);
+      return;
+    }
 
     const active: ActiveCliSession = {
       child,
@@ -535,6 +610,7 @@ export class ExternalCliRuntimeAdapter extends EventEmitter implements CoworkRun
       noContentTimeoutTimer: null,
       imagePaths,
       codexHomeDir,
+      claudeRuntimeConfigLease,
       localClaudeConfig,
       configSource,
       codexGeneratedImageIds: new Set(),

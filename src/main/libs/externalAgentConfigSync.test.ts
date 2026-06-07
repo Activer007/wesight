@@ -6,6 +6,7 @@ import { expect, test } from 'vitest';
 import { CoworkAgentEngine, ExternalAgentConfigSource } from '../../shared/cowork/constants';
 import { buildEnvForConfig } from './claudeSettings';
 import {
+  acquireWesightClaudeRuntimeConfig,
   applyExternalAgentConfigForEngine,
   cleanupWesightManagedClaudeSettings,
   cleanupWesightManagedCodexConfig,
@@ -13,6 +14,7 @@ import {
   mergeClaudeSettingsForWesightModel,
   mergeCodexConfigForLocalCli,
   mergeCodexConfigForWesightModel,
+  releaseWesightClaudeRuntimeConfig,
   removeWesightManagedClaudeSettings,
   writeTextFileWithBackupIfChanged,
 } from './externalAgentConfigSync';
@@ -259,8 +261,8 @@ test('mergeClaudeSettingsForWesightModel overwrites stale Claude Code model conf
 
   expect(merged.theme).toBe('dark');
   const env = merged.env as Record<string, unknown>;
-  expect(env.ANTHROPIC_API_KEY).toBe(apiConfig.apiKey);
   expect(env.ANTHROPIC_AUTH_TOKEN).toBe(apiConfig.apiKey);
+  expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   expect(env.FOO_TOKEN).toBe('keep-me');
   expect(env.ANTHROPIC_BASE_URL).toBe(apiConfig.baseURL);
   expect(env.ANTHROPIC_MODEL).toBe(apiConfig.model);
@@ -279,8 +281,8 @@ test('mergeClaudeSettingsForWesightModel replaces old WeSight placeholders with 
   }, apiConfig);
 
   const env = merged.env as Record<string, unknown>;
-  expect(env.ANTHROPIC_API_KEY).toBe(apiConfig.apiKey);
   expect(env.ANTHROPIC_AUTH_TOKEN).toBe(apiConfig.apiKey);
+  expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   expect(merged.hooks).toEqual({ Stop: [] });
   expect(JSON.stringify(merged)).not.toContain('${WESIGHT_APIKEY_ACTIVE_PROVIDER}');
   expect(JSON.stringify(merged)).toContain(apiConfig.apiKey);
@@ -301,6 +303,25 @@ test('mergeClaudeSettingsForWesightModel records all managed Claude env keys', (
     'ANTHROPIC_DEFAULT_HAIKU_MODEL',
     'ANTHROPIC_SMALL_FAST_MODEL',
   ]);
+});
+
+test('mergeClaudeSettingsForWesightModel respects an existing API key credential field', () => {
+  const merged = mergeClaudeSettingsForWesightModel({
+    env: {
+      ANTHROPIC_API_KEY: 'sk-local',
+      ANTHROPIC_BASE_URL: 'https://local.example/v1',
+    },
+  }, apiConfig);
+
+  const env = merged.env as Record<string, unknown>;
+  expect(env.ANTHROPIC_API_KEY).toBe(apiConfig.apiKey);
+  expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+
+  const cleaned = removeWesightManagedClaudeSettings(merged);
+  expect(cleaned.env).toEqual({
+    ANTHROPIC_API_KEY: 'sk-local',
+    ANTHROPIC_BASE_URL: 'https://local.example/v1',
+  });
 });
 
 test('removeWesightManagedClaudeSettings restores original Claude env keys', () => {
@@ -390,6 +411,51 @@ test('cleanupWesightManagedClaudeSettings restores settings on disk', () => {
   }
 });
 
+test('releaseWesightClaudeRuntimeConfig restores settings after the final lease', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wesight-claude-runtime-'));
+  const settingsPath = path.join(tempDir, 'settings.json');
+  try {
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      env: {
+        ANTHROPIC_API_KEY: 'sk-local',
+        ANTHROPIC_BASE_URL: 'https://api.minimaxi.com/anthropic',
+        ANTHROPIC_MODEL: 'MiniMax-M3',
+      },
+      theme: 'dark',
+    }), 'utf8');
+
+    const firstLease = acquireWesightClaudeRuntimeConfig(apiConfig, settingsPath);
+    const secondLease = acquireWesightClaudeRuntimeConfig({
+      ...apiConfig,
+      model: 'glm-second',
+    }, settingsPath);
+
+    let runtimeSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Record<string, unknown>;
+    let runtimeEnv = runtimeSettings.env as Record<string, unknown>;
+    expect(runtimeEnv.ANTHROPIC_API_KEY).toBe(apiConfig.apiKey);
+    expect(runtimeEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(runtimeEnv.ANTHROPIC_MODEL).toBe('glm-second');
+
+    expect(releaseWesightClaudeRuntimeConfig(firstLease)).toBe(false);
+    runtimeSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Record<string, unknown>;
+    runtimeEnv = runtimeSettings.env as Record<string, unknown>;
+    expect(runtimeEnv.ANTHROPIC_MODEL).toBe('glm-second');
+
+    expect(releaseWesightClaudeRuntimeConfig(secondLease)).toBe(true);
+    const restored = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Record<string, unknown>;
+    expect(restored).toEqual({
+      env: {
+        ANTHROPIC_API_KEY: 'sk-local',
+        ANTHROPIC_BASE_URL: 'https://api.minimaxi.com/anthropic',
+        ANTHROPIC_MODEL: 'MiniMax-M3',
+      },
+      theme: 'dark',
+    });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('createWesightClaudeSettingsBackup copies existing settings file', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wesight-claude-backup-'));
   const settingsPath = path.join(tempDir, 'settings.json');
@@ -472,7 +538,8 @@ test('buildEnvForConfig injects real secrets only into process env', () => {
   const env = buildEnvForConfig(apiConfig);
 
   expect(env.WESIGHT_APIKEY_ACTIVE_PROVIDER).toBe(apiConfig.apiKey);
-  expect(env.ANTHROPIC_API_KEY).toBe(apiConfig.apiKey);
+  expect(env.ANTHROPIC_AUTH_TOKEN).toBe(apiConfig.apiKey);
+  expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   expect(env.OPENAI_API_KEY).toBe(apiConfig.apiKey);
   expect(env.OPENAI_BASE_URL).toBe(apiConfig.baseURL);
   expect(env.OPENAI_MODEL).toBe(apiConfig.model);

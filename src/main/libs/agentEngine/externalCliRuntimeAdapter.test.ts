@@ -10,6 +10,7 @@ import {
 import { ProviderName } from '../../../shared/providers';
 import type { CoworkMessage, CoworkStore } from '../../coworkStore';
 import { setStoreGetter } from '../claudeSettings';
+import { acquireWesightClaudeRuntimeConfig } from '../externalAgentConfigSync';
 import type { ExternalAgentProvider } from '../externalAgentProviderStore';
 import {
   appendNodeRequireOption,
@@ -605,6 +606,62 @@ describe('ExternalCliRuntimeAdapter Codex local config', () => {
     expect(adapter.isSessionActive('session-1')).toBe(false);
     expect(completeSpy).toHaveBeenCalledWith('session-1', 'thread-1');
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  test('restores Claude Code runtime settings when releasing an active session', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wesight-claude-adapter-release-'));
+    const settingsPath = path.join(tempDir, 'settings.json');
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        env: {
+          ANTHROPIC_AUTH_TOKEN: 'sk-local',
+          ANTHROPIC_BASE_URL: 'https://api.minimaxi.com/anthropic',
+          ANTHROPIC_MODEL: 'MiniMax-M3.0',
+        },
+      }),
+      'utf8',
+    );
+
+    const { store } = createStore(ExternalAgentConfigSource.WesightModel);
+    const adapter = new ExternalCliRuntimeAdapter({
+      engine: CoworkAgentEngine.ClaudeCode,
+      store,
+    });
+    const lease = acquireWesightClaudeRuntimeConfig({
+      apiKey: 'sk-wesight',
+      baseURL: 'http://127.0.0.1:57057',
+      model: 'deepseek-v4-flash',
+      apiType: 'openai',
+    }, settingsPath);
+    const active = {
+      sessionId: 'session-1',
+      claudeRuntimeConfigLease: lease,
+    };
+    const internals = adapter as unknown as {
+      activeSessions: Map<string, typeof active>;
+      releaseActiveSession: (active: typeof active) => void;
+    };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    try {
+      internals.activeSessions.set('session-1', active);
+      internals.releaseActiveSession(active);
+
+      expect(adapter.isSessionActive('session-1')).toBe(false);
+      const restored = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Record<string, unknown>;
+      expect(restored).toEqual({
+        env: {
+          ANTHROPIC_AUTH_TOKEN: 'sk-local',
+          ANTHROPIC_BASE_URL: 'https://api.minimaxi.com/anthropic',
+          ANTHROPIC_MODEL: 'MiniMax-M3.0',
+        },
+      });
+      expect(active.claudeRuntimeConfigLease).toBeNull();
+    } finally {
+      logSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test('ignores late Codex output after turn completion', () => {

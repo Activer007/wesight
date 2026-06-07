@@ -657,8 +657,8 @@ export function buildEnvForConfig(config: CoworkApiConfig): Record<string, strin
   baseEnv.WESIGHT_APIKEY_ACTIVE_PROVIDER = config.apiKey;
   baseEnv.LOBSTER_PROVIDER_API_KEY = config.apiKey;
 
+  delete baseEnv.ANTHROPIC_API_KEY;
   baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-  baseEnv.ANTHROPIC_API_KEY = config.apiKey;
   baseEnv.ANTHROPIC_BASE_URL = config.baseURL;
   baseEnv.ANTHROPIC_MODEL = config.model;
   baseEnv.ANTHROPIC_REASONING_MODEL = config.model;

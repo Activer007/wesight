@@ -113,6 +113,7 @@ import {
 } from './libs/externalAgentCliInstaller';
 import {
   applyExternalAgentConfigForEngine,
+  cleanupWesightManagedClaudeSettings,
   importLocalAgentConfigToModelSettings,
   syncDeepSeekTuiGlobalConfigFromWesightModel,
   syncOpenCodeGlobalConfigFromWesightModel,
@@ -7744,6 +7745,7 @@ if (!gotTheLock) {
     | 'python_runtime'
     | 'skill_services'
     | 'app_config'
+    | 'claude_runtime_config_cleanup'
     | 'openai_compat_proxy'
     | 'im_gateways';
 
@@ -7772,6 +7774,7 @@ if (!gotTheLock) {
     'python_runtime',
     'skill_services',
     'app_config',
+    'claude_runtime_config_cleanup',
     'openai_compat_proxy',
     'im_gateways',
   ];
@@ -8182,6 +8185,12 @@ if (!gotTheLock) {
       const appConfig = getStore().get<AppConfigSettings>('app_config');
       markTiming('config_loaded_ms', configLoadStartedAt);
       await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
+    }, { degradedOnError: true });
+
+    await runStartupService('claude_runtime_config_cleanup', async () => {
+      if (cleanupWesightManagedClaudeSettings()) {
+        console.log('[ExternalAgentConfigSync] restored Claude Code settings from a previous WeSight runtime session.');
+      }
     }, { degradedOnError: true });
 
     await runStartupService('openai_compat_proxy', async () => {

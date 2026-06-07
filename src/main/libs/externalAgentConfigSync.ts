@@ -113,6 +113,8 @@ const CLAUDE_CREDENTIAL_ENV_KEYS = [
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_API_KEY',
 ] as const;
+export type ClaudeCredentialEnvKey = typeof CLAUDE_CREDENTIAL_ENV_KEYS[number];
+const DEFAULT_CLAUDE_CREDENTIAL_ENV_KEY: ClaudeCredentialEnvKey = 'ANTHROPIC_AUTH_TOKEN';
 const CLAUDE_MODEL_ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_MODEL',
@@ -126,6 +128,14 @@ const CLAUDE_MANAGED_ENV_KEYS = [
   ...CLAUDE_CREDENTIAL_ENV_KEYS,
   ...CLAUDE_MODEL_ENV_KEYS,
 ] as const;
+export type ClaudeRuntimeConfigLease = {
+  settingsPath: string;
+  credentialKey: ClaudeCredentialEnvKey;
+  baseURL: string;
+  model: string;
+};
+
+const claudeRuntimeTakeovers = new Map<string, { refCount: number }>();
 
 const homeDir = (): string => os.homedir();
 
@@ -230,6 +240,39 @@ const getNestedRecord = (value: unknown, key: string): Record<string, unknown> =
 
 const getString = (value: unknown): string => {
   return typeof value === 'string' ? value.trim() : '';
+};
+
+const isClaudeCredentialEnvKey = (value: unknown): value is ClaudeCredentialEnvKey => {
+  return value === 'ANTHROPIC_AUTH_TOKEN' || value === 'ANTHROPIC_API_KEY';
+};
+
+export const chooseClaudeCredentialEnvKey = (
+  existingEnv: Record<string, unknown>,
+  preferred?: unknown,
+): ClaudeCredentialEnvKey => {
+  if (isClaudeCredentialEnvKey(preferred)) {
+    return preferred;
+  }
+  const hasAuthToken = Object.prototype.hasOwnProperty.call(existingEnv, 'ANTHROPIC_AUTH_TOKEN');
+  const hasApiKey = Object.prototype.hasOwnProperty.call(existingEnv, 'ANTHROPIC_API_KEY');
+  if (hasAuthToken && !hasApiKey) {
+    return 'ANTHROPIC_AUTH_TOKEN';
+  }
+  if (hasApiKey && !hasAuthToken) {
+    return 'ANTHROPIC_API_KEY';
+  }
+  return DEFAULT_CLAUDE_CREDENTIAL_ENV_KEY;
+};
+
+export const applySingleClaudeCredentialEnv = (
+  env: Record<string, string | undefined>,
+  apiKey: string,
+  credentialKey: ClaudeCredentialEnvKey,
+): void => {
+  for (const key of CLAUDE_CREDENTIAL_ENV_KEYS) {
+    delete env[key];
+  }
+  env[credentialKey] = apiKey;
 };
 
 const getStringArray = (value: unknown): string[] => {
@@ -625,17 +668,15 @@ const requireApiConfig = (resolution: ReturnType<typeof resolveRawApiConfig>): C
 const buildClaudeEnvForConfig = (
   existingEnv: Record<string, unknown>,
   config: CoworkApiConfig,
+  credentialKey = chooseClaudeCredentialEnvKey(existingEnv),
 ): Record<string, unknown> => {
   const env = { ...existingEnv };
   for (const key of CLAUDE_CREDENTIAL_ENV_KEYS) {
-    if (isWesightPlaceholder(env[key])) {
-      delete env[key];
-    }
+    delete env[key];
   }
+  env[credentialKey] = config.apiKey;
   return {
     ...env,
-    ANTHROPIC_AUTH_TOKEN: config.apiKey,
-    ANTHROPIC_API_KEY: config.apiKey,
     ANTHROPIC_BASE_URL: config.baseURL,
     ANTHROPIC_MODEL: config.model,
     ANTHROPIC_REASONING_MODEL: config.model,
@@ -649,6 +690,7 @@ const buildClaudeEnvForConfig = (
 export const mergeClaudeSettingsForWesightModel = (
   existingSettings: Record<string, unknown>,
   config: CoworkApiConfig,
+  options: { credentialKey?: ClaudeCredentialEnvKey } = {},
 ): Record<string, unknown> => {
   const existingManaged = getNestedRecord(existingSettings, WESIGHT_MANAGED_META_KEY);
   const existingClaude = getNestedRecord(existingManaged, 'claudeCode');
@@ -688,8 +730,9 @@ export const mergeClaudeSettingsForWesightModel = (
     }
   }
 
-  const env = buildClaudeEnvForConfig(baselineEnv, config);
-  const envKeys = CLAUDE_MANAGED_ENV_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(env, key));
+  const credentialKey = chooseClaudeCredentialEnvKey(baselineEnv, options.credentialKey);
+  const env = buildClaudeEnvForConfig(baselineEnv, config, credentialKey);
+  const envKeys = [...CLAUDE_MANAGED_ENV_KEYS];
   return {
     ...existingSettings,
     env,
@@ -700,6 +743,7 @@ export const mergeClaudeSettingsForWesightModel = (
         envKeys,
         createdEnvKeys: envKeys.filter((key) => createdEnvKeys.has(key)),
         originalEnv,
+        credentialKey,
       },
     },
   };
@@ -715,6 +759,7 @@ const removeClaudeManagedMetadata = (
   delete claudeManaged.envKeys;
   delete claudeManaged.createdEnvKeys;
   delete claudeManaged.originalEnv;
+  delete claudeManaged.credentialKey;
 
   const managed = { ...existingManaged };
   if (Object.keys(claudeManaged).length > 0) {
@@ -784,8 +829,45 @@ export const createWesightClaudeSettingsBackup = (
   settingsPath = getCliConfigPaths('claude').primaryConfigPath,
 ): string | null => createWesightConfigFileBackup(settingsPath);
 
+export const acquireWesightClaudeRuntimeConfig = (
+  config: CoworkApiConfig,
+  settingsPath = getCliConfigPaths('claude').primaryConfigPath,
+): ClaudeRuntimeConfigLease => {
+  const resolvedSettingsPath = expandHome(settingsPath);
+  const existingSettings = readJsonObject(resolvedSettingsPath) ?? {};
+  const credentialKey = chooseClaudeCredentialEnvKey(getNestedRecord(existingSettings, 'env'));
+  const merged = mergeClaudeSettingsForWesightModel(existingSettings, config, { credentialKey });
+  writeJsonObjectWithBackupIfChanged(resolvedSettingsPath, merged);
+
+  const current = claudeRuntimeTakeovers.get(resolvedSettingsPath);
+  claudeRuntimeTakeovers.set(resolvedSettingsPath, {
+    refCount: (current?.refCount ?? 0) + 1,
+  });
+
+  return {
+    settingsPath: resolvedSettingsPath,
+    credentialKey,
+    baseURL: config.baseURL,
+    model: config.model,
+  };
+};
+
+export const releaseWesightClaudeRuntimeConfig = (lease: ClaudeRuntimeConfigLease | null): boolean => {
+  if (!lease) return false;
+  const current = claudeRuntimeTakeovers.get(lease.settingsPath);
+  if (!current) {
+    return cleanupWesightManagedClaudeSettings(lease.settingsPath);
+  }
+  if (current.refCount > 1) {
+    claudeRuntimeTakeovers.set(lease.settingsPath, { refCount: current.refCount - 1 });
+    return false;
+  }
+  claudeRuntimeTakeovers.delete(lease.settingsPath);
+  return cleanupWesightManagedClaudeSettings(lease.settingsPath);
+};
+
 const syncClaudeCodeFromWesightModel = (): void => {
-  console.log('[ExternalAgentConfigSync] preserving native Claude Code settings; WeSight model config will be injected at runtime.');
+  console.log('[ExternalAgentConfigSync] preserving native Claude Code settings; WeSight model config will be applied during Claude Code runtime.');
 };
 
 const syncCodexFromWesightModel = (): void => {
