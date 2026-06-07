@@ -1,5 +1,6 @@
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import { AgentRunTargetType, CoworkAgentEngine, DefaultAgent, ExternalAgentConfigSource } from '@shared/cowork/constants';
+import { buildFallbackSessionTitle } from '@shared/cowork/sessionTitle';
 import React, { useEffect, useRef,useState } from 'react';
 import { useDispatch,useSelector } from 'react-redux';
 
@@ -378,7 +379,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
       // Create a temporary session with user message to show immediately
       const tempSessionId = `temp-${Date.now()}`;
-      const fallbackTitle = prompt.split('\n')[0].slice(0, 50) || i18nService.t('coworkNewSession');
+      const fallbackTitle = buildFallbackSessionTitle(prompt, i18nService.t('coworkNewSession'));
       const now = Date.now();
 
       // Capture active skill IDs before clearing them
