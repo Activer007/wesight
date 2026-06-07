@@ -1778,16 +1778,27 @@ const mergeCodexAppStatus = (
 const summarizeAgentEngineProbeReport = (report: ExternalAgentEnvironmentProbeReport): void => {
   console.debug(`[AgentEngineSnapshot] refreshed CLI environment snapshot in ${report.durationMs}ms.`);
   for (const metric of report.metrics) {
-    if (metric.timedOut) {
-      console.debug(`[AgentEngineSnapshot] ${metric.command} probe timed out after ${metric.resolveMs + (metric.versionMs ?? 0)}ms.`);
+    const durationMs = metric.resolveMs + (metric.versionMs ?? 0);
+    const version = metric.version ? ` (${metric.version.replace(/\s+/g, ' ').slice(0, 80)})` : '';
+    const location = metric.path ? ` at ${metric.path}` : '';
+    if (metric.found) {
+      if (metric.timedOut) {
+        console.debug(`[AgentEngineSnapshot] ${metric.command} found${location}${version}, but version probe timed out after ${durationMs}ms.`);
+        continue;
+      }
+      console.debug(`[AgentEngineSnapshot] ${metric.command} found${location}${version} in ${durationMs}ms.`);
       continue;
     }
-    if (metric.error && !metric.found) {
+    if (metric.timedOut) {
+      console.debug(`[AgentEngineSnapshot] ${metric.command} probe timed out after ${durationMs}ms.`);
+      continue;
+    }
+    if (metric.error) {
       console.debug(`[AgentEngineSnapshot] ${metric.command} was not found after ${metric.resolveMs}ms.`);
       continue;
     }
-    console.debug(`[AgentEngineSnapshot] ${metric.command} probe completed in ${metric.resolveMs + (metric.versionMs ?? 0)}ms.`);
-  };
+    console.debug(`[AgentEngineSnapshot] ${metric.command} probe completed in ${durationMs}ms.`);
+  }
 };
 
 const broadcastAgentEngineSnapshotChanged = (response: AgentEngineSnapshotResponse): void => {
