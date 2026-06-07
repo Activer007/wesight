@@ -15,9 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   CreatorAssetAdoptionStatus,
-  CreatorBatchTaskStatus,
   CreatorBoardCardKind,
-  CreatorCoworkAction,
   CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingJobStatus,
@@ -41,9 +39,7 @@ import type {
   CreatorBrandKitRecord,
   CreatorCreativeModelCapability,
   CreatorProductionAssetRecord,
-  CreatorPromptSpecSnapshot,
   CreatorRecipeRecord,
-  CreatorStudioMessageMetadata,
   CreatorWorkspaceSnapshot,
 } from '@shared/creatorStudio/types';
 import {
@@ -63,7 +59,7 @@ import { nanoBananaService } from '../../services/nanoBanana';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
-import { setActiveSkillIds, setSkills } from '../../store/slices/skillSlice';
+import { setSkills } from '../../store/slices/skillSlice';
 import type {
   CreatorBuilderMaterial,
   CreatorMaterialImageAnalysis,
@@ -104,6 +100,9 @@ import {
   type NanoCreatorPromptSpecConversion,
   nanoPromptToCreatorPromptSpec,
 } from '../../utils/nanoPromptSpecAdapter';
+import { type CreatorCoworkSendOptions, useCreatorCoworkBridge } from './useCreatorCoworkBridge';
+import { useCreatorImageActions } from './useCreatorImageActions';
+import { useCreatorStartFlow } from './useCreatorStartFlow';
 
 const cases = casesData as CreatorStudioCase[];
 const styleLibrary = styleLibraryData as CreatorStudioStyleLibrary;
@@ -186,20 +185,6 @@ interface CreatorStudioViewProps {
   onSendToCowork: (draft: string, options: CreatorCoworkSendOptions) => void | Promise<void>;
   onOpenCoworkSession: (sessionId: string) => Promise<boolean>;
   updateBadge?: React.ReactNode;
-}
-
-interface CreatorCoworkSendOptions {
-  activeSkillIds: string[];
-  preferCreativeProducer?: boolean;
-  attachments?: CreatorCoworkDraftAttachment[];
-  messageMetadata?: Record<string, unknown>;
-}
-
-interface CreatorCoworkDraftAttachment {
-  path: string;
-  name: string;
-  isImage?: boolean;
-  dataUrl?: string;
 }
 
 const SeedreamStatus = {
@@ -362,41 +347,6 @@ const buildRecipeAutomationPrompt = (recipe: CreatorRecipeRecord): string => (
   ].join('\n')
 );
 
-const buildCreatorCoworkMessageMetadata = ({
-  promptSpec,
-  promptText,
-  activeSkillIds,
-  requestedAction,
-  source,
-}: {
-  promptSpec?: CreatorPromptSpecSnapshot | CreatorPromptSpecSnapshot[] | null;
-  promptText?: string;
-  activeSkillIds: string[];
-  requestedAction: CreatorCoworkAction;
-  source?: CreatorStudioMessageMetadata['creatorStudio']['source'];
-}): CreatorStudioMessageMetadata => {
-  const normalizedSource = {
-    studio: 'creator_studio',
-    ...(source ?? {}),
-  };
-  return {
-    creatorStudio: {
-      schemaVersion: 'creator.cowork.v1',
-      action: requestedAction,
-      promptSpec: promptSpec ?? null,
-      ...(promptText ? { promptText } : {}),
-      activeSkillIds,
-      source: normalizedSource,
-    },
-    domain: 'creator_studio',
-    promptSpec: promptSpec ?? null,
-    promptText,
-    activeSkillIds,
-    requestedAction,
-    source: normalizedSource,
-  };
-};
-
 const PlaceholderImage: React.FC<{
   src: string | null;
   alt: string;
@@ -483,7 +433,6 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const [builderMaterials, setBuilderMaterials] = useState<CreatorBuilderMaterial[]>([]);
   const [visibleCaseCount, setVisibleCaseCount] = useState(CASE_PAGE_SIZE);
   const [seedreamStatus, setSeedreamStatus] = useState<SeedreamStatus>(SeedreamStatus.Missing);
-  const [isSendingToCowork, setIsSendingToCowork] = useState(false);
   const [workspace, setWorkspace] = useState<CreatorWorkspaceSnapshot | null>(null);
   const [currentProjectId, setCurrentProjectId] = useState('');
   const [boardWorkspace, setBoardWorkspace] = useState<CreatorBoardWorkspaceSnapshot | null>(null);
@@ -678,6 +627,52 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     const installed = new Set(installedRecommendedSkillIds);
     return CREATOR_STUDIO_RECOMMENDED_SKILL_IDS.filter((skillId) => !installed.has(skillId));
   }, [installedRecommendedSkillIds]);
+  const openBuilderTab = useCallback(() => {
+    setActiveTab(CreatorStudioTab.Builder);
+  }, []);
+  const openImageToolsTab = useCallback(() => {
+    setActiveTab(CreatorStudioTab.ImageTools);
+  }, []);
+  const {
+    isSendingToCowork,
+    sendAssetToCowork,
+    sendBatchRunToCowork,
+    sendBatchTaskToCowork,
+    sendToCowork,
+  } = useCreatorCoworkBridge({
+    installedRecommendedSkillIds,
+    missingRecommendedSkillIds,
+    onSendToCowork,
+    onError: dispatchToast,
+  });
+  const {
+    openStartImageTools,
+    startFromBrief,
+    startFromLocalImages,
+  } = useCreatorStartFlow({
+    defaultBuilderForm,
+    createMaterialFromFile,
+    getFileSystemPath,
+    onError: dispatchToast,
+    onOpenBuilder: openBuilderTab,
+    onOpenImageTools: openImageToolsTab,
+    setBoardContextPack,
+    setBuilderForm,
+    setBuilderMaterials,
+    setBuilderSeed,
+    setImageToolsInitialFilePaths,
+  });
+  const {
+    cancelImageProcessingTask,
+    executeImageRecipe,
+    openImageProcessingReport,
+    retryImageProcessingTask,
+  } = useCreatorImageActions({
+    currentProjectId,
+    loadImageProcessingJobs,
+    loadProjectAssets,
+    onError: dispatchToast,
+  });
   const builderPromptLanguage = useMemo(
     () => normalizePromptLanguage(i18nService.getLanguage(), builderForm),
     [builderForm]
@@ -919,108 +914,6 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     }
     if (seed.sourceMode === CreatorPromptSourceMode.NanoRemix) {
       openInspiration(CreatorInspirationSubview.NanoLibrary);
-    }
-  };
-
-  const sendAssetToCowork = async (asset: CreatorProductionAssetRecord) => {
-    setIsSendingToCowork(true);
-    try {
-      dispatch(setActiveSkillIds(installedRecommendedSkillIds));
-      const promptText = asset.promptText || (asset.promptSpec ? JSON.stringify(asset.promptSpec, null, 2) : '');
-      const promptSpec = {
-        ...(asset.promptSpec ?? {}),
-        sourceTitle: asset.promptSpec?.sourceTitle ?? asset.fileName,
-        templateId: asset.templateId ?? asset.promptSpec?.templateId,
-        caseIds: asset.caseIds,
-        variantOfAssetId: asset.id,
-      };
-      await onSendToCowork([
-        '[Creator Studio]',
-        '',
-        i18nService.t('creatorAssetCoworkDraftIntro'),
-        '',
-        `assetId: ${asset.id}`,
-        `templateId: ${asset.templateId || 'none'}`,
-        `caseIds: ${asset.caseIds.length > 0 ? asset.caseIds.join(', ') : 'none'}`,
-        `variantOfAssetId: ${asset.id}`,
-        `localPath: ${asset.filePath}`,
-        '',
-        'PromptSpec:',
-        '```json',
-        JSON.stringify(promptSpec, null, 2),
-        '```',
-        '',
-        'Prompt:',
-        '```text',
-        promptText,
-        '```',
-      ].join('\n'), {
-        activeSkillIds: installedRecommendedSkillIds,
-        preferCreativeProducer: true,
-        messageMetadata: buildCreatorCoworkMessageMetadata({
-          promptSpec,
-          promptText,
-          activeSkillIds: installedRecommendedSkillIds,
-          requestedAction: CreatorCoworkAction.AssetVariant,
-          source: {
-            assetId: asset.id,
-            sourceType: 'asset',
-            templateId: asset.templateId,
-            caseIds: asset.caseIds,
-          },
-        }),
-      });
-    } catch {
-      dispatchToast(i18nService.t('creatorSendToCoworkFailed'));
-    } finally {
-      setIsSendingToCowork(false);
-    }
-  };
-
-  const sendToCowork = async (
-    promptSpec: CreatorPromptSpec,
-    promptText: string,
-    materials: CreatorBuilderMaterial[],
-    requestImageGeneration = false
-  ): Promise<boolean> => {
-    setIsSendingToCowork(true);
-    try {
-      dispatch(setActiveSkillIds(installedRecommendedSkillIds));
-      const compiled = compileCreatorPrompt({
-        spec: promptSpec,
-        target: CreatorPromptCompileTarget.CoworkDraft,
-        materials,
-        runtime: {
-          installedSkillIds: installedRecommendedSkillIds,
-          missingSkillIds: missingRecommendedSkillIds,
-          requestImageGeneration,
-        },
-      });
-      await onSendToCowork(compiled.draftText ?? promptText, {
-        activeSkillIds: installedRecommendedSkillIds,
-        preferCreativeProducer: true,
-        attachments: compiled.attachments,
-        messageMetadata: buildCreatorCoworkMessageMetadata({
-          promptSpec: compiled.promptSpec,
-          promptText: compiled.promptText,
-          activeSkillIds: installedRecommendedSkillIds,
-          requestedAction: requestImageGeneration ? CreatorCoworkAction.StartGeneration : CreatorCoworkAction.PromptDraft,
-          source: {
-            sourceType: promptSpec.sourceType,
-            sourceMode: promptSpec.sourceMode,
-            sourceId: promptSpec.sourceId,
-            sourceTitle: promptSpec.sourceTitle,
-            templateId: promptSpec.templateId,
-            caseIds: promptSpec.caseIds,
-          },
-        }),
-      });
-      return true;
-    } catch {
-      dispatchToast(i18nService.t('creatorSendToCoworkFailed'));
-      return false;
-    } finally {
-      setIsSendingToCowork(false);
     }
   };
 
@@ -1477,43 +1370,6 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     }
   };
 
-  const startFromBrief = (brief: string, materials: CreatorBuilderMaterial[] = []) => {
-    const result = applyCreatorBriefAutofill(defaultBuilderForm, brief);
-    setBuilderSeed(null);
-    setBuilderForm(result.form);
-    setBuilderMaterials(materials);
-    setBoardContextPack('');
-    setActiveTab(CreatorStudioTab.Builder);
-  };
-
-  const startFromLocalImages = async (files: File[], brief: string) => {
-    const imageFiles = files.filter((file) => file.type.startsWith('image/'));
-    if (imageFiles.length === 0 && !brief.trim()) return;
-    try {
-      const materials = await Promise.all(imageFiles.map((file) => createMaterialFromFile(file, CreatorMaterialSource.File)));
-      const filePaths = imageFiles.map(getFileSystemPath).filter((path): path is string => Boolean(path));
-      if (filePaths.length > 0) {
-        setImageToolsInitialFilePaths(filePaths);
-        setActiveTab(CreatorStudioTab.ImageTools);
-        if (brief.trim()) {
-          const result = applyCreatorBriefAutofill(defaultBuilderForm, brief);
-          setBuilderSeed(null);
-          setBuilderForm(result.form);
-          setBuilderMaterials(materials);
-          setBoardContextPack('');
-        }
-        return;
-      }
-      startFromBrief(brief, materials);
-    } catch {
-      dispatchToast(i18nService.t('creatorStartMaterialImportFailed'));
-    }
-  };
-
-  const openStartImageTools = () => {
-    setActiveTab(CreatorStudioTab.ImageTools);
-  };
-
   const createBatchRun = async (input: CreatorBatchRunCreateInput) => {
     setIsCreatingBatchRun(true);
     try {
@@ -1571,62 +1427,6 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       }
     } catch (error) {
       dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorBatchRetryFailed'));
-    }
-  };
-
-  const retryImageProcessingTask = async (taskId: string) => {
-    if (!currentProjectId) return;
-    try {
-      await creatorStudioAssetService.retryImageTask({ taskId });
-      await Promise.all([
-        loadImageProcessingJobs(currentProjectId),
-        loadProjectAssets(currentProjectId),
-      ]);
-      dispatchToast(i18nService.t('creatorImageBatchRetryDone'));
-    } catch (error) {
-      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageBatchRetryFailed'));
-    }
-  };
-
-  const cancelImageProcessingTask = async (taskId: string) => {
-    if (!currentProjectId) return;
-    try {
-      await creatorStudioAssetService.cancelImageTask({ taskId });
-      await loadImageProcessingJobs(currentProjectId);
-      dispatchToast(i18nService.t('creatorImageBatchCancelDone'));
-    } catch (error) {
-      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageBatchCancelFailed'));
-    }
-  };
-
-  const openImageProcessingReport = async (jobId: string) => {
-    try {
-      await creatorStudioAssetService.openImageReport({ jobId });
-    } catch (error) {
-      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingReportOpenFailed'));
-    }
-  };
-
-  const executeImageRecipe = async (
-    asset: CreatorProductionAssetRecord,
-    recipe: CreatorRecipeRecord,
-  ) => {
-    try {
-      const result = await creatorStudioAssetService.executeImageRecipe({
-        recipeId: recipe.id,
-        assetId: asset.id,
-      });
-      await Promise.all([
-        loadProjectAssets(asset.projectId),
-        loadImageProcessingJobs(asset.projectId),
-      ]);
-      dispatchToast(
-        result.outputAssetIds.length > 0
-          ? i18nService.t('creatorImageRecipeExecuted')
-          : i18nService.t('creatorImageProcessingCompleted')
-      );
-    } catch (error) {
-      dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageRecipeExecuteFailed'));
     }
   };
 
@@ -1699,114 +1499,6 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       dispatchToast(i18nService.t('creatorRecipeSaved'));
     } catch (error) {
       dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorRecipeSaveFailed'));
-    }
-  };
-
-  const sendBatchTaskToCowork = async (task: CreatorBatchTaskRecord) => {
-    setIsSendingToCowork(true);
-    try {
-      dispatch(setActiveSkillIds(installedRecommendedSkillIds));
-      await onSendToCowork([
-        '[Creator Studio]',
-        '',
-        i18nService.t('creatorBatchCoworkDraftIntro'),
-        '',
-        `batchRunId: ${task.batchRunId}`,
-        `batchTaskId: ${task.id}`,
-        `directionId: ${task.directionId}`,
-        `modelId: ${task.modelId}`,
-        `modelName: ${task.modelName}`,
-        `templateId: ${task.templateId}`,
-        `size: ${task.size}`,
-        '',
-        'PromptSpec:',
-        '```json',
-        JSON.stringify(task.promptSpec, null, 2),
-        '```',
-        '',
-        'Prompt:',
-        '```text',
-        task.promptText,
-        '```',
-      ].join('\n'), {
-        activeSkillIds: installedRecommendedSkillIds,
-        preferCreativeProducer: true,
-        messageMetadata: buildCreatorCoworkMessageMetadata({
-          promptSpec: task.promptSpec,
-          promptText: task.promptText,
-          activeSkillIds: installedRecommendedSkillIds,
-          requestedAction: CreatorCoworkAction.BatchTask,
-          source: {
-            batchRunId: task.batchRunId,
-            batchTaskId: task.id,
-            directionId: task.directionId,
-            modelId: task.modelId,
-            templateId: task.templateId,
-            size: task.size,
-          },
-        }),
-      });
-    } catch {
-      dispatchToast(i18nService.t('creatorSendToCoworkFailed'));
-    } finally {
-      setIsSendingToCowork(false);
-    }
-  };
-
-  const sendBatchRunToCowork = async (batchRun: CreatorBatchRunRecord) => {
-    const pendingTasks = batchRun.tasks.filter((task) => task.status === CreatorBatchTaskStatus.Pending);
-    if (pendingTasks.length === 0) {
-      dispatchToast(i18nService.t('creatorBatchNoPendingTasks'));
-      return;
-    }
-    setIsSendingToCowork(true);
-    try {
-      dispatch(setActiveSkillIds(installedRecommendedSkillIds));
-      await onSendToCowork([
-        '[Creator Studio]',
-        '',
-        i18nService.t('creatorBatchRunCoworkDraftIntro'),
-        '',
-        `batchRunId: ${batchRun.id}`,
-        `briefTitle: ${batchRun.briefTitle}`,
-        `taskCount: ${pendingTasks.length}`,
-        `models: ${batchRun.summary.modelNames.join(', ')}`,
-        `sizes: ${batchRun.summary.sizes.join(', ')}`,
-        `costField: ${batchRun.summary.estimatedCostUnits} ${batchRun.summary.costUnitLabel}`,
-        '',
-        'Batch Tasks:',
-        '```json',
-        JSON.stringify(pendingTasks.map((task) => ({
-          batchTaskId: task.id,
-          directionId: task.directionId,
-          directionTitle: task.directionTitle,
-          modelId: task.modelId,
-          modelName: task.modelName,
-          templateId: task.templateId,
-          size: task.size,
-          promptSpec: task.promptSpec,
-          prompt: task.promptText,
-        })), null, 2),
-        '```',
-      ].join('\n'), {
-        activeSkillIds: installedRecommendedSkillIds,
-        preferCreativeProducer: true,
-        messageMetadata: buildCreatorCoworkMessageMetadata({
-          promptSpec: pendingTasks.map((task) => task.promptSpec),
-          activeSkillIds: installedRecommendedSkillIds,
-          requestedAction: CreatorCoworkAction.BatchRun,
-          source: {
-            batchRunId: batchRun.id,
-            briefTitle: batchRun.briefTitle,
-            taskIds: pendingTasks.map((task) => task.id),
-            taskCount: pendingTasks.length,
-          },
-        }),
-      });
-    } catch {
-      dispatchToast(i18nService.t('creatorSendToCoworkFailed'));
-    } finally {
-      setIsSendingToCowork(false);
     }
   };
 
