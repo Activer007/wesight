@@ -167,6 +167,8 @@ const CreatorImageToolTask = {
 
 type CreatorImageToolTask = typeof CreatorImageToolTask[keyof typeof CreatorImageToolTask];
 
+const CreatorImageToolCompressionFallbackFormat = CreatorImageProcessingOutputFormat.Webp;
+
 const WINNING_ASSET_ADOPTION_STATUSES = new Set<string>([
   CreatorAssetAdoptionStatus.Adopted,
   CreatorAssetAdoptionStatus.Shortlisted,
@@ -2333,18 +2335,30 @@ const CreatorImageToolsPanel: React.FC<{
     setIsCreatingBatch(true);
     setStatus('');
     try {
-      await creatorStudioAssetService.createImageBatch({
-        projectId,
-        assetIds: selectedAssets.map((asset) => asset.id),
-        waitForCompletion: false,
-        outputFormat: CreatorImageProcessingOutputFormat.Webp,
-        quality: mode === CreatorImageToolBatchMode.Compress
-          ? 72
-          : Number.isFinite(parsedQuality) && parsedQuality > 0 ? parsedQuality : 82,
-        ...(mode === CreatorImageToolBatchMode.Resize && Number.isFinite(parsedMaxWidth) && parsedMaxWidth > 0 ? { maxWidth: parsedMaxWidth } : {}),
-        ...(mode === CreatorImageToolBatchMode.Resize && Number.isFinite(parsedMaxHeight) && parsedMaxHeight > 0 ? { maxHeight: parsedMaxHeight } : {}),
-      });
-      setStatus(i18nService.t('creatorImageBatchCreated'));
+      if (mode === CreatorImageToolBatchMode.Compress) {
+        const assetsByFormat = groupImageToolAssetsByCompressionFormat(selectedAssets);
+        await Promise.all([...assetsByFormat.entries()].map(([outputFormat, groupedAssets]) => (
+          creatorStudioAssetService.createImageBatch({
+            projectId,
+            assetIds: groupedAssets.map((asset) => asset.id),
+            waitForCompletion: false,
+            outputFormat,
+            quality: 72,
+          })
+        )));
+        setStatus(i18nService.t('creatorImageBatchCompressCreated'));
+      } else {
+        await creatorStudioAssetService.createImageBatch({
+          projectId,
+          assetIds: selectedAssets.map((asset) => asset.id),
+          waitForCompletion: false,
+          outputFormat: CreatorImageProcessingOutputFormat.Webp,
+          quality: Number.isFinite(parsedQuality) && parsedQuality > 0 ? parsedQuality : 82,
+          ...(mode === CreatorImageToolBatchMode.Resize && Number.isFinite(parsedMaxWidth) && parsedMaxWidth > 0 ? { maxWidth: parsedMaxWidth } : {}),
+          ...(mode === CreatorImageToolBatchMode.Resize && Number.isFinite(parsedMaxHeight) && parsedMaxHeight > 0 ? { maxHeight: parsedMaxHeight } : {}),
+        });
+        setStatus(i18nService.t('creatorImageBatchCreated'));
+      }
       setSelectedAssetIds(new Set());
       onAssetsChanged();
       onRefreshJobs();
@@ -2618,6 +2632,28 @@ const getImageToolsImportSummary = (
     .replace('{skipped}', String(skipped))
     .replace('{failures}', String(failures))
 );
+
+const getImageToolCompressionOutputFormat = (
+  asset: CreatorProductionAssetRecord
+): CreatorImageProcessingOutputFormat => {
+  const rawFormat = `${asset.imageMetadata?.format ?? ''} ${asset.mimeType ?? ''}`.toLowerCase();
+  if (rawFormat.includes('jpeg') || rawFormat.includes('jpg')) return CreatorImageProcessingOutputFormat.Jpeg;
+  if (rawFormat.includes('png')) return CreatorImageProcessingOutputFormat.Png;
+  if (rawFormat.includes('webp')) return CreatorImageProcessingOutputFormat.Webp;
+  if (rawFormat.includes('avif')) return CreatorImageProcessingOutputFormat.Avif;
+  return CreatorImageToolCompressionFallbackFormat;
+};
+
+const groupImageToolAssetsByCompressionFormat = (
+  assets: CreatorProductionAssetRecord[]
+): Map<CreatorImageProcessingOutputFormat, CreatorProductionAssetRecord[]> => {
+  const groups = new Map<CreatorImageProcessingOutputFormat, CreatorProductionAssetRecord[]>();
+  assets.forEach((asset) => {
+    const outputFormat = getImageToolCompressionOutputFormat(asset);
+    groups.set(outputFormat, [...(groups.get(outputFormat) ?? []), asset]);
+  });
+  return groups;
+};
 
 const formatCreatorImageToolFileSize = (bytes: number | null | undefined): string => {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
@@ -3198,8 +3234,16 @@ const PromptBuilder: React.FC<{
                 <span className="rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
                   {getSourceModeLabel(sourceMode)}
                 </span>
-                {promptSpec.templateId && <span className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-muted">template: {promptSpec.templateId}</span>}
-                {promptSpec.caseIds.length > 0 && <span className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-muted">cases: {promptSpec.caseIds.length}</span>}
+                {promptSpec.templateId && (
+                  <span className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-muted">
+                    {i18nService.t('creatorBuilderSourceTemplateApplied')}
+                  </span>
+                )}
+                {promptSpec.caseIds.length > 0 && (
+                  <span className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-muted">
+                    {i18nService.t('creatorBuilderSourceCaseCount').replace('{count}', String(promptSpec.caseIds.length))}
+                  </span>
+                )}
               </div>
               <div className="mt-2 break-words text-sm font-semibold">{promptSpec.sourceTitle}</div>
               <p className="mt-1 text-xs leading-5 text-muted">{getSourceModeHint(sourceMode)}</p>

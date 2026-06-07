@@ -32,6 +32,12 @@ Date: 2026-06-07
 - Production run tracking remains metadata-first; text parsing is fallback only.
 - Manual end-to-end checks are recorded in `wesight-development-guide/docs/TASK-03.md` for brief first order, case-to-Builder, drag-to-process, Cowork result quick edit, metadata-first provenance, and lazy chunk observation.
 
+## Follow-up refinements
+
+- Image Tools now keeps task semantics separate: Compress groups selected assets by detected source format and preserves PNG/JPEG/WebP/AVIF when possible, while Convert to WebP always creates WebP outputs.
+- Builder default source chips no longer expose raw `template:` or `cases:` field labels; they use creator-facing labels for template origin and reference case count.
+- Start Generation remains explicitly a Cowork generation draft that requires user confirmation until a direct background generation runtime is available.
+
 ## Manual end-to-end checklist
 
 1. Brief first order: open Creator Studio Start, enter one brief, send to Cowork draft or Start Generation, and confirm `metadata.creatorStudio.action` distinguishes `prompt_draft` and `start_generation`.
