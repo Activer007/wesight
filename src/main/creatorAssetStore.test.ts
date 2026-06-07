@@ -11,6 +11,7 @@ import {
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
   CreatorBoardMoveDirection,
+  CreatorCoworkAction,
   CreatorImageAssetQuality,
   CreatorImageMetadataStatus,
   CreatorImageProcessingCreatedBy,
@@ -223,6 +224,75 @@ describe('CreatorAssetStore', () => {
     };
     expect(run.status).toBe(CreatorProductionRunStatus.Completed);
     expect(run.variant_of_asset_id).toBe('asset-parent');
+  });
+
+  test('uses creator studio message metadata before edited draft text for run and asset provenance', () => {
+    db.prepare('INSERT INTO cowork_sessions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('session-metadata', 'Creative Producer', 'running', 1, 1);
+
+    const promptSpec = {
+      schemaVersion: CreatorPromptSpecSchemaVersion.V1,
+      templateId: 'metadata-template',
+      caseIds: ['metadata-case'],
+      sourceTitle: 'Metadata Source',
+      variantOfAssetId: 'metadata-parent',
+      selectedCreativeDirectionId: 'metadata-direction',
+    };
+
+    store.handleCoworkMessageInserted({
+      sessionId: 'session-metadata',
+      message: {
+        id: 'message-user-metadata',
+        type: 'user',
+        content: 'User edited this draft and removed the structured Creator Studio text.',
+        timestamp: 10,
+        sequence: 1,
+        metadata: {
+          creatorStudio: {
+            schemaVersion: 'creator.cowork.v1',
+            action: CreatorCoworkAction.StartGeneration,
+            promptSpec,
+            promptText: 'Generate from metadata.',
+            activeSkillIds: ['seedream'],
+            source: {
+              sourceType: 'template',
+              sourceId: 'metadata-template',
+              sourceTitle: 'Metadata Source',
+              templateId: 'metadata-template',
+              caseIds: ['metadata-case'],
+            },
+          },
+        },
+      },
+    });
+
+    store.handleCoworkMessageInserted({
+      sessionId: 'session-metadata',
+      message: {
+        id: 'message-assistant-metadata',
+        type: 'assistant',
+        content: 'Generated image',
+        timestamp: 20,
+        sequence: 2,
+        metadata: {
+          generatedImages: [{ path: '/tmp/generated-from-metadata.png' }],
+        },
+      },
+    });
+
+    const asset = store.listAssets().assets[0];
+    expect(asset.templateId).toBe('metadata-template');
+    expect(asset.caseIds).toEqual(['metadata-case']);
+    expect(asset.promptText).toBe('Generate from metadata.');
+    expect(asset.variantOfAssetId).toBe('metadata-parent');
+    expect(asset.selectedDirectionId).toBe('metadata-direction');
+
+    const run = db.prepare('SELECT prompt_text, prompt_spec FROM production_runs WHERE session_id = ?').get('session-metadata') as {
+      prompt_text: string;
+      prompt_spec: string;
+    };
+    expect(run.prompt_text).toBe('Generate from metadata.');
+    expect(JSON.parse(run.prompt_spec).templateId).toBe('metadata-template');
   });
 
   test('projects image metadata from production asset metadata json', () => {

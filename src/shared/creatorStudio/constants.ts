@@ -175,6 +175,29 @@ export const CreatorProductionRunSourceValues = [
   CreatorProductionRunSource.CreatorStudio,
 ] as const;
 
+export const CreatorCoworkAction = {
+  PromptDraft: 'prompt_draft',
+  StartGeneration: 'start_generation',
+  AssetVariant: 'asset_variant',
+  BatchTask: 'batch_task',
+  BatchRun: 'batch_run',
+} as const;
+
+export type CreatorCoworkAction =
+  typeof CreatorCoworkAction[keyof typeof CreatorCoworkAction];
+
+export const CreatorCoworkActionValues = [
+  CreatorCoworkAction.PromptDraft,
+  CreatorCoworkAction.StartGeneration,
+  CreatorCoworkAction.AssetVariant,
+  CreatorCoworkAction.BatchTask,
+  CreatorCoworkAction.BatchRun,
+] as const;
+
+export const isCreatorCoworkAction = (value: unknown): value is CreatorCoworkAction => (
+  typeof value === 'string' && (CreatorCoworkActionValues as readonly string[]).includes(value)
+);
+
 export const CreatorAssetAdoptionStatus = {
   Unset: 'unset',
   Favorite: 'favorite',

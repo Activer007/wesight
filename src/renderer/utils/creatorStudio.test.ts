@@ -337,7 +337,8 @@ describe('creator studio prompt utilities', () => {
       requestImageGeneration: true,
     });
 
-    expect(draft).toContain('if the Seedream skill and API configuration are available, generate the image first');
+    expect(draft).toContain('start generation after the user confirms');
+    expect(draft).toContain('If the Seedream skill and API configuration are available, generate the image first');
   });
 
   test('detects seedream API configuration keys', () => {

@@ -17,6 +17,7 @@ import {
   CreatorAssetAdoptionStatus,
   CreatorBatchTaskStatus,
   CreatorBoardCardKind,
+  CreatorCoworkAction,
   CreatorImageAssetQuality,
   CreatorImageProcessingJobStatus,
   CreatorImageProcessingOutputFormat,
@@ -39,7 +40,9 @@ import type {
   CreatorBrandKitRecord,
   CreatorCreativeModelCapability,
   CreatorProductionAssetRecord,
+  CreatorPromptSpecSnapshot,
   CreatorRecipeRecord,
+  CreatorStudioMessageMetadata,
   CreatorWorkspaceSnapshot,
 } from '@shared/creatorStudio/types';
 import {
@@ -350,22 +353,33 @@ const buildCreatorCoworkMessageMetadata = ({
   requestedAction,
   source,
 }: {
-  promptSpec?: unknown;
+  promptSpec?: CreatorPromptSpecSnapshot | CreatorPromptSpecSnapshot[] | null;
   promptText?: string;
   activeSkillIds: string[];
-  requestedAction: string;
-  source?: Record<string, unknown>;
-}): Record<string, unknown> => ({
-  domain: 'creator_studio',
-  promptSpec,
-  promptText,
-  activeSkillIds,
-  requestedAction,
-  source: {
+  requestedAction: CreatorCoworkAction;
+  source?: CreatorStudioMessageMetadata['creatorStudio']['source'];
+}): CreatorStudioMessageMetadata => {
+  const normalizedSource = {
     studio: 'creator_studio',
     ...(source ?? {}),
-  },
-});
+  };
+  return {
+    creatorStudio: {
+      schemaVersion: 'creator.cowork.v1',
+      action: requestedAction,
+      promptSpec: promptSpec ?? null,
+      ...(promptText ? { promptText } : {}),
+      activeSkillIds,
+      source: normalizedSource,
+    },
+    domain: 'creator_studio',
+    promptSpec: promptSpec ?? null,
+    promptText,
+    activeSkillIds,
+    requestedAction,
+    source: normalizedSource,
+  };
+};
 
 const PlaceholderImage: React.FC<{
   src: string | null;
@@ -912,7 +926,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
           promptSpec,
           promptText,
           activeSkillIds: installedRecommendedSkillIds,
-          requestedAction: 'asset_variant',
+          requestedAction: CreatorCoworkAction.AssetVariant,
           source: {
             assetId: asset.id,
             sourceType: 'asset',
@@ -955,7 +969,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
           promptSpec: compiled.promptSpec,
           promptText: compiled.promptText,
           activeSkillIds: installedRecommendedSkillIds,
-          requestedAction: requestImageGeneration ? 'image_generation' : 'prompt_draft',
+          requestedAction: requestImageGeneration ? CreatorCoworkAction.StartGeneration : CreatorCoworkAction.PromptDraft,
           source: {
             sourceType: promptSpec.sourceType,
             sourceMode: promptSpec.sourceMode,
@@ -1675,7 +1689,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
           promptSpec: task.promptSpec,
           promptText: task.promptText,
           activeSkillIds: installedRecommendedSkillIds,
-          requestedAction: 'batch_task',
+          requestedAction: CreatorCoworkAction.BatchTask,
           source: {
             batchRunId: task.batchRunId,
             batchTaskId: task.id,
@@ -1734,7 +1748,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         messageMetadata: buildCreatorCoworkMessageMetadata({
           promptSpec: pendingTasks.map((task) => task.promptSpec),
           activeSkillIds: installedRecommendedSkillIds,
-          requestedAction: 'batch_run',
+          requestedAction: CreatorCoworkAction.BatchRun,
           source: {
             batchRunId: batchRun.id,
             briefTitle: batchRun.briefTitle,
@@ -3795,7 +3809,7 @@ const PromptBuilder: React.FC<{
                 <button
                   type="button"
                   disabled={!seedreamReady || isSendingToCowork || hasLintErrors}
-                  title={hasLintErrors ? i18nService.t('creatorPromptLintBlocksExecution') : seedreamHint}
+                  title={hasLintErrors ? i18nService.t('creatorPromptLintBlocksExecution') : i18nService.t('creatorGenerateWithSeedreamHint')}
                   onClick={() => onSendToCowork(promptSpec, prompt, materials, true)}
                   className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
                 >
