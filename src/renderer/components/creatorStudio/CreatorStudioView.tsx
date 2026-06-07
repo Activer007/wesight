@@ -55,7 +55,6 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { DeliveryMode, PayloadKind, ScheduleKind, SessionTarget, WakeMode } from '../../../scheduledTask/constants';
 import casesData from '../../data/creatorStudio/cases.json';
-import manifestData from '../../data/creatorStudio/manifest.json';
 import styleLibraryData from '../../data/creatorStudio/style-library.json';
 import { creatorStudioAssetService } from '../../services/creatorStudioAssets';
 import { i18nService } from '../../services/i18n';
@@ -70,7 +69,6 @@ import type {
   CreatorPromptReferenceAnalysis,
   CreatorPromptSpec,
   CreatorStudioCase,
-  CreatorStudioManifest,
   CreatorStudioStyleLibrary,
   CreatorStudioTemplate,
   CreatorTemplateFieldSchema,
@@ -108,7 +106,6 @@ import {
 
 const cases = casesData as CreatorStudioCase[];
 const styleLibrary = styleLibraryData as CreatorStudioStyleLibrary;
-const manifest = manifestData as CreatorStudioManifest;
 
 const CreatorAssetGrid = React.lazy(() => import('./CreatorAssetGrid').then((module) => ({ default: module.CreatorAssetGrid })));
 const CreatorBatchPanel = React.lazy(() => import('./CreatorBatchPanel').then((module) => ({ default: module.CreatorBatchPanel })));
