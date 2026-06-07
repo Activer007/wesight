@@ -204,6 +204,7 @@ export interface CreatorPromptSpecProvenanceV1 {
 }
 
 export interface CreatorStudioSourceContext {
+  requestedAction: CreatorCoworkAction | null;
   templateId: string | null;
   caseIds: string[];
   promptSpec: CreatorPromptSpecSnapshot | null;
