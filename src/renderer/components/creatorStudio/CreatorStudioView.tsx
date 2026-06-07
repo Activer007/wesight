@@ -521,6 +521,12 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     setImageProcessingJobs(result.jobs);
   }, []);
 
+  const loadModelCapabilities = useCallback(async () => {
+    const result = await creatorStudioAssetService.listModelCapabilities();
+    setModelCapabilities(result);
+    return result;
+  }, []);
+
   const loadRecipes = useCallback(async (projectId: string) => {
     const result = await creatorStudioAssetService.listRecipes({ projectId, limit: 50 });
     setRecipes(result.recipes);
@@ -539,36 +545,48 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   }, [loadWorkspace]);
 
   useEffect(() => {
+    setBoardWorkspace(null);
+    setBoardContextPack('');
+    setBatchRuns([]);
+    setActiveBatchRun(null);
+    setImageProcessingJobs([]);
+    setRecipes([]);
+  }, [currentProjectId]);
+
+  useEffect(() => {
     if (!currentProjectId) return;
+    if (activeTab !== CreatorStudioTab.Builder && activeTab !== CreatorStudioTab.Board) return;
     void loadBoardWorkspace(currentProjectId).catch(() => {
       dispatchToast(i18nService.t('creatorBoardLoadFailed'));
     });
-  }, [currentProjectId, loadBoardWorkspace]);
+  }, [activeTab, currentProjectId, loadBoardWorkspace]);
 
   useEffect(() => {
-    void creatorStudioAssetService.listModelCapabilities()
-      .then(setModelCapabilities)
+    if (activeTab !== CreatorStudioTab.Batch) return;
+    void loadModelCapabilities()
       .catch(() => {
         dispatchToast(i18nService.t('creatorBatchModelLoadFailed'));
       });
-  }, []);
+  }, [activeTab, loadModelCapabilities]);
 
   useEffect(() => {
     if (!currentProjectId) return;
+    if (activeTab !== CreatorStudioTab.Builder && activeTab !== CreatorStudioTab.Batch) return;
     void loadBatchRuns(currentProjectId).catch(() => {
       dispatchToast(i18nService.t('creatorBatchLoadFailed'));
     });
-  }, [currentProjectId, loadBatchRuns]);
+  }, [activeTab, currentProjectId, loadBatchRuns]);
 
   useEffect(() => {
     if (!currentProjectId) return;
+    if (activeTab !== CreatorStudioTab.ImageTools && !(activeTab === CreatorStudioTab.Batch && batchSubview === CreatorBatchSubview.ImageProcessing)) return;
     void loadImageProcessingJobs(currentProjectId).catch(() => {
       dispatchToast(i18nService.t('creatorImageBatchLoadFailed'));
     });
-  }, [currentProjectId, loadImageProcessingJobs]);
+  }, [activeTab, batchSubview, currentProjectId, loadImageProcessingJobs]);
 
   useEffect(() => {
-    if (!currentProjectId || batchSubview !== CreatorBatchSubview.ImageProcessing) return undefined;
+    if (!currentProjectId || activeTab !== CreatorStudioTab.Batch || batchSubview !== CreatorBatchSubview.ImageProcessing) return undefined;
     const hasActiveImageJob = imageProcessingJobs.some(({ job, tasks }) => (
       job.status === CreatorImageProcessingJobStatus.Running
       || tasks.some((task) => (
@@ -583,14 +601,15 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       });
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [batchSubview, currentProjectId, imageProcessingJobs, loadImageProcessingJobs]);
+  }, [activeTab, batchSubview, currentProjectId, imageProcessingJobs, loadImageProcessingJobs]);
 
   useEffect(() => {
     if (!currentProjectId) return;
+    if (activeTab !== CreatorStudioTab.Builder && activeTab !== CreatorStudioTab.Assets) return;
     void loadRecipes(currentProjectId).catch(() => {
       dispatchToast(i18nService.t('creatorRecipeLoadFailed'));
     });
-  }, [currentProjectId, loadRecipes]);
+  }, [activeTab, currentProjectId, loadRecipes]);
 
   useEffect(() => {
     if (!currentProjectId) return;
@@ -1154,7 +1173,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       dispatchToast(i18nService.t('creatorWorkspaceLoadFailed'));
       return;
     }
-    const activeBoardWorkspace = boardWorkspace ?? await loadBoardWorkspace(projectId);
+    const activeBoardWorkspace = boardWorkspace?.projectId === projectId
+      ? boardWorkspace
+      : await loadBoardWorkspace(projectId);
     if (!activeBoardWorkspace.currentBoardId) {
       dispatchToast(i18nService.t('creatorBoardLoadFailed'));
       return;
@@ -1209,7 +1230,16 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       return;
     }
     const conversion = getNanoConversion(prompt);
-    const models = modelCapabilities.filter((model) => model.supportsBatch).slice(0, 2);
+    let availableModelCapabilities = modelCapabilities;
+    if (availableModelCapabilities.length === 0) {
+      try {
+        availableModelCapabilities = await loadModelCapabilities();
+      } catch {
+        dispatchToast(i18nService.t('creatorBatchModelLoadFailed'));
+        return;
+      }
+    }
+    const models = availableModelCapabilities.filter((model) => model.supportsBatch).slice(0, 2);
     if (models.length === 0) {
       dispatchToast(i18nService.t('creatorBatchModelLoadFailed'));
       return;
@@ -1787,9 +1817,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-lg font-semibold">{i18nService.t('creatorStudioTitle')}</h1>
           <div className="mt-0.5 text-xs text-muted">
-            {i18nService.t('creatorStudioDataSummary')
-              .replace('{cases}', String(manifest.counts.cases))
-              .replace('{templates}', String(manifest.counts.templates))}
+            {i18nService.t('creatorStudioDataSummary')}
           </div>
         </div>
         {updateBadge}
