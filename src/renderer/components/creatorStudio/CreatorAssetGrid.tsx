@@ -51,7 +51,6 @@ import { i18nService } from '../../services/i18n';
 import { nanoBananaService } from '../../services/nanoBanana';
 import type { CreatorStudioCase } from '../../types/creatorStudio';
 import { isCreatorImageProcessingEnabled } from '../../utils/creatorImageProcessingFeatureFlag';
-import { ImageQuickEditDrawer } from './ImageQuickEditDrawer';
 
 interface CreatorAssetGridProps {
   recipes?: CreatorRecipeRecord[];
@@ -66,6 +65,8 @@ const dispatchToast = (message: string) => {
 };
 
 const CreatorImageMetadataInspectConcurrency = 2;
+
+const ImageQuickEditDrawer = React.lazy(() => import('./ImageQuickEditDrawer').then((module) => ({ default: module.ImageQuickEditDrawer })));
 
 const copyText = async (text: string) => {
   await navigator.clipboard.writeText(text);
@@ -1365,31 +1366,36 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                     <div className="text-xs text-muted">{i18nService.t('creatorAssetSourceMissing')}</div>
                   )}
                 </div>
-                <div className="grid grid-cols-6 gap-1 border-t border-border p-2">
-                  <IconAction label={i18nService.t('creatorAssetUseAsReference')} onClick={() => onUseAssetAsReference(asset)}>
-                    <SparklesIcon className="h-4 w-4" />
-                  </IconAction>
-                  <IconAction label={i18nService.t('creatorAssetSendToCowork')} onClick={() => onSendAssetToCowork(asset)}>
-                    <PaperAirplaneIcon className="h-4 w-4" />
-                  </IconAction>
-                  <IconAction label={i18nService.t('copy')} onClick={() => void handleCopyPrompt(asset)}>
-                    <ClipboardDocumentIcon className="h-4 w-4" />
-                  </IconAction>
-                  <IconAction label={i18nService.t('creatorAssetSource')} onClick={() => void handleOpenSource(asset)} disabled={!hasOpenableAssetSource(asset)}>
-                    <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-                  </IconAction>
-                  <IconAction label={i18nService.t('creatorAssetDetails')} onClick={() => setSelectedAsset(asset)}>
-                    <InformationCircleIcon className="h-4 w-4" />
-                  </IconAction>
-                  {imageProcessingEnabled && (
-                    <IconAction
-                      label={i18nService.t('creatorImageQuickEditAction')}
-                      onClick={() => void handleOpenImagePostProcessing(asset)}
-                      disabled={!canPostProcessAsset(asset)}
-                    >
-                      <AdjustmentsHorizontalIcon className="h-4 w-4" />
+                <div className="border-t border-border p-2">
+                  <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+                    {i18nService.t('creatorAssetNextActions')}
+                  </div>
+                  <div className="grid grid-cols-6 gap-1">
+                    <IconAction label={i18nService.t('creatorAssetUseAsReference')} onClick={() => onUseAssetAsReference(asset)}>
+                      <SparklesIcon className="h-4 w-4" />
                     </IconAction>
-                  )}
+                    <IconAction label={i18nService.t('creatorAssetSendToCowork')} onClick={() => onSendAssetToCowork(asset)}>
+                      <PaperAirplaneIcon className="h-4 w-4" />
+                    </IconAction>
+                    <IconAction label={i18nService.t('copy')} onClick={() => void handleCopyPrompt(asset)}>
+                      <ClipboardDocumentIcon className="h-4 w-4" />
+                    </IconAction>
+                    <IconAction label={i18nService.t('creatorAssetSource')} onClick={() => void handleOpenSource(asset)} disabled={!hasOpenableAssetSource(asset)}>
+                      <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                    </IconAction>
+                    <IconAction label={i18nService.t('creatorAssetDetails')} onClick={() => setSelectedAsset(asset)}>
+                      <InformationCircleIcon className="h-4 w-4" />
+                    </IconAction>
+                    {imageProcessingEnabled && (
+                      <IconAction
+                        label={i18nService.t('creatorImageQuickEditAction')}
+                        onClick={() => void handleOpenImagePostProcessing(asset)}
+                        disabled={!canPostProcessAsset(asset)}
+                      >
+                        <AdjustmentsHorizontalIcon className="h-4 w-4" />
+                      </IconAction>
+                    )}
+                  </div>
                 </div>
               </article>
             ))}
@@ -1597,48 +1603,51 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => onUseAssetAsReference(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground">
-                  {i18nService.t('creatorAssetUseAsReference')}
-                </button>
-                <button type="button" onClick={() => onSendAssetToCowork(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground">
-                  {i18nService.t('creatorAssetSendToCowork')}
-                </button>
-                <button type="button" onClick={() => void handleOpenSource(selectedAsset)} disabled={!hasOpenableAssetSource(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
-                  {i18nService.t('creatorAssetSource')}
-                </button>
-                <button type="button" onClick={() => void handleRevealAsset(selectedAsset)} disabled={!selectedAssetCanReveal} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
-                  <FolderOpenIcon className="h-4 w-4" />
-                  {i18nService.t('creatorAssetReveal')}
-                </button>
-                {imageProcessingEnabled && (
-                  <button
-                    type="button"
-                    onClick={() => void handleOpenImagePostProcessing(selectedAsset)}
-                    disabled={!canPostProcessAsset(selectedAsset)}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <AdjustmentsHorizontalIcon className="h-4 w-4" />
-                    {i18nService.t('creatorImageQuickEditAction')}
+              <section className="rounded-lg border border-border p-3">
+                <h3 className="text-xs font-medium text-secondary">{i18nService.t('creatorAssetNextActions')}</h3>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => onUseAssetAsReference(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground">
+                    {i18nService.t('creatorAssetUseAsReference')}
                   </button>
-                )}
-                {imageProcessingEnabled && selectedAsset.kind === CreatorProductionAssetKind.Image && readmeBannerRecipe && (
-                  <button
-                    type="button"
-                    onClick={() => void handleExecuteImageRecipe(selectedAsset, readmeBannerRecipe)}
-                    disabled={
-                      selectedAsset.status !== CreatorProductionAssetStatus.Ready
-                      || executingRecipeAssetId === selectedAsset.id
-                    }
-                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <SparklesIcon className="h-4 w-4" />
-                    {executingRecipeAssetId === selectedAsset.id
-                      ? i18nService.t('creatorImageRecipeExecuting')
-                      : i18nService.t('creatorImageRecipeReadmeBanner')}
+                  <button type="button" onClick={() => onSendAssetToCowork(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground">
+                    {i18nService.t('creatorAssetSendToCowork')}
                   </button>
-                )}
-              </div>
+                  <button type="button" onClick={() => void handleOpenSource(selectedAsset)} disabled={!hasOpenableAssetSource(selectedAsset)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
+                    {i18nService.t('creatorAssetSource')}
+                  </button>
+                  <button type="button" onClick={() => void handleRevealAsset(selectedAsset)} disabled={!selectedAssetCanReveal} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
+                    <FolderOpenIcon className="h-4 w-4" />
+                    {i18nService.t('creatorAssetReveal')}
+                  </button>
+                  {imageProcessingEnabled && (
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenImagePostProcessing(selectedAsset)}
+                      disabled={!canPostProcessAsset(selectedAsset)}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <AdjustmentsHorizontalIcon className="h-4 w-4" />
+                      {i18nService.t('creatorImageQuickEditAction')}
+                    </button>
+                  )}
+                  {imageProcessingEnabled && selectedAsset.kind === CreatorProductionAssetKind.Image && readmeBannerRecipe && (
+                    <button
+                      type="button"
+                      onClick={() => void handleExecuteImageRecipe(selectedAsset, readmeBannerRecipe)}
+                      disabled={
+                        selectedAsset.status !== CreatorProductionAssetStatus.Ready
+                        || executingRecipeAssetId === selectedAsset.id
+                      }
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <SparklesIcon className="h-4 w-4" />
+                      {executingRecipeAssetId === selectedAsset.id
+                        ? i18nService.t('creatorImageRecipeExecuting')
+                        : i18nService.t('creatorImageRecipeReadmeBanner')}
+                    </button>
+                  )}
+                </div>
+              </section>
 
               <section>
                 <h3 className="text-xs font-medium text-secondary">{i18nService.t('creatorPromptPreview')}</h3>
@@ -1656,11 +1665,15 @@ export const CreatorAssetGrid: React.FC<CreatorAssetGridProps> = ({
           </div>
         )}
       </aside>
-      <ImageQuickEditDrawer
-        asset={quickEditAsset}
-        onClose={() => setQuickEditAsset(null)}
-        onCompleted={handleImageProcessingCompleted}
-      />
+      {quickEditAsset && (
+        <React.Suspense fallback={null}>
+          <ImageQuickEditDrawer
+            asset={quickEditAsset}
+            onClose={() => setQuickEditAsset(null)}
+            onCompleted={handleImageProcessingCompleted}
+          />
+        </React.Suspense>
+      )}
     </section>
   );
 };

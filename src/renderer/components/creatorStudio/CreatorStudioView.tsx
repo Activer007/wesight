@@ -105,16 +105,17 @@ import {
   type NanoCreatorPromptSpecConversion,
   nanoPromptToCreatorPromptSpec,
 } from '../../utils/nanoPromptSpecAdapter';
-import { CreatorAssetGrid } from './CreatorAssetGrid';
-import { CreatorBatchPanel } from './CreatorBatchPanel';
-import { CreatorBoard } from './CreatorBoard';
-import { CreatorImageProcessingBatchPanel } from './CreatorImageProcessingBatchPanel';
-import { ImageQuickEditDrawer } from './ImageQuickEditDrawer';
-import { NanoLibraryView } from './nano/NanoLibraryView';
 
 const cases = casesData as CreatorStudioCase[];
 const styleLibrary = styleLibraryData as CreatorStudioStyleLibrary;
 const manifest = manifestData as CreatorStudioManifest;
+
+const CreatorAssetGrid = React.lazy(() => import('./CreatorAssetGrid').then((module) => ({ default: module.CreatorAssetGrid })));
+const CreatorBatchPanel = React.lazy(() => import('./CreatorBatchPanel').then((module) => ({ default: module.CreatorBatchPanel })));
+const CreatorBoard = React.lazy(() => import('./CreatorBoard').then((module) => ({ default: module.CreatorBoard })));
+const CreatorImageProcessingBatchPanel = React.lazy(() => import('./CreatorImageProcessingBatchPanel').then((module) => ({ default: module.CreatorImageProcessingBatchPanel })));
+const ImageQuickEditDrawer = React.lazy(() => import('./ImageQuickEditDrawer').then((module) => ({ default: module.ImageQuickEditDrawer })));
+const NanoLibraryView = React.lazy(() => import('./nano/NanoLibraryView').then((module) => ({ default: module.NanoLibraryView })));
 
 const CreatorStudioTab = {
   Start: 'start',
@@ -163,6 +164,12 @@ const WINNING_ASSET_ADOPTION_STATUSES = new Set<string>([
   CreatorAssetAdoptionStatus.Shortlisted,
   CreatorAssetAdoptionStatus.Favorite,
 ]);
+
+const CreatorLazyFallback: React.FC = () => (
+  <div className="flex min-h-56 items-center justify-center p-6 text-sm text-muted">
+    {i18nService.t('creatorStudioLoadingSection')}
+  </div>
+);
 
 interface CreatorStudioViewProps {
   isSidebarCollapsed: boolean;
@@ -1858,16 +1865,18 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
               />
             )}
             nano={(
-              <NanoLibraryView
-                creatorActions={{
-                  onUseInBuilder: useNanoPromptInBuilder,
-                  onSaveAsRecipe: saveNanoPromptAsRecipe,
-                  onSaveAsPromptAsset: saveNanoPromptAsPromptAsset,
-                  onAddToBoard: addNanoPromptToBoard,
-                  onSendToCowork: sendNanoPromptToCowork,
-                  onCreateBatch: createNanoPromptBatchRun,
-                }}
-              />
+              <React.Suspense fallback={<CreatorLazyFallback />}>
+                <NanoLibraryView
+                  creatorActions={{
+                    onUseInBuilder: useNanoPromptInBuilder,
+                    onSaveAsRecipe: saveNanoPromptAsRecipe,
+                    onSaveAsPromptAsset: saveNanoPromptAsPromptAsset,
+                    onAddToBoard: addNanoPromptToBoard,
+                    onSendToCowork: sendNanoPromptToCowork,
+                    onCreateBatch: createNanoPromptBatchRun,
+                  }}
+                />
+              </React.Suspense>
             )}
           />
         )}
@@ -1922,123 +1931,131 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
           />
         )}
         {activeTab === CreatorStudioTab.Assets && (
-          <CreatorAssetGrid
-            recipes={recipes}
-            onOpenCoworkSession={onOpenCoworkSession}
-            onUseAssetAsReference={useAssetAsReference}
-            onSendAssetToCowork={sendAssetToCowork}
-            onExecuteImageRecipe={(asset, recipe) => void executeImageRecipe(asset, recipe)}
-          />
+          <React.Suspense fallback={<CreatorLazyFallback />}>
+            <CreatorAssetGrid
+              recipes={recipes}
+              onOpenCoworkSession={onOpenCoworkSession}
+              onUseAssetAsReference={useAssetAsReference}
+              onSendAssetToCowork={sendAssetToCowork}
+              onExecuteImageRecipe={(asset, recipe) => void executeImageRecipe(asset, recipe)}
+            />
+          </React.Suspense>
         )}
         {activeTab === CreatorStudioTab.ImageTools && (
-          <CreatorImageToolsPanel
-            projectId={currentProjectId}
-            assets={projectAssets}
-            jobs={imageProcessingJobs}
-            initialFilePaths={imageToolsInitialFilePaths}
-            onInitialFilePathsConsumed={() => setImageToolsInitialFilePaths([])}
-            onAssetsChanged={() => {
-              if (currentProjectId) void loadProjectAssets(currentProjectId);
-            }}
-            onRefreshJobs={() => {
-              if (currentProjectId) void loadImageProcessingJobs(currentProjectId);
-            }}
-            onRevealOutput={(input) => void creatorStudioAssetService.revealImageOutput(input).catch((error) => {
-              dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingRevealFailed'));
-            })}
-            onOpenReport={(jobId) => void openImageProcessingReport(jobId)}
-            onRetryTask={(taskId) => void retryImageProcessingTask(taskId)}
-            onCancelTask={(taskId) => void cancelImageProcessingTask(taskId)}
-          />
+          <React.Suspense fallback={<CreatorLazyFallback />}>
+            <CreatorImageToolsPanel
+              projectId={currentProjectId}
+              assets={projectAssets}
+              jobs={imageProcessingJobs}
+              initialFilePaths={imageToolsInitialFilePaths}
+              onInitialFilePathsConsumed={() => setImageToolsInitialFilePaths([])}
+              onAssetsChanged={() => {
+                if (currentProjectId) void loadProjectAssets(currentProjectId);
+              }}
+              onRefreshJobs={() => {
+                if (currentProjectId) void loadImageProcessingJobs(currentProjectId);
+              }}
+              onRevealOutput={(input) => void creatorStudioAssetService.revealImageOutput(input).catch((error) => {
+                dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingRevealFailed'));
+              })}
+              onOpenReport={(jobId) => void openImageProcessingReport(jobId)}
+              onRetryTask={(taskId) => void retryImageProcessingTask(taskId)}
+              onCancelTask={(taskId) => void cancelImageProcessingTask(taskId)}
+            />
+          </React.Suspense>
         )}
         {activeTab === CreatorStudioTab.Board && (
-          <CreatorBoard
-            projectId={currentProjectId}
-            workspace={boardWorkspace}
-            currentPromptSpec={boardPromptSpec}
-            currentPromptText={boardPromptText}
-            directions={boardPromptSpec.creativeDirections ?? []}
-            onWorkspaceChange={setBoardWorkspace}
-            onUseContextPack={(contextPack) => {
-              setBoardContextPack(contextPack);
-              setActiveTab(CreatorStudioTab.Builder);
-            }}
-            onUseDirection={(direction) => {
-              setBuilderForm((form) => ({
-                ...form,
-                visualStyle: [form.visualStyle, direction.style, direction.promptFocus]
-                  .filter((item) => item.trim())
-                  .join(', '),
-              }));
-              setActiveTab(CreatorStudioTab.Builder);
-            }}
-          />
+          <React.Suspense fallback={<CreatorLazyFallback />}>
+            <CreatorBoard
+              projectId={currentProjectId}
+              workspace={boardWorkspace}
+              currentPromptSpec={boardPromptSpec}
+              currentPromptText={boardPromptText}
+              directions={boardPromptSpec.creativeDirections ?? []}
+              onWorkspaceChange={setBoardWorkspace}
+              onUseContextPack={(contextPack) => {
+                setBoardContextPack(contextPack);
+                setActiveTab(CreatorStudioTab.Builder);
+              }}
+              onUseDirection={(direction) => {
+                setBuilderForm((form) => ({
+                  ...form,
+                  visualStyle: [form.visualStyle, direction.style, direction.promptFocus]
+                    .filter((item) => item.trim())
+                    .join(', '),
+                }));
+                setActiveTab(CreatorStudioTab.Builder);
+              }}
+            />
+          </React.Suspense>
         )}
         {activeTab === CreatorStudioTab.Batch && (
-          <div>
-            <div className="border-b border-border px-4 py-3">
-              <div className="inline-flex rounded-lg border border-border bg-surface p-1">
-                <button
-                  type="button"
-                  onClick={() => setBatchSubview(CreatorBatchSubview.Generation)}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                    batchSubview === CreatorBatchSubview.Generation
-                      ? 'bg-primary text-white'
-                      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                  }`}
-                >
-                  {i18nService.t('creatorBatchGenerationSegment')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBatchSubview(CreatorBatchSubview.ImageProcessing)}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                    batchSubview === CreatorBatchSubview.ImageProcessing
-                      ? 'bg-primary text-white'
-                      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                  }`}
-                >
-                  {i18nService.t('creatorBatchImageProcessingSegment')}
-                </button>
+          <React.Suspense fallback={<CreatorLazyFallback />}>
+            <div>
+              <div className="border-b border-border px-4 py-3">
+                <div className="inline-flex rounded-lg border border-border bg-surface p-1">
+                  <button
+                    type="button"
+                    onClick={() => setBatchSubview(CreatorBatchSubview.Generation)}
+                    className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                      batchSubview === CreatorBatchSubview.Generation
+                        ? 'bg-primary text-white'
+                        : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                    }`}
+                  >
+                    {i18nService.t('creatorBatchGenerationSegment')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBatchSubview(CreatorBatchSubview.ImageProcessing)}
+                    className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                      batchSubview === CreatorBatchSubview.ImageProcessing
+                        ? 'bg-primary text-white'
+                        : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                    }`}
+                  >
+                    {i18nService.t('creatorBatchImageProcessingSegment')}
+                  </button>
+                </div>
               </div>
+              {batchSubview === CreatorBatchSubview.Generation ? (
+                <CreatorBatchPanel
+                  projectId={currentProjectId}
+                  promptSpec={batchPromptSpec}
+                  promptText={batchPromptText}
+                  templates={styleLibrary.templates}
+                  modelCapabilities={modelCapabilities}
+                  batchRuns={batchRuns}
+                  activeBatchRun={activeBatchRun}
+                  isCreating={isCreatingBatchRun}
+                  onCreateBatchRun={(input) => void createBatchRun(input)}
+                  onSelectBatchRun={setActiveBatchRun}
+                  onRefresh={() => {
+                    if (currentProjectId) void loadBatchRuns(currentProjectId);
+                  }}
+                  onRetryTask={(taskId) => void retryBatchTask(taskId)}
+                  onSkipTask={(taskId) => void skipBatchTask(taskId)}
+                  onFailTask={(taskId) => void failBatchTask(taskId)}
+                  onSendTaskToCowork={(task) => void sendBatchTaskToCowork(task)}
+                  onSendBatchToCowork={(batchRun) => void sendBatchRunToCowork(batchRun)}
+                  onSaveTaskAsRecipe={(task) => void saveBatchTaskAsRecipe(task)}
+                />
+              ) : (
+                <CreatorImageProcessingBatchPanel
+                  jobs={imageProcessingJobs}
+                  onRefresh={() => {
+                    if (currentProjectId) void loadImageProcessingJobs(currentProjectId);
+                  }}
+                  onRevealOutput={(input) => void creatorStudioAssetService.revealImageOutput(input).catch((error) => {
+                    dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingRevealFailed'));
+                  })}
+                  onOpenReport={(jobId) => void openImageProcessingReport(jobId)}
+                  onRetryTask={(taskId) => void retryImageProcessingTask(taskId)}
+                  onCancelTask={(taskId) => void cancelImageProcessingTask(taskId)}
+                />
+              )}
             </div>
-            {batchSubview === CreatorBatchSubview.Generation ? (
-              <CreatorBatchPanel
-                projectId={currentProjectId}
-                promptSpec={batchPromptSpec}
-                promptText={batchPromptText}
-                templates={styleLibrary.templates}
-                modelCapabilities={modelCapabilities}
-                batchRuns={batchRuns}
-                activeBatchRun={activeBatchRun}
-                isCreating={isCreatingBatchRun}
-                onCreateBatchRun={(input) => void createBatchRun(input)}
-                onSelectBatchRun={setActiveBatchRun}
-                onRefresh={() => {
-                  if (currentProjectId) void loadBatchRuns(currentProjectId);
-                }}
-                onRetryTask={(taskId) => void retryBatchTask(taskId)}
-                onSkipTask={(taskId) => void skipBatchTask(taskId)}
-                onFailTask={(taskId) => void failBatchTask(taskId)}
-                onSendTaskToCowork={(task) => void sendBatchTaskToCowork(task)}
-                onSendBatchToCowork={(batchRun) => void sendBatchRunToCowork(batchRun)}
-                onSaveTaskAsRecipe={(task) => void saveBatchTaskAsRecipe(task)}
-              />
-            ) : (
-              <CreatorImageProcessingBatchPanel
-                jobs={imageProcessingJobs}
-                onRefresh={() => {
-                  if (currentProjectId) void loadImageProcessingJobs(currentProjectId);
-                }}
-                onRevealOutput={(input) => void creatorStudioAssetService.revealImageOutput(input).catch((error) => {
-                  dispatchToast(error instanceof Error ? error.message : i18nService.t('creatorImageProcessingRevealFailed'));
-                })}
-                onOpenReport={(jobId) => void openImageProcessingReport(jobId)}
-                onRetryTask={(taskId) => void retryImageProcessingTask(taskId)}
-                onCancelTask={(taskId) => void cancelImageProcessingTask(taskId)}
-              />
-            )}
-          </div>
+          </React.Suspense>
         )}
       </main>
 
