@@ -3078,7 +3078,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     return status.authSource;
   };
 
-  const refreshAgentEnvironmentSnapshot = async (options: { forceRefresh?: boolean } = {}) => {
+  const refreshAgentEnvironmentSnapshot = async (options: { forceRefresh?: boolean; appTypes?: ExternalAgentProviderAppType[] } = {}) => {
     const snapshot = await coworkService.getAgentEngineSnapshot(options);
     setAgentEnvironmentSnapshot(snapshot);
   };
@@ -3753,6 +3753,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       window.dispatchEvent(new CustomEvent('wesight-agent-provider-changed', {
         detail: { appType: selectedExternalAgentAppType },
       }));
+      await refreshAgentEnvironmentSnapshot({
+        forceRefresh: true,
+        appTypes: [selectedExternalAgentAppType],
+      });
     } finally {
       setAgentProviderSwitchingId(null);
     }
