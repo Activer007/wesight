@@ -1484,8 +1484,24 @@ function matchesApiHostname(baseURL: string, hostname: string): boolean {
     const parsedHostname = new URL(baseURL).hostname.toLowerCase();
     return parsedHostname === hostname || parsedHostname.endsWith(`.${hostname}`);
   } catch {
-    const escapedHostname = hostname.replace(/\./g, '\\.');
-    return new RegExp(`(^|//|\\.)${escapedHostname}(?:[/:]|$)`, 'i').test(baseURL);
+    const normalizedBaseURL = baseURL.toLowerCase();
+    const normalizedHostname = hostname.toLowerCase();
+    let matchIndex = normalizedBaseURL.indexOf(normalizedHostname);
+
+    while (matchIndex >= 0) {
+      const before = matchIndex === 0 ? '' : normalizedBaseURL[matchIndex - 1];
+      const after = normalizedBaseURL[matchIndex + normalizedHostname.length] || '';
+      const hasValidPrefix = matchIndex === 0 || before === '/' || before === '.';
+      const hasValidSuffix = !after || after === '/' || after === ':';
+
+      if (hasValidPrefix && hasValidSuffix) {
+        return true;
+      }
+
+      matchIndex = normalizedBaseURL.indexOf(normalizedHostname, matchIndex + normalizedHostname.length);
+    }
+
+    return false;
   }
 }
 
