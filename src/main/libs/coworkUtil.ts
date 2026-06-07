@@ -1470,8 +1470,38 @@ export async function getEnhancedEnvWithTmpdir(
 
 const SESSION_TITLE_FALLBACK = 'New Session';
 const SESSION_TITLE_MAX_CHARS = 50;
+const SESSION_TITLE_OUTPUT_TOKEN_BUDGET = 256;
 const SESSION_TITLE_TIMEOUT_MS = 15000;
 const COWORK_MODEL_PROBE_TIMEOUT_MS = 20000;
+
+function matchesApiHostname(baseURL: string, hostname: string): boolean {
+  try {
+    const parsedHostname = new URL(baseURL).hostname.toLowerCase();
+    return parsedHostname === hostname || parsedHostname.endsWith(`.${hostname}`);
+  } catch {
+    const escapedHostname = hostname.replace(/\./g, '\\.');
+    return new RegExp(`(^|//|\\.)${escapedHostname}(?:[/:]|$)`, 'i').test(baseURL);
+  }
+}
+
+function isDeepSeekApiBaseUrl(baseURL: string): boolean {
+  return matchesApiHostname(baseURL, 'deepseek.com');
+}
+
+function isMiniMaxApiBaseUrl(baseURL: string): boolean {
+  return matchesApiHostname(baseURL, 'minimaxi.com');
+}
+
+function shouldDisableAnthropicTitleThinking(baseURL: string): boolean {
+  return isDeepSeekApiBaseUrl(baseURL) || isMiniMaxApiBaseUrl(baseURL);
+}
+
+function shouldDisableOpenAICompatTitleThinking(baseURL: string, providerName?: string): boolean {
+  return providerName === 'deepseek'
+    || providerName === 'minimax'
+    || isDeepSeekApiBaseUrl(baseURL)
+    || isMiniMaxApiBaseUrl(baseURL);
+}
 
 type SessionTitleApiConfig =
   | {
@@ -1479,18 +1509,21 @@ type SessionTitleApiConfig =
       apiKey: string;
       baseURL: string;
       model: string;
+      providerName?: string;
     }
   | {
       protocol: typeof CoworkModelProtocol.GeminiNative;
       apiKey: string;
       baseURL: string;
       model: string;
+      providerName?: string;
     }
   | {
       protocol: typeof CoworkModelProtocol.OpenAICompat;
       apiKey: string;
       baseURL: string;
       model: string;
+      providerName?: string;
     };
 
 function resolveSessionTitleApiConfig(): { config: SessionTitleApiConfig | null; error?: string } {
@@ -1502,6 +1535,7 @@ function resolveSessionTitleApiConfig(): { config: SessionTitleApiConfig | null;
         apiKey: rawResolution.config.apiKey,
         baseURL: rawResolution.config.baseURL,
         model: rawResolution.config.model,
+        providerName: rawResolution.providerMetadata?.providerName,
       },
     };
   }
@@ -1521,6 +1555,7 @@ function resolveSessionTitleApiConfig(): { config: SessionTitleApiConfig | null;
         apiKey: resolution.config.apiKey,
         baseURL: resolution.config.baseURL,
         model: resolution.config.model,
+        providerName: resolution.providerMetadata?.providerName,
       },
     };
   }
@@ -1531,6 +1566,7 @@ function resolveSessionTitleApiConfig(): { config: SessionTitleApiConfig | null;
       apiKey: resolution.config.apiKey,
       baseURL: resolution.config.baseURL,
       model: resolution.config.model,
+      providerName: resolution.providerMetadata?.providerName,
     },
   };
 }
@@ -1730,8 +1766,12 @@ export async function generateSessionTitle(userIntent: string | null): Promise<s
       : config.protocol === CoworkModelProtocol.OpenAICompat
         ? buildOpenAIChatCompletionsUrl(config.baseURL)
       : buildAnthropicMessagesUrl(config.baseURL);
-    const prompt = `Return one plain-text title in the same language, max ${SESSION_TITLE_MAX_CHARS} chars: ${normalizedInput}`;
-    console.log(`[cowork-title] Generating title: protocol=${config.protocol}, baseURL=${config.baseURL}, requestUrl=${url}, model=${config.model}`);
+    const prompt = [
+      `Return only one plain-text title in the same language, max ${SESSION_TITLE_MAX_CHARS} chars.`,
+      'Do not include reasoning, analysis, markdown, quotes, labels, or explanations.',
+      normalizedInput,
+    ].join('\n');
+    console.log(`[cowork-title] Generating title: protocol=${config.protocol}, provider=${config.providerName || 'unknown'}, baseURL=${config.baseURL}, requestUrl=${url}, model=${config.model}`);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -1755,23 +1795,30 @@ export async function generateSessionTitle(userIntent: string | null): Promise<s
           ? {
               contents: [{ role: 'user', parts: [{ text: prompt }] }],
               generationConfig: {
-                maxOutputTokens: 80,
+                maxOutputTokens: SESSION_TITLE_OUTPUT_TOKEN_BUDGET,
                 temperature: 0,
               },
             }
           : config.protocol === CoworkModelProtocol.OpenAICompat
-            ? {
-                model: config.model,
-                messages: [{ role: 'user', content: prompt }],
-                // Reasoning models may spend hidden tokens before emitting text.
-                max_tokens: 128,
-                temperature: 0,
-                stream: false,
-              }
-          : {
+              ? {
+                  model: config.model,
+                  messages: [{ role: 'user', content: prompt }],
+                  // DeepSeek and MiniMax-M3 enable thinking by default and can
+                  // spend hidden tokens before emitting visible text. Disable
+                  // it for short title requests when the provider supports it.
+                  max_tokens: SESSION_TITLE_OUTPUT_TOKEN_BUDGET,
+                  ...(shouldDisableOpenAICompatTitleThinking(config.baseURL, config.providerName)
+                    ? { thinking: { type: 'disabled' } }
+                    : {}),
+                  stream: false,
+                }
+            : {
               model: config.model,
-              max_tokens: 80,
+              max_tokens: SESSION_TITLE_OUTPUT_TOKEN_BUDGET,
               temperature: 0,
+              ...(shouldDisableAnthropicTitleThinking(config.baseURL)
+                ? { thinking: { type: 'disabled' } }
+                : {}),
               messages: [{ role: 'user', content: prompt }],
             }
       ),
@@ -1795,8 +1842,9 @@ export async function generateSessionTitle(userIntent: string | null): Promise<s
       : config.protocol === CoworkModelProtocol.OpenAICompat
         ? extractTextFromOpenAIChatCompletionResponse(payload)
       : extractTextFromAnthropicResponse(payload);
-    console.log(`[cowork-title] Extracted title text: "${llmTitle}"`);
-    return normalizeTitleToPlainText(llmTitle, fallbackTitle);
+    const title = normalizeTitleToPlainText(llmTitle, fallbackTitle);
+    console.log(`[cowork-title] Extracted title text: "${llmTitle || title}"`);
+    return title;
   } catch (error) {
     if (isAbortError(error)) {
       const timeoutSeconds = Math.ceil(SESSION_TITLE_TIMEOUT_MS / 1000);

@@ -126,7 +126,7 @@ const ADDED_PROVIDER_MODELS: Record<string, { models: Array<{ id: string; name: 
   },
   minimax: {
     models: [
-      { id: 'MiniMax-M3.0', name: 'MiniMax M3.0', supportsImage: false },
+      { id: 'MiniMax-M3', name: 'MiniMax M3', supportsImage: false },
     ],
     position: 'start',
   },
