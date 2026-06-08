@@ -18,12 +18,20 @@ type ProviderModel = {
   supportsImage?: boolean;
 };
 
+type QwenOAuthCredentials = {
+  access: string;
+  refresh?: string;
+  expires: number;
+  resourceUrl?: string;
+};
+
 type ProviderConfig = {
   enabled: boolean;
   apiKey: string;
   baseUrl: string;
   apiFormat?: 'anthropic' | 'openai' | 'native';
   codingPlanEnabled?: boolean;
+  oauthCredentials?: QwenOAuthCredentials;
   models?: ProviderModel[];
 };
 
@@ -261,7 +269,7 @@ function resolveMatchedProvider(
 
    // Check for API key or OAuth credentials
   const hasApiKey = providerConfig.apiKey?.trim();
-  const hasOAuthCreds = providerName === 'qwen' && (providerConfig as any).oauthCredentials;
+  const hasOAuthCreds = providerName === 'qwen' && providerConfig.oauthCredentials;
   if (apiFormat === 'anthropic' && providerRequiresApiKey(providerName) && !providerConfig.apiKey?.trim() && !hasApiKey && !hasOAuthCreds) {
     const serverFallback = tryWesightServerFallback(modelId);
     if (serverFallback) return { matched: serverFallback };
@@ -315,8 +323,8 @@ export function resolveCurrentApiConfig(
   let resolvedApiKey = matched.providerConfig.apiKey?.trim() || '';
   
   // Handle Qwen OAuth credentials
-  if (matched.providerName === 'qwen' && !resolvedApiKey && (matched.providerConfig as any).oauthCredentials) {
-    const oauthCreds = (matched.providerConfig as any).oauthCredentials;
+  if (matched.providerName === 'qwen' && !resolvedApiKey && matched.providerConfig.oauthCredentials) {
+    const oauthCreds = matched.providerConfig.oauthCredentials;
     // Check if token is still valid (with 5 minute buffer)
     const expiryBuffer = 5 * 60 * 1000;
     if (Date.now() < (oauthCreds.expires - expiryBuffer)) {
@@ -416,8 +424,8 @@ export function resolveCodexWesightApiConfig(
   }
 
   let resolvedApiKey = matched.providerConfig.apiKey?.trim() || '';
-  if (matched.providerName === 'qwen' && !resolvedApiKey && (matched.providerConfig as any).oauthCredentials) {
-    const oauthCreds = (matched.providerConfig as any).oauthCredentials;
+  if (matched.providerName === 'qwen' && !resolvedApiKey && matched.providerConfig.oauthCredentials) {
+    const oauthCreds = matched.providerConfig.oauthCredentials;
     const expiryBuffer = 5 * 60 * 1000;
     resolvedApiKey = oauthCreds.access || '';
     if (Date.now() >= (oauthCreds.expires - expiryBuffer)) {
@@ -535,8 +543,8 @@ export function resolveRawApiConfig(override: ApiConfigOverride = {}): ApiConfig
   let effectiveApiFormat = matched.apiFormat;
   
   // Handle Qwen OAuth credentials for OpenClaw gateway
-  if (matched.providerName === 'qwen' && !apiKey && (matched.providerConfig as any).oauthCredentials) {
-    const oauthCreds = (matched.providerConfig as any).oauthCredentials;
+  if (matched.providerName === 'qwen' && !apiKey && matched.providerConfig.oauthCredentials) {
+    const oauthCreds = matched.providerConfig.oauthCredentials;
     // Check if token is still valid (with 5 minute buffer)
     const expiryBuffer = 5 * 60 * 1000;
     if (Date.now() < (oauthCreds.expires - expiryBuffer)) {

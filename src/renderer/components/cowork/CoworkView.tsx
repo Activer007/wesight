@@ -345,7 +345,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       unsubscribe();
       unsubscribeOpenClawStatus();
     };
-  }, [dispatch]);
+  }, [dispatch, onRequestAppSettings, selectedRuntimeEngine]);
 
   const handleStartSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]): Promise<boolean | void> => {
     // Prevent duplicate submissions
@@ -947,7 +947,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         dispatch(clearSelection());
       }
     }
-  }, [activeSkillIds]);
+  }, [activeSkillIds, dispatch, quickActions, selectedActionId]);
 
   // Handle prompt selection from QuickAction
   const handleQuickActionPromptSelect = (prompt: string) => {
@@ -983,7 +983,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     return () => {
       window.removeEventListener('focus', handleWindowFocus);
     };
-  }, [currentSession?.id, currentSession?.status, isOpenClawEngine]);
+  }, [currentSession, currentSession?.id, currentSession?.status, isOpenClawEngine]);
 
   if (!isInitialized) {
     return (

@@ -86,7 +86,7 @@ const migrateCustomProviders = (config: AppConfig): AppConfig => {
   if ('custom' in providers && !isCustomProvider('custom')) {
     const legacyCustom = providers['custom'];
     if (legacyCustom) {
-      const updatedProviders = { ...providers } as Record<string, any>;
+      const updatedProviders = { ...providers } as NonNullable<AppConfig['providers']>;
       updatedProviders['custom_0'] = { ...legacyCustom };
       delete updatedProviders['custom'];
       return {
@@ -205,7 +205,7 @@ class ConfigService {
                 providerKey,
                 (() => {
                   const mergedProvider = {
-                    ...(defaultConfig.providers as Record<string, any>)?.[providerKey],
+                    ...(defaultConfig.providers as NonNullable<AppConfig['providers']>)?.[providerKey],
                     ...providerConfig,
                   };
                   // Filter out removed models
