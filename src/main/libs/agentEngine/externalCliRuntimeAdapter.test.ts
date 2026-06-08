@@ -3,6 +3,13 @@ import os from 'os';
 import path from 'path';
 import { describe, expect, test, vi } from 'vitest';
 
+vi.mock('electron', () => ({
+  app: {
+    getAppPath: () => process.cwd(),
+    isPackaged: false,
+  },
+}));
+
 import {
   CoworkAgentEngine,
   ExternalAgentConfigSource,
@@ -182,8 +189,10 @@ describe('ExternalCliRuntimeAdapter Codex local config', () => {
       ) => string[];
     };
 
-    expect(internals.getSelectedProviderForLocalCli()).toBeNull();
-    expect(internals.prepareCodexHomeForExecMode(env, codexProvider)).toBeNull();
+    const selectedProvider = internals.getSelectedProviderForLocalCli();
+    expect(selectedProvider).toBeNull();
+    const codexHomeDir = internals.prepareCodexHomeForExecMode(env, selectedProvider);
+    expect(codexHomeDir).toBeNull();
     expect(env.CODEX_HOME).toBeUndefined();
     expect(env.OPENAI_API_KEY).toBeUndefined();
 
@@ -191,7 +200,7 @@ describe('ExternalCliRuntimeAdapter Codex local config', () => {
       'D:\\LHA\\wesight',
       'hello',
       [],
-      codexProvider,
+      selectedProvider,
       'session',
       null,
     );

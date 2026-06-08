@@ -1136,7 +1136,6 @@ export class ExternalCliRuntimeAdapter extends EventEmitter implements CoworkRun
     env: Record<string, string | undefined>,
     provider: ExternalAgentProvider | null,
   ): string | null {
-    if (this.getConfigSource() === ExternalAgentConfigSource.LocalCli) return null;
     if (!provider || provider.appType !== 'codex') return null;
 
     const auth = this.getNestedRecord(provider.settingsConfig, 'auth');
@@ -1149,6 +1148,7 @@ export class ExternalCliRuntimeAdapter extends EventEmitter implements CoworkRun
       fs.writeFileSync(path.join(codexHomeDir, 'auth.json'), `${JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2)}\n`, 'utf8');
       fs.writeFileSync(path.join(codexHomeDir, 'config.toml'), this.overrideCodexConfigModel(configText, provider.summary.model), 'utf8');
       env.CODEX_HOME = codexHomeDir;
+      env.OPENAI_API_KEY = apiKey;
       return codexHomeDir;
     } catch (error) {
       console.warn('[ExternalCliRuntimeAdapter] Failed to prepare temporary Codex provider config:', error);
