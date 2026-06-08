@@ -164,4 +164,5 @@ jobs:
           key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
           restore-keys: npm-${{ runner.os }}-
       - run: npm install
+      - run: node node_modules/electron/install.js && npx electron --version
       - run: npm test
