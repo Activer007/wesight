@@ -2584,8 +2584,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     setTestResult(null);
 
     // Check if provider has valid authentication (API Key or OAuth for Qwen)
-    const hasValidAuth = providerConfig.apiKey || 
-      (testingProvider === 'qwen' && providerConfig.oauthCredentials);
+    const qwenOAuthCredentials = testingProvider === 'qwen' ? providers.qwen.oauthCredentials : undefined;
+    const hasValidAuth = providerConfig.apiKey || qwenOAuthCredentials;
     
     if (providerRequiresApiKey(testingProvider) && !hasValidAuth) {
       showTestResultModal({ success: false, message: i18nService.t('apiKeyRequired') }, testingProvider);
